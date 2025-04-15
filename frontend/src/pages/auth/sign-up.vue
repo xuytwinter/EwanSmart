@@ -1,3 +1,7 @@
+<route lang="yaml">
+  name: 'sign-up'
+</route>
+
 <script setup lang="ts">
 import type { Rule } from 'ant-design-vue/es/form'
 
@@ -25,7 +29,7 @@ function onFinish(values: any) {
 
 const router = useRouter()
 function nav2SignIn() {
-  router.push('/auth/sign-in')
+  router.push('sign-in')
 }
 </script>
 

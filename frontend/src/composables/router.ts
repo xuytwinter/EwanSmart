@@ -1,4 +1,5 @@
-import type { RouteLocationRaw, RouteMap } from 'vue-router'
+import type { RouteLocationNamedRaw, RouteLocationRaw } from 'vue-router'
+import type { RouteNamedMap } from 'vue-router/auto-routes'
 
 export function useRouterPush() {
   const router = useRouter()
@@ -6,22 +7,22 @@ export function useRouterPush() {
 
   const routerPush = router.push
 
-  async function routerPushByKey(key: keyof RouteMap, options?: App.Global.RouterPushOptions) {
+  async function routerPushByKey(key: keyof RouteNamedMap, options?: App.Global.RouterPushOptions) {
     const { query, params } = options || {}
 
-    const routeLocation: RouteLocationRaw = {
+    const routeLocation: RouteLocationNamedRaw = {
       name: key,
     }
 
     if (Object.keys(query || {}).length) {
-      routeLocation.query = query
+      (routeLocation as RouteLocationNamedRaw).query = query
     }
 
     if (Object.keys(params || {}).length) {
       routeLocation.params = params
     }
 
-    return routerPush(routeLocation)
+    return routerPush(routeLocation as RouteLocationRaw)
   }
 
   /**
@@ -38,7 +39,7 @@ export function useRouterPush() {
       },
     }
 
-    return routerPushByKey('signIn', options)
+    return routerPushByKey('sign-in', options)
   }
 
   async function toHome() {

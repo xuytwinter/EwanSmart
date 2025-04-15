@@ -45,11 +45,13 @@ export default defineConfig({
     AutoImport({
       imports: [
         'vue',
+        'pinia',
         '@vueuse/core',
         VueRouterAutoImports,
         {
           // add any other imports you were relying on
           'vue-router/auto': ['useLink'],
+          '~/services/request': ['alova'],
         },
       ],
       dts: 'src/typings/auto-imports.d.ts',

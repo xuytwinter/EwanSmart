@@ -1,5 +1,3 @@
-import { alova } from '../request'
-
 /**
  * Register
  *

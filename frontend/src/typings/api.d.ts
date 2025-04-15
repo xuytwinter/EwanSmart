@@ -7,9 +7,17 @@ declare namespace Api {
     interface UserInfo {
       id: number
       username: string
-      role: "USER" | "ADMIN"
+      role: 'USER' | 'ADMIN'
       orgTags: string[]
       primaryOrg: string
     }
+  }
+
+  interface OrgTag {
+    tagId: string
+    name: string
+    description: string
+    parentTag?: string
+    children: OrgTag[]
   }
 }

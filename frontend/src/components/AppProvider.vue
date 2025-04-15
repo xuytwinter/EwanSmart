@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { App } from 'ant-design-vue'
+import zhCN from 'ant-design-vue/es/locale/zh_CN'
 import { createTextVNode, defineComponent } from 'vue'
 
 defineOptions({
   name: 'AppProvider',
 })
+
+const locale = zhCN
 
 const ContextHolder = defineComponent({
   name: 'ContextHolder',
@@ -31,7 +34,7 @@ const theme = ref({
 </script>
 
 <template>
-  <a-config-provider :theme="theme">
+  <a-config-provider :theme="theme" :locale="locale">
     <App class="h-full">
       <ContextHolder />
       <slot />

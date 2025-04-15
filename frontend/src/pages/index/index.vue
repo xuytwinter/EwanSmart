@@ -7,6 +7,7 @@
 <script setup lang="ts">
 import ChatBox from './modules/chat-box.vue'
 import ChatList from './modules/chat-list.vue'
+import Settings from './modules/settings/index.vue'
 
 defineOptions({
   name: 'IndexPage',
@@ -18,6 +19,7 @@ defineOptions({
     <ChatList row-span-3 />
     <TheHeader />
     <ChatBox />
+    <Settings />
   </div>
 </template>
 

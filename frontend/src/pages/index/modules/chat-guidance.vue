@@ -3,7 +3,7 @@ import { Welcome } from 'ant-design-x-vue'
 </script>
 
 <template>
-  <div class="flex-vertical w-full items-center">
+  <div class="flex-y w-full items-center">
     <Welcome
       class="w-50vw"
       icon="https://mdn.alipayobjects.com/huamei_iwk9zp/afts/img/A*s5sNRo5LjfQAAAAAAAAAAAAADgCCAQ/fmt.webp"

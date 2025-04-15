@@ -1,5 +1,5 @@
 <route lang="yaml">
-  name: signIn
+  name: sign-in
 </route>
 
 <script setup lang="ts">
@@ -33,7 +33,7 @@ async function onFinish(form: LoginForm) {
 
 const router = useRouter()
 function nav2SignUp() {
-  router.push('/auth/sign-up')
+  router.push('signUp')
 }
 </script>
 

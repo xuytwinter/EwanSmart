@@ -8,9 +8,9 @@ import {
 
 export default defineConfig({
   shortcuts: [
+    ['flex-y', 'flex flex-col'],
     ['flex-cc', 'flex items-center justify-center'],
     ['flex-bc', 'flex items-center justify-between'],
-    ['flex-vertical', 'flex flex-col'],
   ],
   presets: [
     presetWind4(),
