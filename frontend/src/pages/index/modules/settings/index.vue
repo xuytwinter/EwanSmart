@@ -8,7 +8,7 @@ const activeKey = ref('org-tags')
 </script>
 
 <template>
-  <a-modal v-model:open="visible" title="设置" centered class="w-800px!" :mask-closable="false">
+  <a-modal v-model:open="visible" title="设置" centered class="w-900px!" :mask-closable="false">
     <a-tabs v-model:active-key="activeKey" tab-position="left" :tab-bar-gutter="0">
       <a-tab-pane key="org-tags">
         <template #tab>

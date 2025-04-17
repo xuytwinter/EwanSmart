@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import type { UnwrapRef } from 'vue'
+import { cloneDeep } from 'lodash-es'
+
 function showAdd() {
 
 }
@@ -7,22 +10,20 @@ const columns = [
   {
     title: '标签名',
     dataIndex: 'name',
-    key: 'name',
   },
   {
     title: '描述',
     dataIndex: 'description',
-    key: 'description',
     ellipsis: true,
   },
   {
     title: '操作',
-    key: 'action',
-    width: 150,
+    dataIndex: 'action',
+    width: 200,
   },
 ]
 
-const data: Api.OrgTag[] = [
+const data = ref<Api.OrgTag[]>([
   {
     tagId: '1',
     description: '1',
@@ -30,20 +31,36 @@ const data: Api.OrgTag[] = [
     children: [
       {
         name: 'John Brown',
-        tagId: '1',
-        description: '1',
+        tagId: '2',
+        description: '2',
         children: [],
       },
     ],
   },
-]
+])
+const editableData: UnwrapRef<Record<string, Api.OrgTag>> = reactive({})
 
-function showEdit(record: Api.OrgTag) {
-  console.log('%c [ record ]: ', 'color: #bf2c9f; background: pink; font-size: 13px;', record)
+function addChild(tagId: string) {
+  data.value.filter(item => tagId === item.tagId)[0].children.push({
+    tagId: '3',
+    name: 'John Brown',
+    description: '3',
+    children: [],
+  })
 }
 
-function onDelete(tagId: string) {
-  console.log('%c [ tagId ]: ', 'color: #bf2c9f; background: pink; font-size: 13px;', tagId)
+function edit(tagId: string) {
+  editableData[tagId] = cloneDeep(data.value.filter(item => tagId === item.tagId)[0])
+}
+function save(tagId: string) {
+  Object.assign(data.value.filter(item => tagId === item.tagId)[0], editableData[tagId])
+  delete editableData[tagId]
+}
+function cancel(key: string) {
+  delete editableData[key]
+}
+function remove(tagId: string) {
+  console.log(tagId)
 }
 </script>
 
@@ -58,23 +75,48 @@ function onDelete(tagId: string) {
       </a-button>
     </div>
     <a-table :columns="columns" :data-source="data" size="small">
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'action'">
-          <a-button type="primary" ghost size="small" @click="showEdit(record as Api.OrgTag)">
-            编辑
-          </a-button>
-          <a-popconfirm
-            title="确定删除该标签吗？"
-            @confirm="onDelete(record.tagId)"
-          >
-            <a-button danger ghost size="small" ml-4 @click="onDelete(record.tagId)">
-              删除
-            </a-button>
-          </a-popconfirm>
+      <template #bodyCell="{ column, text, record }">
+        <template v-if="['name', 'description'].includes(column.dataIndex as string)">
+          <a-input
+            v-if="editableData[record.tagId]"
+            v-model:value="editableData[record.tagId][column.dataIndex as 'name' | 'description']" m-y--5px flex-1
+          />
+          <template v-else>
+            {{ text }}
+          </template>
         </template>
+        <div v-if="column.dataIndex === 'action'" flex gap-2>
+          <template v-if="editableData[record.tagId]">
+            <a-button type="primary" size="small" ghost @click="save(record.tagId)">
+              保存
+            </a-button>
+            <a-popconfirm title="确认取消编辑吗?" @confirm="cancel(record.tagId)">
+              <a-button size="small">
+                取消
+              </a-button>
+            </a-popconfirm>
+          </template>
+          <template v-else>
+            <a-button type="primary" size="small" ghost @click="addChild(record.tagId)">
+              新增
+            </a-button>
+            <a-button type="primary" size="small" ghost @click="edit(record.tagId)">
+              编辑
+            </a-button>
+            <a-popconfirm title="确定删除该标签吗？" @confirm="remove(record.tagId)">
+              <a-button danger size="small">
+                删除
+              </a-button>
+            </a-popconfirm>
+          </template>
+        </div>
       </template>
     </a-table>
   </div>
 </template>
 
-<style scoped></style>
+<style scoped>
+:deep(.ant-table-cell-with-append) {
+  display: flex;
+}
+</style>
