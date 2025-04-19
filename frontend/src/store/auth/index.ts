@@ -8,7 +8,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isLogin = computed(() => Boolean(token.value))
 
-  const userInfo = ref<Api.Auth.UserInfo>(getDefaultUserInfo())
+  const userInfo = ref<Api.UserInfo>(getDefaultUserInfo())
 
   const { redirectFromLogin, toLogin } = useRouterPush()
 

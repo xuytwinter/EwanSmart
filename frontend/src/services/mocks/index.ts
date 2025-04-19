@@ -30,6 +30,40 @@ export default defineMock({
       },
     }
   },
+  '[GET]/v1/admin/users': () => {
+    return {
+      code: 200,
+      message: 'User list retrieved successfully',
+      data: {
+        content: [
+          {
+            userId: 'user1',
+            username: '用户1',
+            email: 'user1@example.com',
+            status: 1,
+            orgTags: ['dept1', 'team2'],
+            primaryOrg: 'dept1',
+            createTime: '2023-01-01T12:00:00Z',
+            lastLoginTime: '2023-06-15T08:30:00Z',
+          },
+          {
+            userId: 'user2',
+            username: '用户2',
+            email: 'user2@example.com',
+            status: 0,
+            orgTags: ['dept1', 'team1'],
+            primaryOrg: 'dept1',
+            createTime: '2023-01-01T12:00:00Z',
+            lastLoginTime: '2023-06-15T08:30:00Z',
+          },
+        ],
+        totalElements: 150,
+        totalPages: 8,
+        size: 20,
+        number: 0,
+      },
+    }
+  },
   '[GET]/v1/admin/org-tags/tree': () => {
     return {
       code: 200,
@@ -51,90 +85,6 @@ export default defineMock({
               description: '团队2描述',
             },
           ],
-        },
-        {
-          tagId: 'dept2',
-          name: '部门2',
-          description: '部门2描述',
-          children: null,
-        },
-        {
-          tagId: 'dept2',
-          name: '部门2',
-          description: '部门2描述',
-          children: null,
-        },
-        {
-          tagId: 'dept2',
-          name: '部门2',
-          description: '部门2描述',
-          children: null,
-        },
-        {
-          tagId: 'dept2',
-          name: '部门2',
-          description: '部门2描述',
-          children: null,
-        },
-        {
-          tagId: 'dept2',
-          name: '部门2',
-          description: '部门2描述',
-          children: null,
-        },
-        {
-          tagId: 'dept2',
-          name: '部门2',
-          description: '部门2描述',
-          children: null,
-        },
-        {
-          tagId: 'dept2',
-          name: '部门2',
-          description: '部门2描述',
-          children: null,
-        },
-        {
-          tagId: 'dept2',
-          name: '部门2',
-          description: '部门2描述',
-          children: null,
-        },
-        {
-          tagId: 'dept2',
-          name: '部门2',
-          description: '部门2描述',
-          children: null,
-        },
-        {
-          tagId: 'dept2',
-          name: '部门2',
-          description: '部门2描述',
-          children: null,
-        },
-        {
-          tagId: 'dept2',
-          name: '部门2',
-          description: '部门2描述',
-          children: null,
-        },
-        {
-          tagId: 'dept2',
-          name: '部门2',
-          description: '部门2描述',
-          children: null,
-        },
-        {
-          tagId: 'dept2',
-          name: '部门2',
-          description: '部门2描述',
-          children: null,
-        },
-        {
-          tagId: 'dept2',
-          name: '部门2',
-          description: '部门2描述',
-          children: null,
         },
         {
           tagId: 'dept2',

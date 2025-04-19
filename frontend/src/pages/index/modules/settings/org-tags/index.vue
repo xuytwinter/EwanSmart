@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import OrgTagsOperateDialog from './org-tags-operate-dialog.vue'
+import OrgTagsOperateModal from './org-tags-operate-modal.vue'
 
 const columns = [
   { title: '标签名', dataIndex: 'name' },
@@ -14,21 +14,21 @@ onMounted(async () => {
 })
 
 const loading = ref(false)
+const store = useSettingsStore()
 async function get() {
   loading.value = true
-  const res = await fetchGetOrgTree()
-  if (res)
-    data.value = res
+  const res = await store.getOrgTags()
+  data.value = res
   loading.value = false
 }
 
-const dialogRef = ref<InstanceType<typeof OrgTagsOperateDialog>>()
+const modalRef = ref<InstanceType<typeof OrgTagsOperateModal>>()
 function showAdd(tagId?: string) {
-  dialogRef.value?.openAdd(tagId)
+  modalRef.value?.openAdd(tagId)
 }
 
 function showEdit(tag: Api.OrgTag) {
-  dialogRef.value?.openEdit(tag)
+  modalRef.value?.openEdit(tag)
 }
 
 async function remove(tagId: string) {
@@ -44,9 +44,14 @@ async function remove(tagId: string) {
       <a-typography-title :level="5">
         组织标签管理
       </a-typography-title>
-      <a-button type="primary" @click="showAdd()">
-        新增
-      </a-button>
+      <div flex gap-2>
+        <a-button type="primary" ghost size="small" @click="get()">
+          刷新
+        </a-button>
+        <a-button type="primary" size="small" @click="showAdd()">
+          新增
+        </a-button>
+      </div>
     </div>
     <a-table
       row-key="tagId" :scroll="{ y: 420 }" :pagination="false" :columns="columns" :data-source="data"
@@ -68,7 +73,7 @@ async function remove(tagId: string) {
         </div>
       </template>
     </a-table>
-    <OrgTagsOperateDialog ref="dialogRef" @submitted="get" />
+    <OrgTagsOperateModal ref="modalRef" @submitted="get" />
   </div>
 </template>
 

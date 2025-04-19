@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
 import OrgTags from './org-tags/index.vue'
+import UserManage from './user-manage/index.vue'
 
 const { visible } = storeToRefs(useSettingsStore())
 
@@ -8,7 +9,7 @@ const activeKey = ref('org-tags')
 </script>
 
 <template>
-  <a-modal v-model:open="visible" title="设置" centered class="w-900px!" :mask-closable="false">
+  <a-modal v-model:open="visible" title="设置" centered class="w-1200px!" :mask-closable="false">
     <a-tabs v-model:active-key="activeKey" tab-position="left" :tab-bar-gutter="0">
       <a-tab-pane key="org-tags">
         <template #tab>
@@ -18,6 +19,15 @@ const activeKey = ref('org-tags')
           </span>
         </template>
         <OrgTags />
+      </a-tab-pane>
+      <a-tab-pane key="user-manage">
+        <template #tab>
+          <span class="tab">
+            <div i-carbon-id-management />
+            用户管理
+          </span>
+        </template>
+        <UserManage />
       </a-tab-pane>
       <a-tab-pane key="account">
         <template #tab>

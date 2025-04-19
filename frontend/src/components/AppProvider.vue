@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { App } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
+import dayjs from 'dayjs'
 import { createTextVNode, defineComponent } from 'vue'
+import 'dayjs/locale/zh-cn'
 
 defineOptions({
   name: 'AppProvider',
 })
+
+dayjs.locale('zh-cn')
 
 const locale = zhCN
 

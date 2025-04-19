@@ -15,12 +15,7 @@ export function fetchSignUp(username: string, password: string) {
  * @param password Password
  */
 export function fetchSignIn(username: string, password: string) {
-  return alova.Post<Api.Auth.LoginToken>('/v1/users/login', { username, password })
-}
-
-/** Get user info */
-export function fetchGetUserInfo() {
-  return alova.Get<Api.Auth.UserInfo>('/v1/users/me')
+  return alova.Post<Api.LoginToken>('/v1/users/login', { username, password })
 }
 
 /**
@@ -29,7 +24,7 @@ export function fetchGetUserInfo() {
  * @param refreshToken Refresh token
  */
 export function fetchRefreshToken(refreshToken: string) {
-  return alova.Post<Api.Auth.LoginToken>(
+  return alova.Post<Api.LoginToken>(
     '/v1/auth/refreshToken',
     { refreshToken },
     {

@@ -5,7 +5,7 @@ export function getTokenStg() {
   return localStg.get('token') || ''
 }
 
-export function getDefaultUserInfo(): Api.Auth.UserInfo {
+export function getDefaultUserInfo(): Api.UserInfo {
   return {
     id: 0,
     username: '',

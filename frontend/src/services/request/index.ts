@@ -11,7 +11,7 @@ export const mockRequestAdapter = createAlovaMockAdapter(
     // 非模拟请求适配器，用于未匹配mock接口时发送请求
     // httpAdapter: adapterFetch(),
     // mock接口响应延迟，单位毫秒
-    delay: 1000,
+    delay: 300,
     // 是否打印mock接口请求信息
     mockRequestLogger: true,
     matchMode: 'methodurl',

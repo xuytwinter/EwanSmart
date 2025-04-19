@@ -63,7 +63,7 @@
     "vite": "^6.2.4"
   },
   "simple-git-hooks": {
-    "pre-commit": "lint-staged"
+    "pre-commit": "cd frontend && pnpm exec lint-staged"
   },
   "lint-staged": {
     "*": "eslint --fix"
