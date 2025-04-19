@@ -57,7 +57,7 @@ export default defineConfig({
       dts: 'src/typings/auto-imports.d.ts',
       dirs: [
         './src/composables',
-        './src/services/api',
+        './src/services/api/*',
         './src/store/**/*',
       ],
       vueTemplate: true,

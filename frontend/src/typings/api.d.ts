@@ -14,10 +14,10 @@ declare namespace Api {
   }
 
   interface OrgTag {
-    tagId: string
+    tagId?: string
     name: string
     description: string
     parentTag?: string
-    children: OrgTag[]
+    children?: OrgTag[]
   }
 }

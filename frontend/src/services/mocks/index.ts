@@ -30,10 +30,137 @@ export default defineMock({
       },
     }
   },
+  '[GET]/v1/admin/org-tags/tree': () => {
+    return {
+      code: 200,
+      message: 'Organization tag retrieved successfully',
+      data: [
+        {
+          tagId: 'dept1',
+          name: '部门1',
+          description: '部门1描述',
+          children: [
+            {
+              tagId: 'team1',
+              name: '团队1',
+              description: '团队1描述',
+            },
+            {
+              tagId: 'team2',
+              name: '团队2',
+              description: '团队2描述',
+            },
+          ],
+        },
+        {
+          tagId: 'dept2',
+          name: '部门2',
+          description: '部门2描述',
+          children: null,
+        },
+        {
+          tagId: 'dept2',
+          name: '部门2',
+          description: '部门2描述',
+          children: null,
+        },
+        {
+          tagId: 'dept2',
+          name: '部门2',
+          description: '部门2描述',
+          children: null,
+        },
+        {
+          tagId: 'dept2',
+          name: '部门2',
+          description: '部门2描述',
+          children: null,
+        },
+        {
+          tagId: 'dept2',
+          name: '部门2',
+          description: '部门2描述',
+          children: null,
+        },
+        {
+          tagId: 'dept2',
+          name: '部门2',
+          description: '部门2描述',
+          children: null,
+        },
+        {
+          tagId: 'dept2',
+          name: '部门2',
+          description: '部门2描述',
+          children: null,
+        },
+        {
+          tagId: 'dept2',
+          name: '部门2',
+          description: '部门2描述',
+          children: null,
+        },
+        {
+          tagId: 'dept2',
+          name: '部门2',
+          description: '部门2描述',
+          children: null,
+        },
+        {
+          tagId: 'dept2',
+          name: '部门2',
+          description: '部门2描述',
+          children: null,
+        },
+        {
+          tagId: 'dept2',
+          name: '部门2',
+          description: '部门2描述',
+          children: null,
+        },
+        {
+          tagId: 'dept2',
+          name: '部门2',
+          description: '部门2描述',
+          children: null,
+        },
+        {
+          tagId: 'dept2',
+          name: '部门2',
+          description: '部门2描述',
+          children: null,
+        },
+        {
+          tagId: 'dept2',
+          name: '部门2',
+          description: '部门2描述',
+          children: null,
+        },
+        {
+          tagId: 'dept2',
+          name: '部门2',
+          description: '部门2描述',
+          children: null,
+        },
+      ],
+    }
+  },
   '[POST]/v1/admin/org-tags': () => {
     return {
       code: 200,
       message: 'Organization tag created successfully',
+    }
+  },
+  '[PUT]/v1/admin/org-tags/{tagId}': () => {
+    return {
+      code: 200,
+      message: 'Organization tag updated successfully',
+    }
+  },
+  '[DELETE]/v1/admin/org-tags/{tagId}': () => {
+    return {
+      code: 200,
+      message: 'Organization tag deleted successfully',
     }
   },
   '[PUT]/v1/users/{userId}/org-tags': () => {

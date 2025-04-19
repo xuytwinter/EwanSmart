@@ -1,66 +1,40 @@
 <script setup lang="ts">
-import type { UnwrapRef } from 'vue'
-import { cloneDeep } from 'lodash-es'
-
-function showAdd() {
-
-}
+import OrgTagsOperateDialog from './org-tags-operate-dialog.vue'
 
 const columns = [
-  {
-    title: '标签名',
-    dataIndex: 'name',
-  },
-  {
-    title: '描述',
-    dataIndex: 'description',
-    ellipsis: true,
-  },
-  {
-    title: '操作',
-    dataIndex: 'action',
-    width: 200,
-  },
+  { title: '标签名', dataIndex: 'name' },
+  { title: '描述', dataIndex: 'description', ellipsis: true },
+  { title: '操作', dataIndex: 'action', width: 200 },
 ]
 
-const data = ref<Api.OrgTag[]>([
-  {
-    tagId: '1',
-    description: '1',
-    name: 'John Brown sr.',
-    children: [
-      {
-        name: 'John Brown',
-        tagId: '2',
-        description: '2',
-        children: [],
-      },
-    ],
-  },
-])
-const editableData: UnwrapRef<Record<string, Api.OrgTag>> = reactive({})
+const data = ref<Api.OrgTag[]>([])
 
-function addChild(tagId: string) {
-  data.value.filter(item => tagId === item.tagId)[0].children.push({
-    tagId: '3',
-    name: 'John Brown',
-    description: '3',
-    children: [],
-  })
+onMounted(async () => {
+  await get()
+})
+
+const loading = ref(false)
+async function get() {
+  loading.value = true
+  const res = await fetchGetOrgTree()
+  if (res)
+    data.value = res
+  loading.value = false
 }
 
-function edit(tagId: string) {
-  editableData[tagId] = cloneDeep(data.value.filter(item => tagId === item.tagId)[0])
+const dialogRef = ref<InstanceType<typeof OrgTagsOperateDialog>>()
+function showAdd(tagId?: string) {
+  dialogRef.value?.openAdd(tagId)
 }
-function save(tagId: string) {
-  Object.assign(data.value.filter(item => tagId === item.tagId)[0], editableData[tagId])
-  delete editableData[tagId]
+
+function showEdit(tag: Api.OrgTag) {
+  dialogRef.value?.openEdit(tag)
 }
-function cancel(key: string) {
-  delete editableData[key]
-}
-function remove(tagId: string) {
-  console.log(tagId)
+
+async function remove(tagId: string) {
+  const res = await fetchDeleteOrgTag(tagId)
+  if (res)
+    get()
 }
 </script>
 
@@ -70,48 +44,31 @@ function remove(tagId: string) {
       <a-typography-title :level="5">
         组织标签管理
       </a-typography-title>
-      <a-button type="primary" @click="showAdd">
+      <a-button type="primary" @click="showAdd()">
         新增
       </a-button>
     </div>
-    <a-table :columns="columns" :data-source="data" size="small">
-      <template #bodyCell="{ column, text, record }">
-        <template v-if="['name', 'description'].includes(column.dataIndex as string)">
-          <a-input
-            v-if="editableData[record.tagId]"
-            v-model:value="editableData[record.tagId][column.dataIndex as 'name' | 'description']" m-y--5px flex-1
-          />
-          <template v-else>
-            {{ text }}
-          </template>
-        </template>
+    <a-table
+      row-key="tagId" :scroll="{ y: 420 }" :pagination="false" :columns="columns" :data-source="data"
+      size="small" :loading="loading"
+    >
+      <template #bodyCell="{ column, record }">
         <div v-if="column.dataIndex === 'action'" flex gap-2>
-          <template v-if="editableData[record.tagId]">
-            <a-button type="primary" size="small" ghost @click="save(record.tagId)">
-              保存
+          <a-button type="primary" size="small" ghost @click="showAdd(record.tagId)">
+            新增
+          </a-button>
+          <a-button type="primary" size="small" ghost class="color-#f0a020! b-#f0a020!" @click="showEdit(record as Api.OrgTag)">
+            编辑
+          </a-button>
+          <a-popconfirm title="确定删除该标签吗？" @confirm="remove(record.tagId)">
+            <a-button danger size="small">
+              删除
             </a-button>
-            <a-popconfirm title="确认取消编辑吗?" @confirm="cancel(record.tagId)">
-              <a-button size="small">
-                取消
-              </a-button>
-            </a-popconfirm>
-          </template>
-          <template v-else>
-            <a-button type="primary" size="small" ghost @click="addChild(record.tagId)">
-              新增
-            </a-button>
-            <a-button type="primary" size="small" ghost @click="edit(record.tagId)">
-              编辑
-            </a-button>
-            <a-popconfirm title="确定删除该标签吗？" @confirm="remove(record.tagId)">
-              <a-button danger size="small">
-                删除
-              </a-button>
-            </a-popconfirm>
-          </template>
+          </a-popconfirm>
         </div>
       </template>
     </a-table>
+    <OrgTagsOperateDialog ref="dialogRef" @submitted="get" />
   </div>
 </template>
 

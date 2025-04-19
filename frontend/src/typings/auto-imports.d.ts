@@ -40,6 +40,7 @@ declare global {
   const effectScope: typeof import('vue')['effectScope']
   const extendRef: typeof import('@vueuse/core')['extendRef']
   const fetchCustomBackendError: typeof import('../services/api/auth')['fetchCustomBackendError']
+  const fetchDeleteOrgTag: typeof import('../services/api/org-tags')['fetchDeleteOrgTag']
   const fetchGetOrgTree: typeof import('../services/api/org-tags')['fetchGetOrgTree']
   const fetchGetUserInfo: typeof import('../services/api/auth')['fetchGetUserInfo']
   const fetchRefreshToken: typeof import('../services/api/auth')['fetchRefreshToken']
@@ -369,6 +370,7 @@ declare module 'vue' {
     readonly effectScope: UnwrapRef<typeof import('vue')['effectScope']>
     readonly extendRef: UnwrapRef<typeof import('@vueuse/core')['extendRef']>
     readonly fetchCustomBackendError: UnwrapRef<typeof import('../services/api/auth')['fetchCustomBackendError']>
+    readonly fetchDeleteOrgTag: UnwrapRef<typeof import('../services/api/org-tags')['fetchDeleteOrgTag']>
     readonly fetchGetOrgTree: UnwrapRef<typeof import('../services/api/org-tags')['fetchGetOrgTree']>
     readonly fetchGetUserInfo: UnwrapRef<typeof import('../services/api/auth')['fetchGetUserInfo']>
     readonly fetchRefreshToken: UnwrapRef<typeof import('../services/api/auth')['fetchRefreshToken']>
