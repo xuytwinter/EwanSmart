@@ -65,6 +65,14 @@ const modalRef = ref<InstanceType<typeof OrgTagsSettingModal>>()
 function handleOrg(record: Api.User.Item) {
   modalRef.value?.open(record)
 }
+
+async function setPrimaryOrg(record: Api.User.Item, index: number) {
+  loading.value = true
+  const res = await fetchSetPrimaryOrg({ userId: record.userId, primaryOrg: record.orgTags[index] })
+  if (res)
+    record.primaryOrg = record.orgTags[index]
+  loading.value = false
+}
 </script>
 
 <template>
@@ -104,12 +112,20 @@ function handleOrg(record: Api.User.Item) {
           {{ dayjs(record.lastLoginTime).fromNow() }}
         </template>
         <template v-if="column.dataIndex === 'orgTags'">
-          <a-tag v-for="tag in record.orgTags" :key="tag" :color="record.primaryOrg === tag ? 'blue' : 'default'" cursor-pointer>
-            <OrgTagSpan :tag="tag" />
-          </a-tag>
+          <a-popconfirm
+            v-for="(tag, index) in record.orgTags" :key="tag" :disabled="record.primaryOrg === tag"
+            title="确认要将改组织标签设置为主组织吗？" @confirm="setPrimaryOrg(record as Api.User.Item, index)"
+          >
+            <a-tag :color="record.primaryOrg === tag ? 'blue' : 'default'" cursor-pointer>
+              <OrgTagSpan :tag="tag" />
+            </a-tag>
+          </a-popconfirm>
         </template>
         <template v-if="column.dataIndex === 'action'">
-          <a-button type="link" size="small" class="b-#f0a020 color-#f0a020!" @click="handleOrg(record as Api.User.Item)">
+          <a-button
+            type="link" size="small" class="b-#f0a020 color-#f0a020!"
+            @click="handleOrg(record as Api.User.Item)"
+          >
             组织设置
           </a-button>
         </template>
@@ -119,6 +135,4 @@ function handleOrg(record: Api.User.Item) {
   </div>
 </template>
 
-<style scoped>
-
-</style>
+<style scoped></style>

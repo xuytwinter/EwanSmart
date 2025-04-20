@@ -62,7 +62,7 @@ export const alova = createAlova(
         if (json.code >= 200 && json.code < 300) {
           if (method.config?.meta?.autoTips === true)
             window.$message?.success('操作成功')
-          return Promise.resolve(json.data)
+          return Promise.resolve(json.data || true)
         }
 
         throw new Error(json.message || '请求失败')

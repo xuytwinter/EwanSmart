@@ -45,6 +45,7 @@ declare global {
   const fetchGetUserInfo: typeof import('../services/api/user')['fetchGetUserInfo']
   const fetchGetUserList: typeof import('../services/api/user')['fetchGetUserList']
   const fetchRefreshToken: typeof import('../services/api/auth')['fetchRefreshToken']
+  const fetchSetPrimaryOrg: typeof import('../services/api/org-tags')['fetchSetPrimaryOrg']
   const fetchSignIn: typeof import('../services/api/auth')['fetchSignIn']
   const fetchSignUp: typeof import('../services/api/auth')['fetchSignUp']
   const flatArray: typeof import('../store/auth/shared')['flatArray']
@@ -376,6 +377,7 @@ declare module 'vue' {
     readonly fetchGetUserInfo: UnwrapRef<typeof import('../services/api/user')['fetchGetUserInfo']>
     readonly fetchGetUserList: UnwrapRef<typeof import('../services/api/user')['fetchGetUserList']>
     readonly fetchRefreshToken: UnwrapRef<typeof import('../services/api/auth')['fetchRefreshToken']>
+    readonly fetchSetPrimaryOrg: UnwrapRef<typeof import('../services/api/org-tags')['fetchSetPrimaryOrg']>
     readonly fetchSignIn: UnwrapRef<typeof import('../services/api/auth')['fetchSignIn']>
     readonly fetchSignUp: UnwrapRef<typeof import('../services/api/auth')['fetchSignUp']>
     readonly flatArray: UnwrapRef<typeof import('../store/auth/shared')['flatArray']>
