@@ -627,9 +627,44 @@
             });
         }
 
+        // 添加合并分片的函数
+        async function mergeChunks(fileMD5, fileName) {
+            console.log(`开始合并文件分片: fileMD5=${fileMD5}, fileName=${fileName}`);
+            return new Promise((resolve, reject) => {
+                fetch('/api/v1/upload/merge', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        fileMd5: fileMD5,
+                        fileName: fileName
+                    })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(data => {
+                            console.error(`合并文件失败: HTTP状态码=${response.status}, 错误信息=`, data);
+                            throw new Error(data.error || `合并文件失败: ${response.status} ${response.statusText}`);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('文件合并成功:', data);
+                    resolve(data);
+                })
+                .catch(error => {
+                    console.error('文件合并过程中出错:', error);
+                    reject(error);
+                });
+            });
+        }
+
         // 添加文件分片处理函数
         async function uploadFileInChunks(file) {
-            const chunkSize = 5 * 1024 * 1024; // 1MB per chunk
+            const chunkSize = 5 * 1024 * 1024; // 5MB per chunk
             const totalChunks = Math.ceil(file.size / chunkSize);
             const fileMD5 = await calculateMD5(file);
             const progressBar = document.getElementById('upload-progress');
@@ -657,10 +692,15 @@
                     
                 } catch (error) {
                     progressBar.style.width = '0%';
-                    showResponse('upload-response', `分片 ${chunkIndex + 1} 上传失败: ${error.message}`, false);
+                    showResponse('upload-response', `${error.message}`, false);
                     throw error;
                 }
             }
+            
+            // 所有分片上传完成后，调用合并接口
+            showResponse('upload-response', '所有分片上传完成，开始合并文件...', true);
+            const mergeResult = await mergeChunks(fileMD5, file.name);
+            return mergeResult.object_url;
         }
 
         // 添加单个分片上传函数
@@ -677,9 +717,9 @@
                     } else {
                         try {
                             const response = JSON.parse(xhr.responseText);
-                            reject(new Error(response.message || '上传失败'));
+                            reject(new Error(response.error || response.message || '未知错误'));
                         } catch (e) {
-                            reject(new Error(`上传失败: ${xhr.statusText}`));
+                            reject(new Error(`请求失败: ${xhr.status} ${xhr.statusText}`));
                         }
                     }
                 };
@@ -690,7 +730,7 @@
                 xhr.setRequestHeader('Authorization', `Bearer ${token}`);
                 xhr.setRequestHeader('X-File-MD5', metadata.fileMD5);
                 xhr.setRequestHeader('X-Chunk-Index', metadata.chunkIndex.toString());
-                xhr.setRequestHeader('X-Chunk-Number', metadata.totalChunks.toString());
+                xhr.setRequestHeader('X-Total-Chunks', metadata.totalChunks.toString());
                 xhr.setRequestHeader('X-Total-Size', metadata.totalSize.toString());
                 xhr.setRequestHeader('X-File-Name', encodeURIComponent(metadata.fileName));
                 
@@ -710,13 +750,16 @@
             }
             
             try {
-                await uploadFileInChunks(file);
-                showResponse('upload-response', '文件上传成功', true);
+                const fileUrl = await uploadFileInChunks(file);
+                showResponse('upload-response', `文件上传并处理成功，可以通过以下链接访问：<br><a href="${fileUrl}" target="_blank">${fileUrl}</a>`, true);
                 fileInput.value = '';
                 progressBar.style.width = '0%';
             } catch (error) {
                 console.error('上传失败:', error);
-                showResponse('upload-response', `上传失败: ${error.message}`, false);
+                const errorMessage = error.message.toLowerCase().includes('上传失败') || 
+                                    error.message.toLowerCase().includes('failed') ? 
+                                    error.message : `上传失败: ${error.message}`;
+                showResponse('upload-response', errorMessage, false);
                 progressBar.style.width = '0%';
             }
         }

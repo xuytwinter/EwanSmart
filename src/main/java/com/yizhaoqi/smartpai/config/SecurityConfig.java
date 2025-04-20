@@ -24,6 +24,9 @@ public class SecurityConfig {
 
     @Autowired
     private JwtAuthenticationFilter jwtAuthenticationFilter;
+    
+    @Autowired
+    private OrgTagAuthorizationFilter orgTagAuthorizationFilter;
 
     /**
      * 配置SecurityFilterChain bean的方法
@@ -54,13 +57,18 @@ public class SecurityConfig {
                             .requestMatchers("/api/search/**").hasAnyRole("USER", "ADMIN")
                             // 管理员专属接口 - 知识库管理、系统状态、用户活动监控
                             .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
+                            // 用户组织标签管理接口
+                            .requestMatchers("/api/v1/users/primary-org").hasAnyRole("USER", "ADMIN")
                             // 其他请求需要认证
                             .anyRequest().authenticated())
                     // 配置会话管理策略
                     // 设置会话创建策略为STATELESS，表示不会创建会话，通常用于无状态的API应用
                     .sessionManagement(session -> session
                             .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                    .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+                    // 添加JWT认证过滤器
+                    .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+                    // 添加组织标签授权过滤器
+                    .addFilterAfter(orgTagAuthorizationFilter, JwtAuthenticationFilter.class);
 
             // 记录安全配置加载成功的信息
             logger.info("Security configuration loaded successfully.");

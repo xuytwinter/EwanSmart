@@ -9,18 +9,25 @@
       },
       "text_content": {
         "type": "text",
-        "analyzer": "ik_max_word",
-        "search_analyzer": "ik_smart"
+        "analyzer": "standard"
       },
       "vector": {
         "type": "dense_vector",
-        "dims": 768,
+        "dims": 384,
         "index": true,
         "similarity": "cosine"
       },
       "model_version": {
-        "type": "keyword",
-        "ignore_above": 256
+        "type": "keyword"
+      },
+      "user_id": {
+        "type": "keyword"
+      },
+      "org_tag": {
+        "type": "keyword"
+      },
+      "is_public": {
+        "type": "boolean"
       }
     }
   }

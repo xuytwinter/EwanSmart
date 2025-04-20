@@ -45,6 +45,20 @@ public class FileUpload {
      * 用于记录哪个用户上传了文件
      */
     private String userId;
+    
+    /**
+     * 文件所属组织标签
+     * 用于标识文件归属的组织，支持基于组织标签的权限控制
+     */
+    @Column(name = "org_tag")
+    private String orgTag;
+
+    /**
+     * 文件是否公开
+     * true表示所有用户可访问，false表示仅组织内用户可访问
+     */
+    @Column(name = "is_public", nullable = false)
+    private boolean isPublic = false;
 
     /**
      * 文件上传的创建时间

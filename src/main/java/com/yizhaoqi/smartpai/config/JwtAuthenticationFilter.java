@@ -49,11 +49,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             }
+            filterChain.doFilter(request, response); // 继续执行过滤链
         } catch (Exception e) {
             // 记录错误日志
             logger.error("Cannot set user authentication: {}", e);
         }
-        filterChain.doFilter(request, response); // 继续执行过滤链
     }
 
     /**

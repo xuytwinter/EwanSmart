@@ -32,9 +32,15 @@ public class VectorizationService {
     /**
      * 执行向量化操作
      * @param fileMd5 文件指纹
+     * @param userId 上传用户ID
+     * @param orgTag 组织标签
+     * @param isPublic 是否公开
      */
-    public void vectorize(String fileMd5) {
+    public void vectorize(String fileMd5, String userId, String orgTag, boolean isPublic) {
         try {
+            logger.info("开始向量化文件，fileMd5: {}, userId: {}, orgTag: {}, isPublic: {}", 
+                       fileMd5, userId, orgTag, isPublic);
+                       
             // 获取文件分块内容
             List<TextChunk> chunks = fetchTextChunks(fileMd5);
             if (chunks == null || chunks.isEmpty()) {
@@ -58,7 +64,10 @@ public class VectorizationService {
                             chunks.get(i).getChunkId(),
                             chunks.get(i).getContent(),
                             vectors.get(i),
-                            "deepseek-embed" // 更新为 DeepSeek 的模型版本
+                            "deepseek-embed", // 更新为 DeepSeek 的模型版本
+                            userId,
+                            orgTag,
+                            isPublic
                     ))
                     .toList();
 
@@ -69,6 +78,15 @@ public class VectorizationService {
             logger.error("向量化失败，fileMd5: {}", fileMd5, e);
             throw new RuntimeException("向量化失败", e);
         }
+    }
+    
+    /**
+     * 兼容旧版本的向量化方法
+     * @param fileMd5 文件指纹
+     */
+    public void vectorize(String fileMd5) {
+        // 使用默认值调用新方法
+        vectorize(fileMd5, "unknown", "DEFAULT", false);
     }
 
     /**

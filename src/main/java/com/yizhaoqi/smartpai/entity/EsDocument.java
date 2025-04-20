@@ -3,7 +3,10 @@ package com.yizhaoqi.smartpai.entity;
 
 import lombok.Data;
 
-// Elasticsearch存储的文档实体类
+/**
+ * Elasticsearch存储的文档实体类
+ * 包含文档内容和权限信息
+ */
 @Data
 public class EsDocument {
 
@@ -13,13 +16,31 @@ public class EsDocument {
     private String textContent;    // 文本内容
     private float[] vector;        // 向量数据（768维）
     private String modelVersion;   // 向量生成模型版本
+    private String userId;         // 上传用户ID
+    private String orgTag;         // 组织标签
+    private boolean isPublic;      // 是否公开
 
-    public EsDocument(String string, String fileMd5, int chunkId, String content, float[] floats, String s) {
-        this.id = string;
+    /**
+     * 完整构造函数，包含权限字段
+     */
+    public EsDocument(String id, String fileMd5, int chunkId, String content, 
+                     float[] vector, String modelVersion, 
+                     String userId, String orgTag, boolean isPublic) {
+        this.id = id;
         this.fileMd5 = fileMd5;
         this.chunkId = chunkId;
         this.textContent = content;
-        this.vector = floats;
-        this.modelVersion = s;
+        this.vector = vector;
+        this.modelVersion = modelVersion;
+        this.userId = userId;
+        this.orgTag = orgTag;
+        this.isPublic = isPublic;
+    }
+    
+    /**
+     * 兼容旧版本的构造函数
+     */
+    public EsDocument(String id, String fileMd5, int chunkId, String content, float[] vector, String modelVersion) {
+        this(id, fileMd5, chunkId, content, vector, modelVersion, "unknown", "DEFAULT", false);
     }
 }
