@@ -6,12 +6,14 @@ import UserManage from './user-manage/index.vue'
 const { visible } = storeToRefs(useSettingsStore())
 
 const activeKey = ref('org-tags')
+
+const { isAdmin } = storeToRefs(useAuthStore())
 </script>
 
 <template>
   <a-modal v-model:open="visible" title="设置" centered class="w-1200px!" :mask-closable="false">
     <a-tabs v-model:active-key="activeKey" tab-position="left" :tab-bar-gutter="0">
-      <a-tab-pane key="org-tags">
+      <a-tab-pane v-if="isAdmin" key="org-tags">
         <template #tab>
           <span class="tab">
             <div i-carbon-chart-treemap />
@@ -20,7 +22,7 @@ const activeKey = ref('org-tags')
         </template>
         <OrgTags />
       </a-tab-pane>
-      <a-tab-pane key="user-manage">
+      <a-tab-pane v-if="isAdmin" key="user-manage">
         <template #tab>
           <span class="tab">
             <div i-carbon-id-management />

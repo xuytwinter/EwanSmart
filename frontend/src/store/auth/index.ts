@@ -10,6 +10,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   const userInfo = ref<Api.User.Info>(getDefaultUserInfo())
 
+  const isAdmin = computed(() => userInfo.value.role === 'ADMIN')
+
   const { redirectFromLogin, toLogin } = useRouterPush()
 
   async function signIn(username: string, password: string, redirect = true) {
@@ -53,6 +55,7 @@ export const useAuthStore = defineStore('auth', () => {
     signOut,
     userInfo,
     isLogin,
+    isAdmin,
     getUserInfo,
   }
 })
