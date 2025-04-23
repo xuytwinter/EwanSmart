@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
+import KnowledgeBase from './knowledge-base/index.vue'
 import OrgTags from './org-tags/index.vue'
 import UserManage from './user-manage/index.vue'
 
@@ -30,6 +31,15 @@ const { isAdmin } = storeToRefs(useAuthStore())
           </span>
         </template>
         <UserManage />
+      </a-tab-pane>
+      <a-tab-pane key="knowledge-base">
+        <template #tab>
+          <span class="tab">
+            <div i-carbon-ibm-watson-knowledge-studio />
+            知识库
+          </span>
+        </template>
+        <KnowledgeBase />
       </a-tab-pane>
       <a-tab-pane key="account">
         <template #tab>

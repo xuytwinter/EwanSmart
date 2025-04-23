@@ -152,6 +152,36 @@ export default defineMock({
       },
     }
   },
+  '[GET]/v1/admin/files': () => {
+    return {
+      code: 200,
+      message: 'File list retrieved successfully',
+      data: {
+        content: [
+          {
+            fileName: '文件1',
+            totalSize: 1024,
+            status: 1,
+            orgTag: 'dept1',
+            isPublic: true,
+            createdAt: '2023-01-01T12:00:00Z',
+          },
+          {
+            fileName: '文件2',
+            totalSize: 2048,
+            status: 0,
+            orgTag: 'dept2',
+            isPublic: false,
+            createdAt: '2023-01-02T12:00:00Z',
+          },
+        ],
+        totalElements: 150,
+        totalPages: 8,
+        size: 20,
+        number: 0,
+      },
+    }
+  },
   '[POST]/v1/upload/chunk': () => {
     return {
       code: 200,

@@ -41,6 +41,7 @@ declare global {
   const extendRef: typeof import('@vueuse/core')['extendRef']
   const fetchCustomBackendError: typeof import('../services/api/auth')['fetchCustomBackendError']
   const fetchDeleteOrgTag: typeof import('../services/api/org-tags')['fetchDeleteOrgTag']
+  const fetchGetFileList: typeof import('../services/api/knowledge-base')['fetchGetFileList']
   const fetchGetOrgTree: typeof import('../services/api/org-tags')['fetchGetOrgTree']
   const fetchGetUserInfo: typeof import('../services/api/user')['fetchGetUserInfo']
   const fetchGetUserList: typeof import('../services/api/user')['fetchGetUserList']
@@ -373,6 +374,7 @@ declare module 'vue' {
     readonly extendRef: UnwrapRef<typeof import('@vueuse/core')['extendRef']>
     readonly fetchCustomBackendError: UnwrapRef<typeof import('../services/api/auth')['fetchCustomBackendError']>
     readonly fetchDeleteOrgTag: UnwrapRef<typeof import('../services/api/org-tags')['fetchDeleteOrgTag']>
+    readonly fetchGetFileList: UnwrapRef<typeof import('../services/api/knowledge-base')['fetchGetFileList']>
     readonly fetchGetOrgTree: UnwrapRef<typeof import('../services/api/org-tags')['fetchGetOrgTree']>
     readonly fetchGetUserInfo: UnwrapRef<typeof import('../services/api/user')['fetchGetUserInfo']>
     readonly fetchGetUserList: UnwrapRef<typeof import('../services/api/user')['fetchGetUserList']>
