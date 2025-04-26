@@ -2,6 +2,7 @@
 import type { FormInstance, PaginationProps } from 'ant-design-vue'
 import dayjs from 'dayjs'
 import { fileSize } from '~/utils'
+import FileUploadDialog from './file-upload-dialog.vue'
 
 const columns = [
   { title: '文件名', dataIndex: 'fileName', width: 120 },
@@ -53,6 +54,17 @@ function reset() {
   formRef.value?.resetFields()
   get()
 }
+
+const dialogRef = ref<InstanceType<typeof FileUploadDialog>>()
+function add() {
+  dialogRef.value?.open()
+}
+
+async function remove(fileMd5: string) {
+  const res = await fetchDeleteFile(fileMd5)
+  if (res)
+    get()
+}
 </script>
 
 <template>
@@ -64,11 +76,14 @@ function reset() {
         </a-form-item>
       </a-form>
       <div flex gap-2>
-        <a-button type="primary" ghost size="small" @click="reset()">
+        <a-button size="small" @click="reset">
           重置
         </a-button>
-        <a-button type="primary" size="small" @click="get()">
+        <a-button type="primary" ghost size="small" @click="get">
           查询
+        </a-button>
+        <a-button type="primary" size="small" @click="add">
+          新增
         </a-button>
       </div>
     </div>
@@ -90,16 +105,27 @@ function reset() {
             {{ record.isPublic ? '是' : '否' }}
           </a-tag>
         </template>
+        <template v-if="column.dataIndex === 'orgTag'">
+          <OrgTagSpan :tag="record.orgTag" />
+        </template>
         <template v-if="column.dataIndex === 'createdAt'">
           {{ dayjs(record.createdAt).format('YYYY-MM-DD HH:mm:ss') }}
         </template>
         <template v-if="column.dataIndex === 'action'">
-          <a-button type="link" size="small" class="b-#f0a020 color-#f0a020!">
-            删除
-          </a-button>
+          <a-popconfirm
+            title="确定要删除该文件吗？"
+            ok-text="确定"
+            cancel-text="取消"
+            @confirm="remove(record.fileMd5)"
+          >
+            <a-button type="link" size="small" class="b-#f0a020 color-#f0a020!">
+              删除
+            </a-button>
+          </a-popconfirm>
         </template>
       </template>
     </a-table>
+    <FileUploadDialog ref="dialogRef" @submitted="get()" />
   </div>
 </template>
 

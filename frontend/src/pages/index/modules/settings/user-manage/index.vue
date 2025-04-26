@@ -90,10 +90,10 @@ async function setPrimaryOrg(record: Api.User.Item, index: number) {
         </a-form-item>
       </a-form>
       <div flex gap-2>
-        <a-button type="primary" ghost size="small" @click="reset()">
+        <a-button size="small" @click="reset()">
           重置
         </a-button>
-        <a-button type="primary" size="small" @click="get()">
+        <a-button type="primary" ghost size="small" @click="get()">
           查询
         </a-button>
       </div>

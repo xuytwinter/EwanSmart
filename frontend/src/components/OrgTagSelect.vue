@@ -5,7 +5,7 @@ const { privateDisabled = false } = defineProps<{
   privateDisabled?: boolean
 }>()
 
-const value = defineModel<string | string[] | undefined>('value')
+const value = defineModel<string | string[] | null | undefined>('value')
 
 const store = useSettingsStore()
 

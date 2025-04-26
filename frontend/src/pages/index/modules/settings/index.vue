@@ -14,7 +14,7 @@ const { isAdmin } = storeToRefs(useAuthStore())
 <template>
   <a-modal v-model:open="visible" title="设置" centered class="w-1200px!" :mask-closable="false">
     <a-tabs v-model:active-key="activeKey" tab-position="left" :tab-bar-gutter="0">
-      <a-tab-pane v-if="isAdmin" key="org-tags">
+      <a-tab-pane v-if="!isAdmin" key="org-tags">
         <template #tab>
           <span class="tab">
             <div i-carbon-chart-treemap />
@@ -23,7 +23,7 @@ const { isAdmin } = storeToRefs(useAuthStore())
         </template>
         <OrgTags />
       </a-tab-pane>
-      <a-tab-pane v-if="isAdmin" key="user-manage">
+      <a-tab-pane v-if="!isAdmin" key="user-manage">
         <template #tab>
           <span class="tab">
             <div i-carbon-id-management />

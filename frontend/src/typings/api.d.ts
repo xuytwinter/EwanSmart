@@ -61,7 +61,17 @@ declare namespace Api {
       fileName?: string
     }
 
+    interface Form {
+      fileMd5: string
+      chunkIndex: number
+      totalSize: number
+      fileName: string
+      orgTag: string | null
+      isPublic: boolean
+    }
+
     interface Item {
+      fileMd5: string
       fileName: string
       totalSize: number
       status: 0 | 1 // 0=上传中,1=已完成
@@ -71,5 +81,28 @@ declare namespace Api {
     }
 
     interface List extends PageList<Item> { }
+
+    interface Chunk {
+      file: any
+      fileMd5: string
+      chunkIndex: number
+      totalSize: number
+      fileName: string
+      orgTag: string | null
+      isPublic: boolean
+    }
+
+    type Merge = Pick<Chunk, 'fileMd5' | 'fileName'>
+
+    interface Progress {
+      uploaded: number[]
+      progress: number
+      totalChunks: number
+    }
+
+    interface Result {
+      objectUrl: string
+      fileSize: number
+    }
   }
 }

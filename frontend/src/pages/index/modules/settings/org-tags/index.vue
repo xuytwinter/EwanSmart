@@ -45,7 +45,7 @@ async function remove(tagId: string) {
         组织标签管理
       </a-typography-title>
       <div flex gap-2>
-        <a-button type="primary" ghost size="small" @click="get()">
+        <a-button size="small" @click="get()">
           刷新
         </a-button>
         <a-button type="primary" size="small" @click="showAdd()">

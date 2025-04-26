@@ -40,15 +40,19 @@ declare global {
   const effectScope: typeof import('vue')['effectScope']
   const extendRef: typeof import('@vueuse/core')['extendRef']
   const fetchCustomBackendError: typeof import('../services/api/auth')['fetchCustomBackendError']
+  const fetchDeleteFile: typeof import('../services/api/knowledge-base')['fetchDeleteFile']
   const fetchDeleteOrgTag: typeof import('../services/api/org-tags')['fetchDeleteOrgTag']
   const fetchGetFileList: typeof import('../services/api/knowledge-base')['fetchGetFileList']
   const fetchGetOrgTree: typeof import('../services/api/org-tags')['fetchGetOrgTree']
+  const fetchGetUploadStatus: typeof import('../services/api/knowledge-base')['fetchGetUploadStatus']
   const fetchGetUserInfo: typeof import('../services/api/user')['fetchGetUserInfo']
   const fetchGetUserList: typeof import('../services/api/user')['fetchGetUserList']
+  const fetchMergeChunk: typeof import('../services/api/knowledge-base')['fetchMergeChunk']
   const fetchRefreshToken: typeof import('../services/api/auth')['fetchRefreshToken']
   const fetchSetPrimaryOrg: typeof import('../services/api/org-tags')['fetchSetPrimaryOrg']
   const fetchSignIn: typeof import('../services/api/auth')['fetchSignIn']
   const fetchSignUp: typeof import('../services/api/auth')['fetchSignUp']
+  const fetchUploadChunk: typeof import('../services/api/knowledge-base')['fetchUploadChunk']
   const flatArray: typeof import('../store/auth/shared')['flatArray']
   const getActivePinia: typeof import('pinia')['getActivePinia']
   const getCurrentInstance: typeof import('vue')['getCurrentInstance']
@@ -203,6 +207,7 @@ declare global {
   const useFavicon: typeof import('@vueuse/core')['useFavicon']
   const useFetch: typeof import('@vueuse/core')['useFetch']
   const useFileDialog: typeof import('@vueuse/core')['useFileDialog']
+  const useFileStore: typeof import('../store/settings/file')['useFileStore']
   const useFileSystemAccess: typeof import('@vueuse/core')['useFileSystemAccess']
   const useFocus: typeof import('@vueuse/core')['useFocus']
   const useFocusWithin: typeof import('@vueuse/core')['useFocusWithin']
@@ -297,6 +302,7 @@ declare global {
   const useToString: typeof import('@vueuse/core')['useToString']
   const useToggle: typeof import('@vueuse/core')['useToggle']
   const useTransition: typeof import('@vueuse/core')['useTransition']
+  const useUploadStore: typeof import('../store/settings/file')['useUploadStore']
   const useUrlSearchParams: typeof import('@vueuse/core')['useUrlSearchParams']
   const useUserMedia: typeof import('@vueuse/core')['useUserMedia']
   const useVModel: typeof import('@vueuse/core')['useVModel']
@@ -373,15 +379,19 @@ declare module 'vue' {
     readonly effectScope: UnwrapRef<typeof import('vue')['effectScope']>
     readonly extendRef: UnwrapRef<typeof import('@vueuse/core')['extendRef']>
     readonly fetchCustomBackendError: UnwrapRef<typeof import('../services/api/auth')['fetchCustomBackendError']>
+    readonly fetchDeleteFile: UnwrapRef<typeof import('../services/api/knowledge-base')['fetchDeleteFile']>
     readonly fetchDeleteOrgTag: UnwrapRef<typeof import('../services/api/org-tags')['fetchDeleteOrgTag']>
     readonly fetchGetFileList: UnwrapRef<typeof import('../services/api/knowledge-base')['fetchGetFileList']>
     readonly fetchGetOrgTree: UnwrapRef<typeof import('../services/api/org-tags')['fetchGetOrgTree']>
+    readonly fetchGetUploadStatus: UnwrapRef<typeof import('../services/api/knowledge-base')['fetchGetUploadStatus']>
     readonly fetchGetUserInfo: UnwrapRef<typeof import('../services/api/user')['fetchGetUserInfo']>
     readonly fetchGetUserList: UnwrapRef<typeof import('../services/api/user')['fetchGetUserList']>
+    readonly fetchMergeChunk: UnwrapRef<typeof import('../services/api/knowledge-base')['fetchMergeChunk']>
     readonly fetchRefreshToken: UnwrapRef<typeof import('../services/api/auth')['fetchRefreshToken']>
     readonly fetchSetPrimaryOrg: UnwrapRef<typeof import('../services/api/org-tags')['fetchSetPrimaryOrg']>
     readonly fetchSignIn: UnwrapRef<typeof import('../services/api/auth')['fetchSignIn']>
     readonly fetchSignUp: UnwrapRef<typeof import('../services/api/auth')['fetchSignUp']>
+    readonly fetchUploadChunk: UnwrapRef<typeof import('../services/api/knowledge-base')['fetchUploadChunk']>
     readonly flatArray: UnwrapRef<typeof import('../store/auth/shared')['flatArray']>
     readonly getActivePinia: UnwrapRef<typeof import('pinia')['getActivePinia']>
     readonly getCurrentInstance: UnwrapRef<typeof import('vue')['getCurrentInstance']>
@@ -629,6 +639,7 @@ declare module 'vue' {
     readonly useToString: UnwrapRef<typeof import('@vueuse/core')['useToString']>
     readonly useToggle: UnwrapRef<typeof import('@vueuse/core')['useToggle']>
     readonly useTransition: UnwrapRef<typeof import('@vueuse/core')['useTransition']>
+    readonly useUploadStore: UnwrapRef<typeof import('../store/settings/file')['useUploadStore']>
     readonly useUrlSearchParams: UnwrapRef<typeof import('@vueuse/core')['useUrlSearchParams']>
     readonly useUserMedia: UnwrapRef<typeof import('@vueuse/core')['useUserMedia']>
     readonly useVModel: UnwrapRef<typeof import('@vueuse/core')['useVModel']>

@@ -152,34 +152,23 @@ export default defineMock({
       },
     }
   },
-  '[GET]/v1/admin/files': () => {
+  '[GET]/v1/documents/uploads': () => {
     return {
       code: 200,
       message: 'File list retrieved successfully',
-      data: {
-        content: [
-          {
-            fileName: '文件1',
-            totalSize: 1024,
-            status: 1,
-            orgTag: 'dept1',
-            isPublic: true,
-            createdAt: '2023-01-01T12:00:00Z',
-          },
-          {
-            fileName: '文件2',
-            totalSize: 2048,
-            status: 0,
-            orgTag: 'dept2',
-            isPublic: false,
-            createdAt: '2023-01-02T12:00:00Z',
-          },
-        ],
-        totalElements: 150,
-        totalPages: 8,
-        size: 20,
-        number: 0,
-      },
+      data: [
+        {
+          fileMd5: 'a1b2c3d4e5f6g7h8i9j0',
+          fileName: '我的文档.pdf',
+          totalSize: 1048576,
+          status: 1,
+          userId: 'user123',
+          orgTag: 'DEPT_FINANCE',
+          isPublic: true,
+          createdAt: '2023-10-01T10:30:00',
+          mergedAt: '2023-10-01T10:35:00',
+        },
+      ],
     }
   },
   '[POST]/v1/upload/chunk': () => {
