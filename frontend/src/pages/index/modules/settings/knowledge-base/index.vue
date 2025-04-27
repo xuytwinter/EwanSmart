@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import type { FormInstance, PaginationProps } from 'ant-design-vue'
 import dayjs from 'dayjs'
 import { fileSize } from '~/utils'
 import FileUploadDialog from './file-upload-dialog.vue'
@@ -14,45 +13,21 @@ const columns = [
   { title: '操作', dataIndex: 'action', width: 100 },
 ]
 
-const data = ref<Api.File.Item[]>([])
-
-const form = ref<Api.File.Params>({
-  page: 1,
-  size: 10,
-})
+const { list } = storeToRefs(useKnowledgeBaseStore())
 
 onMounted(async () => {
   await get()
 })
 
 const loading = ref(false)
-const pagination = ref<PaginationProps>({
-  current: 1,
-  pageSize: 10,
-  total: 0,
-  onChange: (page: number, pageSize: number) => {
-    pagination.value.current = page
-    pagination.value.pageSize = pageSize
-    get()
-  },
-})
 
 async function get() {
   loading.value = true
-  const res = await fetchGetFileList({ ...form.value, page: pagination.value.current, size: pagination.value.pageSize })
+  const res = await fetchGetFileList()
   if (res) {
-    data.value = res.content
-    pagination.value.total = res.totalElements
+    list.value = res
   }
   loading.value = false
-}
-
-const formRef = ref<FormInstance>()
-function reset() {
-  pagination.value.current = 1
-  pagination.value.pageSize = 10
-  formRef.value?.resetFields()
-  get()
 }
 
 const dialogRef = ref<InstanceType<typeof FileUploadDialog>>()
@@ -69,26 +44,21 @@ async function remove(fileMd5: string) {
 
 <template>
   <div flex-y gap-4 h-full>
-    <div flex-bc gap-2>
-      <a-form ref="formRef" :model="form" layout="inline" size="small" :colon="false">
-        <a-form-item label="文件名" name="keyword" w-250px>
-          <a-input v-model:value="form.keyword" placeholder="请输入文件名查询" />
-        </a-form-item>
-      </a-form>
+    <div mb-2 flex-bc>
+      <a-typography-title :level="5">
+        知识库管理
+      </a-typography-title>
       <div flex gap-2>
-        <a-button size="small" @click="reset">
-          重置
+        <a-button size="small" @click="get()">
+          刷新
         </a-button>
-        <a-button type="primary" ghost size="small" @click="get">
-          查询
-        </a-button>
-        <a-button type="primary" size="small" @click="add">
+        <a-button type="primary" size="small" @click="add()">
           新增
         </a-button>
       </div>
     </div>
     <a-table
-      row-key="userId" :scroll="{ y: 420 }" :pagination="pagination" :columns="columns" :data-source="data"
+      row-key="userId" :scroll="{ y: 420 }" :pagination="false" :columns="columns" :data-source="list"
       size="small" :loading="loading"
     >
       <template #bodyCell="{ column, record }">
@@ -112,12 +82,7 @@ async function remove(fileMd5: string) {
           {{ dayjs(record.createdAt).format('YYYY-MM-DD HH:mm:ss') }}
         </template>
         <template v-if="column.dataIndex === 'action'">
-          <a-popconfirm
-            title="确定要删除该文件吗？"
-            ok-text="确定"
-            cancel-text="取消"
-            @confirm="remove(record.fileMd5)"
-          >
+          <a-popconfirm title="确定要删除该文件吗？" ok-text="确定" cancel-text="取消" @confirm="remove(record.fileMd5)">
             <a-button type="link" size="small" class="b-#f0a020 color-#f0a020!">
               删除
             </a-button>

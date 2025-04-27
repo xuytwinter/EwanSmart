@@ -58,6 +58,9 @@ importers:
       '@types/node':
         specifier: ^22.14.1
         version: 22.14.1
+      '@types/spark-md5':
+        specifier: ^3.0.5
+        version: 3.0.5
       '@unocss/eslint-config':
         specifier: ^66.1.0-beta.12
         version: 66.1.0-beta.12(eslint@9.25.0(jiti@2.4.2))(typescript@5.8.3)
@@ -1133,6 +1136,9 @@ packages:
 
   '@types/normalize-package-data@2.4.3':
     resolution: {integrity: sha512-ehPtgRgaULsFG8x0NeYJvmyH1hmlfsNLujHe9dQEia/7MAJYdzMSi19JtchUHjmBA6XC/75dK55mzZH+RyieSg==}
+
+  '@types/spark-md5@3.0.5':
+    resolution: {integrity: sha512-lWf05dnD42DLVKQJZrDHtWFidcLrHuip01CtnC2/S6AMhX4t9ZlEUj4iuRlAnts0PQk7KESOqKxeGE/b6sIPGg==}
 
   '@types/unist@3.0.3':
     resolution: {integrity: sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==}
@@ -4927,6 +4933,8 @@ snapshots:
       undici-types: 6.21.0
 
   '@types/normalize-package-data@2.4.3': {}
+
+  '@types/spark-md5@3.0.5': {}
 
   '@types/unist@3.0.3': {}
 

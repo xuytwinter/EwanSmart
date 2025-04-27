@@ -1,5 +1,5 @@
 export function fetchGetFileList() {
-  return alova.Get<Api.File.List>('/v1/documents/uploads')
+  return alova.Get<Api.File.Item[]>('/v1/documents/uploads')
 }
 
 export function fetchUploadChunk(data: Api.File.Chunk) {

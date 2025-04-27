@@ -57,10 +57,6 @@ declare namespace Api {
   }
 
   namespace File {
-    interface Params extends PageParams {
-      fileName?: string
-    }
-
     interface Form {
       fileMd5: string
       chunkIndex: number
@@ -79,8 +75,6 @@ declare namespace Api {
       isPublic: boolean
       createdAt: string
     }
-
-    interface List extends PageList<Item> { }
 
     interface Chunk {
       file: any
