@@ -274,7 +274,12 @@ public class UserService {
         tag.setParentTag(parentTag);
         tag.setCreatedBy(creator);
         
-        return organizationTagRepository.save(tag);
+        OrganizationTag savedTag = organizationTagRepository.save(tag);
+        
+        // 清除标签缓存，因为层级关系可能变化
+        orgTagCacheService.invalidateAllEffectiveTagsCache();
+        
+        return savedTag;
     }
     
     /**
@@ -339,6 +344,9 @@ public class UserService {
         // 更新缓存
         orgTagCacheService.deleteUserOrgTagsCache(user.getUsername());
         orgTagCacheService.cacheUserOrgTags(user.getUsername(), new ArrayList<>(finalTags));
+        // 同时清除有效标签缓存
+        orgTagCacheService.deleteUserEffectiveTagsCache(user.getUsername());
+        
         if (user.getPrimaryOrg() != null && !user.getPrimaryOrg().isEmpty()) {
             orgTagCacheService.cacheUserPrimaryOrg(user.getUsername(), user.getPrimaryOrg());
         }
@@ -492,14 +500,14 @@ public class UserService {
             node.put("tagId", tag.getTagId());
             node.put("name", tag.getName());
             node.put("description", tag.getDescription());
+            node.put("parentTag", tag.getParentTag()); // 添加父标签字段
             
             // 获取子标签
             List<OrganizationTag> children = organizationTagRepository.findByParentTag(tag.getTagId());
             if (!children.isEmpty()) {
                 node.put("children", buildTagTreeRecursive(children));
-            } else {
-                node.put("children", Collections.emptyList());
             }
+            // 如果没有子节点，不添加children字段，而不是添加空数组
             
             result.add(node);
         }
@@ -560,7 +568,12 @@ public class UserService {
         
         tag.setParentTag(parentTag);
         
-        return organizationTagRepository.save(tag);
+        OrganizationTag updatedTag = organizationTagRepository.save(tag);
+        
+        // 清除所有标签缓存，因为层级关系可能变化
+        orgTagCacheService.invalidateAllEffectiveTagsCache();
+        
+        return updatedTag;
     }
     
     /**
@@ -653,7 +666,11 @@ public class UserService {
         
         // 删除标签
         organizationTagRepository.delete(tag);
-        logger.info("Organization tag deleted: {}", tagId);
+        
+        // 清除所有标签缓存，因为层级关系可能变化
+        orgTagCacheService.invalidateAllEffectiveTagsCache();
+        
+        logger.info("Organization tag deleted successfully: {}", tagId);
     }
     
     /**
@@ -667,8 +684,10 @@ public class UserService {
      * @return 用户列表数据
      */
     public Map<String, Object> getUserList(String keyword, String orgTag, Integer status, int page, int size) {
+        // 页码从1开始，需要转换为从0开始
+        int pageIndex = page > 0 ? page - 1 : 0;
         // 创建分页请求
-        Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
+        Pageable pageable = PageRequest.of(pageIndex, size, Sort.by("createdAt").descending());
         
         // 获取用户列表
         Page<User> userPage;
@@ -779,7 +798,7 @@ public class UserService {
         result.put("totalElements", userPage.getTotalElements());
         result.put("totalPages", userPage.getTotalPages());
         result.put("size", userPage.getSize());
-        result.put("number", userPage.getNumber());
+        result.put("number", userPage.getNumber() + 1); // 转换为从1开始的页码
         
         return result;
     }

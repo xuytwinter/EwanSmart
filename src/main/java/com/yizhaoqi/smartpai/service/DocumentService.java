@@ -1,8 +1,10 @@
 package com.yizhaoqi.smartpai.service;
 
 import com.yizhaoqi.smartpai.model.FileUpload;
+import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.DocumentVectorRepository;
 import com.yizhaoqi.smartpai.repository.FileUploadRepository;
+import com.yizhaoqi.smartpai.repository.UserRepository;
 import io.minio.MinioClient;
 import io.minio.RemoveObjectArgs;
 import org.slf4j.Logger;
@@ -35,6 +37,12 @@ public class DocumentService {
 
     @Autowired
     private ElasticsearchService elasticsearchService;
+
+    @Autowired
+    private OrgTagCacheService orgTagCacheService;
+
+    @Autowired
+    private UserRepository userRepository;
 
     /**
      * 删除文档及其相关数据
@@ -101,23 +109,35 @@ public class DocumentService {
     
     /**
      * 获取用户可访问的所有文件列表
-     * 包括用户自己的文件、公开文件和用户所属组织的文件
+     * 包括用户自己的文件、公开文件和用户所属组织的文件（支持层级权限）
      *
      * @param userId 用户ID
-     * @param orgTags 用户所属的组织标签（逗号分隔的字符串）
+     * @param orgTags 用户所属的组织标签（逗号分隔的字符串，仅供兼容性使用）
      * @return 用户可访问的文件列表
      */
     public List<FileUpload> getAccessibleFiles(String userId, String orgTags) {
-        logger.info("获取用户可访问文件列表: userId={}, orgTags={}", userId, orgTags);
+        logger.info("获取用户可访问文件列表: userId={}", userId);
         
         try {
-            // 将逗号分隔的组织标签字符串转换为列表
-            List<String> orgTagList = Arrays.stream(orgTags.split(","))
-                    .filter(tag -> !tag.isEmpty())
-                    .collect(Collectors.toList());
+            // 获取用户有效的组织标签（包含层级关系）
+            User user = userRepository.findById(Long.parseLong(userId))
+                .orElseThrow(() -> new RuntimeException("用户不存在: " + userId));
             
-            // 调用Repository方法获取数据
-            List<FileUpload> files = fileUploadRepository.findAccessibleFiles(userId, orgTagList);
+            List<String> userEffectiveTags = orgTagCacheService.getUserEffectiveOrgTags(user.getUsername());
+            logger.debug("用户有效组织标签: {}", userEffectiveTags);
+            
+            // 使用有效标签查询文件
+            List<FileUpload> files;
+            if (userEffectiveTags.isEmpty()) {
+                // 如果用户没有任何组织标签，只返回自己的文件和公开文件
+                files = fileUploadRepository.findByUserIdOrIsPublicTrue(userId);
+                logger.debug("用户无组织标签，仅返回个人和公开文件");
+            } else {
+                // 查询用户可访问的所有文件（考虑层级标签）
+                files = fileUploadRepository.findAccessibleFilesWithTags(userId, userEffectiveTags);
+                logger.debug("使用有效组织标签查询文件");
+            }
+            
             logger.info("成功获取用户可访问文件列表: userId={}, fileCount={}", userId, files.size());
             return files;
         } catch (Exception e) {
