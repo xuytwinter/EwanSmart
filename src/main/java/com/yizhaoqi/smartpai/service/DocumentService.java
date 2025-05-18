@@ -11,6 +11,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+
 /**
  * 文档管理服务类
  * 负责文档的删除等管理操作
@@ -92,6 +96,52 @@ public class DocumentService {
         } catch (Exception e) {
             logger.error("删除文档过程中发生错误: {}", fileMd5, e);
             throw new RuntimeException("删除文档失败: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * 获取用户可访问的所有文件列表
+     * 包括用户自己的文件、公开文件和用户所属组织的文件
+     *
+     * @param userId 用户ID
+     * @param orgTags 用户所属的组织标签（逗号分隔的字符串）
+     * @return 用户可访问的文件列表
+     */
+    public List<FileUpload> getAccessibleFiles(String userId, String orgTags) {
+        logger.info("获取用户可访问文件列表: userId={}, orgTags={}", userId, orgTags);
+        
+        try {
+            // 将逗号分隔的组织标签字符串转换为列表
+            List<String> orgTagList = Arrays.stream(orgTags.split(","))
+                    .filter(tag -> !tag.isEmpty())
+                    .collect(Collectors.toList());
+            
+            // 调用Repository方法获取数据
+            List<FileUpload> files = fileUploadRepository.findAccessibleFiles(userId, orgTagList);
+            logger.info("成功获取用户可访问文件列表: userId={}, fileCount={}", userId, files.size());
+            return files;
+        } catch (Exception e) {
+            logger.error("获取用户可访问文件列表失败: userId={}", userId, e);
+            throw new RuntimeException("获取可访问文件列表失败: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * 获取用户上传的所有文件列表
+     *
+     * @param userId 用户ID
+     * @return 用户上传的文件列表
+     */
+    public List<FileUpload> getUserUploadedFiles(String userId) {
+        logger.info("获取用户上传的文件列表: userId={}", userId);
+        
+        try {
+            List<FileUpload> files = fileUploadRepository.findByUserId(userId);
+            logger.info("成功获取用户上传的文件列表: userId={}, fileCount={}", userId, files.size());
+            return files;
+        } catch (Exception e) {
+            logger.error("获取用户上传的文件列表失败: userId={}", userId, e);
+            throw new RuntimeException("获取用户上传的文件列表失败: " + e.getMessage(), e);
         }
     }
 } 

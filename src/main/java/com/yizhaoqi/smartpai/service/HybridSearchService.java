@@ -6,14 +6,19 @@ import co.elastic.clients.json.JsonData;
 import com.yizhaoqi.smartpai.client.EmbeddingClient;
 import com.yizhaoqi.smartpai.entity.EsDocument;
 import com.yizhaoqi.smartpai.entity.SearchResult;
+import com.yizhaoqi.smartpai.exception.CustomException;
+import com.yizhaoqi.smartpai.model.User;
+import com.yizhaoqi.smartpai.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.http.HttpStatus;
 
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 // 混合检索服务
@@ -30,6 +35,9 @@ public class HybridSearchService {
     
     @Autowired
     private UserService userService;
+
+    @Autowired
+    private UserRepository userRepository;
 
     /**
      * 带权限控制的混合检索实现
@@ -359,13 +367,26 @@ public class HybridSearchService {
      */
     private List<String> getUserOrgTags(String userId) {
         try {
-            String orgTagsStr = userService.getUserOrgTags(userId).get("orgTags").toString();
+            // 查找用户信息
+            User user;
+            try {
+                Long userIdLong = Long.parseLong(userId);
+                user = userRepository.findById(userIdLong)
+                    .orElseThrow(() -> new CustomException("User not found with ID: " + userId, HttpStatus.NOT_FOUND));
+            } catch (NumberFormatException e) {
+                // 如果userId不是数字格式，则假设它就是username
+                user = userRepository.findByUsername(userId)
+                    .orElseThrow(() -> new CustomException("User not found: " + userId, HttpStatus.NOT_FOUND));
+            }
+            
+            // 通过正确的用户名获取组织标签
+            String orgTagsStr = userService.getUserOrgTags(user.getUsername()).get("orgTags").toString();
             if (orgTagsStr == null || orgTagsStr.isEmpty()) {
                 return Collections.emptyList();
             }
             return Arrays.asList(orgTagsStr.split(","));
         } catch (Exception e) {
-            logger.error("获取用户组织标签失败", e);
+            logger.error("获取用户组织标签失败: {}", e.getMessage(), e);
             return Collections.emptyList(); // 返回空列表作为默认值
         }
     }

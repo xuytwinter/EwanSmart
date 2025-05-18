@@ -423,17 +423,25 @@ public class UserService {
      * @return 用户的主组织标签
      */
     public String getUserPrimaryOrg(String userId) {
-        // 假设userId就是username，如果不是，需要先查询用户信息
-        String username = userId;
+        // 先通过userId查找用户，然后获取username
+        User user;
+        try {
+            Long userIdLong = Long.parseLong(userId);
+            user = userRepository.findById(userIdLong)
+                .orElseThrow(() -> new CustomException("User not found with ID: " + userId, HttpStatus.NOT_FOUND));
+        } catch (NumberFormatException e) {
+            // 如果userId不是数字格式，则假设它就是username
+            user = userRepository.findByUsername(userId)
+                .orElseThrow(() -> new CustomException("User not found: " + userId, HttpStatus.NOT_FOUND));
+        }
+        
+        String username = user.getUsername();
         
         // 尝试从缓存获取
         String primaryOrg = orgTagCacheService.getUserPrimaryOrg(username);
         
         // 如果缓存中没有，则从数据库获取
         if (primaryOrg == null || primaryOrg.isEmpty()) {
-            User user = userRepository.findByUsername(username)
-                    .orElseThrow(() -> new CustomException("User not found", HttpStatus.NOT_FOUND));
-            
             primaryOrg = user.getPrimaryOrg();
             
             // 如果用户没有设置主组织标签，则尝试使用第一个分配的组织标签

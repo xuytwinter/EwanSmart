@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -72,6 +73,56 @@ public class DocumentController {
             logger.error("删除文档失败: fileMd5={}", fileMd5, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of("status", "error", "message", "删除文档失败: " + e.getMessage()));
+        }
+    }
+    
+    /**
+     * 获取用户可访问的所有文件列表
+     * 
+     * @param userId 当前用户ID
+     * @param orgTags 用户所属组织标签
+     * @return 可访问的文件列表
+     */
+    @GetMapping("/accessible")
+    public ResponseEntity<?> getAccessibleFiles(
+            @RequestAttribute("userId") String userId,
+            @RequestAttribute("orgTags") String orgTags) {
+        
+        try {
+            logger.info("接收到获取可访问文件请求: userId={}, orgTags={}", userId, orgTags);
+            
+            List<FileUpload> files = documentService.getAccessibleFiles(userId, orgTags);
+            
+            logger.info("成功获取可访问文件: userId={}, fileCount={}", userId, files.size());
+            return ResponseEntity.ok(Map.of("status", "success", "data", files));
+        } catch (Exception e) {
+            logger.error("获取可访问文件失败: userId={}", userId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("status", "error", "message", "获取可访问文件列表失败: " + e.getMessage()));
+        }
+    }
+    
+    /**
+     * 获取用户上传的所有文件列表
+     * 
+     * @param userId 当前用户ID
+     * @return 用户上传的文件列表
+     */
+    @GetMapping("/uploads")
+    public ResponseEntity<?> getUserUploadedFiles(
+            @RequestAttribute("userId") String userId) {
+        
+        try {
+            logger.info("接收到获取用户上传文件请求: userId={}", userId);
+            
+            List<FileUpload> files = documentService.getUserUploadedFiles(userId);
+            
+            logger.info("成功获取用户上传文件: userId={}, fileCount={}", userId, files.size());
+            return ResponseEntity.ok(Map.of("status", "success", "data", files));
+        } catch (Exception e) {
+            logger.error("获取用户上传文件失败: userId={}", userId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("status", "error", "message", "获取用户上传文件列表失败: " + e.getMessage()));
         }
     }
 } 
