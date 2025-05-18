@@ -25,6 +25,7 @@ declare module "@elegant-router/types" {
     "knowledge-base": "/knowledge-base";
     "login": "/login/:module(pwd-login|code-login|register|reset-pwd|bind-wechat)?";
     "org-tag": "/org-tag";
+    "personal-center": "/personal-center";
     "user": "/user";
   };
 
@@ -65,6 +66,7 @@ declare module "@elegant-router/types" {
     | "knowledge-base"
     | "login"
     | "org-tag"
+    | "personal-center"
     | "user"
   >;
 
@@ -90,6 +92,7 @@ declare module "@elegant-router/types" {
     | "chat"
     | "knowledge-base"
     | "org-tag"
+    | "personal-center"
     | "user"
   >;
 

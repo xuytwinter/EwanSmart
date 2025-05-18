@@ -165,7 +165,8 @@ const local: App.I18n.Schema = {
     chat: 'Chat Assistant',
     'knowledge-base': 'Knowledge Base',
     'org-tag': 'Organization Tag',
-    user: 'User Management'
+    user: 'User Management',
+    'personal-center': 'Personal Center'
   },
   page: {
     login: {

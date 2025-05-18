@@ -98,6 +98,17 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
+    name: 'personal-center',
+    path: '/personal-center',
+    component: 'layout.base$view.personal-center',
+    meta: {
+      title: 'personal-center',
+      i18nKey: 'route.personal-center',
+      icon: 'solar:people-nearby-line-duotone',
+      order: 5
+    }
+  },
+  {
     name: 'user',
     path: '/user',
     component: 'layout.base$view.user',

@@ -171,6 +171,7 @@ const routeMap: RouteMap = {
   "knowledge-base": "/knowledge-base",
   "login": "/login/:module(pwd-login|code-login|register|reset-pwd|bind-wechat)?",
   "org-tag": "/org-tag",
+  "personal-center": "/personal-center",
   "user": "/user"
 };
 

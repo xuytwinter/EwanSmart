@@ -74,6 +74,13 @@ declare namespace Api {
     }
 
     type List = Common.PaginatingQueryRecord<Item>;
+
+    type Details = Pick<Item, 'tagId' | 'name' | 'description'>;
+    type Mine = {
+      orgTags: string[];
+      primaryOrg: string;
+      orgTagDetails: Details[];
+    };
   }
 
   namespace User {

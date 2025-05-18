@@ -165,7 +165,8 @@ const local: App.I18n.Schema = {
     chat: '聊天助手',
     'knowledge-base': '知识库',
     'org-tag': '组织标签',
-    user: '用户管理'
+    user: '用户管理',
+    'personal-center': '个人中心'
   },
   page: {
     login: {
