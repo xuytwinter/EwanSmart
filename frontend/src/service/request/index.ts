@@ -32,6 +32,7 @@ function getFlatRequest(options: Partial<RequestOption<App.Service.Response>> = 
         return String(response.data.code) === import.meta.env.VITE_SERVICE_SUCCESS_CODE;
       },
       async onBackendFail(response, instance) {
+        console.log('%c [ 👉 response 👈 ]-35', 'font-size:16px; background:#3cd735; color:#80ff79;', response);
         const authStore = useAuthStore();
         const responseCode = String(response.data.code);
 
@@ -43,7 +44,7 @@ function getFlatRequest(options: Partial<RequestOption<App.Service.Response>> = 
           handleLogout();
           window.removeEventListener('beforeunload', handleLogout);
 
-          request.state.errMsgStack = request.state.errMsgStack.filter(msg => msg !== response.data.msg);
+          request.state.errMsgStack = request.state.errMsgStack.filter(msg => msg !== response.data.message);
         }
 
         // when the backend response code is in `logoutCodes`, it means the user will be logged out and redirected to login page
@@ -55,15 +56,15 @@ function getFlatRequest(options: Partial<RequestOption<App.Service.Response>> = 
 
         // when the backend response code is in `modalLogoutCodes`, it means the user will be logged out by displaying a modal
         const modalLogoutCodes = import.meta.env.VITE_SERVICE_MODAL_LOGOUT_CODES?.split(',') || [];
-        if (modalLogoutCodes.includes(responseCode) && !request.state.errMsgStack?.includes(response.data.msg)) {
-          request.state.errMsgStack = [...(request.state.errMsgStack || []), response.data.msg];
+        if (modalLogoutCodes.includes(responseCode) && !request.state.errMsgStack?.includes(response.data.message)) {
+          request.state.errMsgStack = [...(request.state.errMsgStack || []), response.data.message];
 
           // prevent the user from refreshing the page
           window.addEventListener('beforeunload', handleLogout);
 
           window.$dialog?.error({
             title: $t('common.error'),
-            content: response.data.msg,
+            content: response.data.message,
             positiveText: $t('common.confirm'),
             maskClosable: false,
             closeOnEsc: false,
@@ -103,8 +104,8 @@ function getFlatRequest(options: Partial<RequestOption<App.Service.Response>> = 
         let backendErrorCode = '';
 
         // get backend error message and code
-        if (error.code === BACKEND_ERROR_CODE) {
-          message = error.response?.data?.msg || message;
+        if (error.code && BACKEND_ERROR_CODE.split(',').includes(error.code)) {
+          message = error.response?.data?.message || message;
           backendErrorCode = String(error.response?.data?.code || '');
         }
 
@@ -120,6 +121,7 @@ function getFlatRequest(options: Partial<RequestOption<App.Service.Response>> = 
           return;
         }
 
+        console.log('%c [ 👉  👈 ]-131', 'font-size:16px; background:#724926; color:#b68d6a;', message);
         showErrorMsg(request.state, message);
       },
       ...options

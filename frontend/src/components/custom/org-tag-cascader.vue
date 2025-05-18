@@ -6,7 +6,9 @@ defineOptions({
 });
 const props = defineProps<{
   options?: Api.OrgTag.Item[];
+  excludePrivate?: boolean;
 }>();
+
 const model = defineModel<string | number | Array<number | string> | undefined | null>('value', { required: true });
 
 const opts = ref<CascaderOption[]>([]);
@@ -16,11 +18,16 @@ async function getOptions() {
   if (!error) opts.value = data.data as unknown as CascaderOption[];
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (props.options) {
     opts.value = props.options as unknown as CascaderOption[];
   } else {
-    getOptions();
+    await getOptions();
+  }
+  if (props.excludePrivate) {
+    opts.value.forEach(x => {
+      x.disabled = (x as unknown as Api.OrgTag.Item).tagId.startsWith('PRIVATE_');
+    });
   }
 });
 </script>

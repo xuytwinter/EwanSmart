@@ -66,7 +66,7 @@ declare namespace Api {
 
   namespace OrgTag {
     interface Item {
-      tagId?: string;
+      tagId: string;
       name: string;
       description: string;
       parentTag: string | null;

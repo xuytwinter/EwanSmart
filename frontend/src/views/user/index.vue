@@ -82,6 +82,16 @@ function handleOrgTag(row: Api.User.Item) {
   editingData.value = row;
   visible.value = true;
 }
+
+// async function setPrimaryOrgTag(userId: string, primaryOrg: string) {
+//   loading.value = true;
+//   const { error } = await request({ url: 'users/primary-org', method: 'PUT', data: { primaryOrg, userId } });
+//   if (!error) {
+//     window.$message?.success('操作成功');
+//     await getData();
+//   }
+//   loading.value = false;
+// }
 </script>
 
 <template>

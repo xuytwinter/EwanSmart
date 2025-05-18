@@ -15,7 +15,7 @@ const props = defineProps<{
 const emit = defineEmits<{ submitted: [] }>();
 
 const visible = defineModel<boolean>('visible', { default: false });
-
+const loading = ref(false);
 const { formRef, validate, restoreValidation } = useNaiveForm();
 const { defaultRequiredRule } = useFormRules();
 
@@ -32,6 +32,7 @@ const model = ref<Api.OrgTag.Item>(createDefaultModel());
 
 function createDefaultModel(): Api.OrgTag.Item {
   return {
+    tagId: '',
     name: '',
     description: '',
     parentTag: null
@@ -39,6 +40,16 @@ function createDefaultModel(): Api.OrgTag.Item {
 }
 
 const rules = ref<FormRules>({
+  tagId: [
+    defaultRequiredRule,
+    {
+      validator(_, value) {
+        return !value.startsWith('PRIVATE_');
+      },
+      message: '标签Id不能以PRIVATE_开头',
+      trigger: 'blur'
+    }
+  ],
   name: defaultRequiredRule,
   description: defaultRequiredRule
 });
@@ -56,14 +67,17 @@ function close() {
 
 async function handleSubmit() {
   await validate();
+  loading.value = true;
   let res: FlatResponseData;
-  if (model.value.tagId) res = await request({ url: `/admin/org-tags/${model.value.tagId}`, method: 'PUT' });
-  else res = await request({ url: '/admin/org-tags', method: 'POST' });
+  if (props.operateType === 'edit')
+    res = await request({ url: `/admin/org-tags/${model.value.tagId}`, method: 'PUT', data: model.value });
+  else res = await request({ url: '/admin/org-tags', method: 'POST', data: model.value });
   if (!res.error) {
     window.$message?.success('操作成功');
     close();
     emit('submitted');
   }
+  loading.value = false;
 }
 
 watch(visible, () => {
@@ -85,8 +99,11 @@ watch(visible, () => {
     @positive-click="handleSubmit"
   >
     <NForm ref="formRef" :model="model" :rules="rules" label-placement="left" :label-width="100" mt-10>
+      <NFormItem label="标签Id" path="tagId">
+        <NInput v-model:value="model.tagId" placeholder="请输入标签Id" maxlength="60" />
+      </NFormItem>
       <NFormItem label="标签名称" path="name">
-        <NInput v-model:value="model.name" placeholder="请输入标签名称" maxlength="30" />
+        <NInput v-model:value="model.name" placeholder="请输入标签名称" maxlength="60" />
       </NFormItem>
       <NFormItem label="所属标签" path="parentTag">
         <OrgTagCascader v-model:value="model.parentTag" :options="data" />

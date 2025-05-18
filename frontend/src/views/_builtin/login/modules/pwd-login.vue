@@ -21,7 +21,7 @@ interface FormModel {
 
 const model: FormModel = reactive({
   userName: 'admin',
-  password: '123456'
+  password: 'admin123'
 });
 
 const rules = computed<Record<keyof FormModel, App.Global.FormRule[]>>(() => {
@@ -52,14 +52,14 @@ const accounts = computed<Account[]>(() => [
   {
     key: 'admin',
     label: $t('page.login.pwdLogin.admin'),
-    userName: 'Admin',
-    password: '123456'
+    userName: 'admin',
+    password: 'admin123'
   },
   {
     key: 'user',
     label: $t('page.login.pwdLogin.user'),
-    userName: 'User',
-    password: '123456'
+    userName: 'testuser',
+    password: 'test123'
   }
 ]);
 

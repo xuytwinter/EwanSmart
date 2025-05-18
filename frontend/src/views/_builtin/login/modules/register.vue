@@ -30,13 +30,16 @@ const rules = computed<Record<keyof FormModel, App.Global.FormRule[]>>(() => {
   };
 });
 
+const loading = ref(false);
 async function handleSubmit() {
   await validate();
+  loading.value = true;
   const { error } = await fetchRegister(model.username, model.password);
   if (!error) {
     window.$message?.success('注册成功');
     toggleLoginModule('pwd-login');
   }
+  loading.value = false;
 }
 </script>
 
@@ -74,10 +77,10 @@ async function handleSubmit() {
       </NInput>
     </NFormItem>
     <NSpace vertical :size="18" class="w-full">
-      <NButton type="primary" size="large" round block @click="handleSubmit">
+      <NButton type="primary" size="large" round block :loading="loading" @click="handleSubmit">
         {{ $t('page.login.common.register') }}
       </NButton>
-      <NButton size="large" round block @click="toggleLoginModule('pwd-login')">
+      <NButton block @click="toggleLoginModule('pwd-login')">
         {{ $t('page.login.common.back') }}
       </NButton>
     </NSpace>
