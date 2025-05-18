@@ -7,10 +7,12 @@
 export {}
 declare global {
   const EffectScope: typeof import('vue')['EffectScope']
+  const UploadStatus: typeof import('../enum/index')['UploadStatus']
   const acceptHMRUpdate: typeof import('pinia')['acceptHMRUpdate']
   const alova: typeof import('~/services/request')['alova']
   const asyncComputed: typeof import('@vueuse/core')['asyncComputed']
   const autoResetRef: typeof import('@vueuse/core')['autoResetRef']
+  const chunkSize: typeof import('../constant/index')['chunkSize']
   const clearAuthStorage: typeof import('../store/auth/shared')['clearAuthStorage']
   const computed: typeof import('vue')['computed']
   const computedAsync: typeof import('@vueuse/core')['computedAsync']
@@ -340,6 +342,9 @@ declare global {
   // @ts-ignore
   export type { Component, ComponentPublicInstance, ComputedRef, DirectiveBinding, ExtractDefaultPropTypes, ExtractPropTypes, ExtractPublicPropTypes, InjectionKey, PropType, Ref, MaybeRef, MaybeRefOrGetter, VNode, WritableComputedRef } from 'vue'
   import('vue')
+  // @ts-ignore
+  export type { UploadStatus } from '../enum/index'
+  import('../enum/index')
 }
 
 // for vue template auto import
@@ -348,10 +353,12 @@ declare module 'vue' {
   interface GlobalComponents {}
   interface ComponentCustomProperties {
     readonly EffectScope: UnwrapRef<typeof import('vue')['EffectScope']>
+    readonly UploadStatus: UnwrapRef<typeof import('../enum/index')['UploadStatus']>
     readonly acceptHMRUpdate: UnwrapRef<typeof import('pinia')['acceptHMRUpdate']>
     readonly alova: UnwrapRef<typeof import('~/services/request')['alova']>
     readonly asyncComputed: UnwrapRef<typeof import('@vueuse/core')['asyncComputed']>
     readonly autoResetRef: UnwrapRef<typeof import('@vueuse/core')['autoResetRef']>
+    readonly chunkSize: UnwrapRef<typeof import('../constant/index')['chunkSize']>
     readonly computed: UnwrapRef<typeof import('vue')['computed']>
     readonly computedAsync: UnwrapRef<typeof import('@vueuse/core')['computedAsync']>
     readonly computedEager: UnwrapRef<typeof import('@vueuse/core')['computedEager']>

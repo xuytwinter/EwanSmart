@@ -15,8 +15,8 @@ defineOptions({
 </script>
 
 <template>
-  <div grid grid-cols="[300px_1fr]" h-full grid-rows="[auto_1fr_auto]">
-    <ChatList row-span-3 />
+  <div grid grid-cols="[1fr]" h-full grid-rows="[auto_1fr_auto]">
+    <ChatList v-if="false" row-span-3 />
     <TheHeader />
     <ChatBox />
     <Settings />

@@ -161,7 +161,7 @@ export default defineMock({
           fileMd5: 'a1b2c3d4e5f6g7h8i9j0',
           fileName: '我的文档.pdf',
           totalSize: 1048576,
-          status: 1,
+          status: 0,
           userId: 'user123',
           orgTag: 'DEPT_FINANCE',
           isPublic: true,

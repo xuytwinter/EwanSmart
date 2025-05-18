@@ -59,6 +59,8 @@ export default defineConfig({
         './src/composables',
         './src/services/api/*',
         './src/store/**/*',
+        './src/enum',
+        './src/constant',
       ],
       vueTemplate: true,
     }),

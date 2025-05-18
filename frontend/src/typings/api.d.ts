@@ -57,13 +57,16 @@ declare namespace Api {
   }
 
   namespace File {
+
+    interface UploadState {
+      tasks: UploadTask[]
+      activeUploads: Set<string> // 当前正在上传的任务ID
+    }
+
     interface Form {
-      fileMd5: string
-      chunkIndex: number
-      totalSize: number
-      fileName: string
       orgTag: string | null
       isPublic: boolean
+      fileList: import('ant-design-vue').UploadProps['fileList']
     }
 
     interface Item {
@@ -76,14 +79,19 @@ declare namespace Api {
       createdAt: string
     }
 
-    interface Chunk {
-      file: any
+    interface UploadTask {
+      file: File
+      chunk: Blob | null
       fileMd5: string
       chunkIndex: number
       totalSize: number
       fileName: string
       orgTag: string | null
       isPublic: boolean
+      uploadedChunks: number[]
+      progress: number
+      status: UploadStatus
+
     }
 
     type Merge = Pick<Chunk, 'fileMd5' | 'fileName'>

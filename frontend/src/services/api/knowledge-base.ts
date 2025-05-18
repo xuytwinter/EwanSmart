@@ -1,9 +1,9 @@
 export function fetchGetFileList() {
-  return alova.Get<Api.File.Item[]>('/v1/documents/uploads')
+  return alova.Get<Api.File.UploadTask[]>('/v1/documents/uploads')
 }
 
-export function fetchUploadChunk(data: Api.File.Chunk) {
-  return alova.Post<Api.File.Progress>('/v1/upload/chunk', { file: data.file }, {
+export function fetchUploadChunk(data: Api.File.UploadTask) {
+  return alova.Post<Api.File.Progress>('/v1/upload/chunk', { file: data.chunk }, {
     headers: {
       'X-File-Md5': data.fileMd5,
       'X-Chunk-Index': data.chunkIndex,
