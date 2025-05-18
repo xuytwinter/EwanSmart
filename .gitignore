@@ -32,3 +32,6 @@ dist-ssr
 node_modules
 .idea/
 *.log
+/target
+/.idea
+/.vscode
