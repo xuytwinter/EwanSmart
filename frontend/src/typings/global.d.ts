@@ -1,12 +1,19 @@
-export { }
+export {};
 
 declare global {
   export interface Window {
-    /** Ant-design-vue message instance */
-    $message?: import('ant-design-vue/es/message/interface').MessageInstance
-    /** Ant-design-vue modal instance */
-    $modal?: Omit<import('ant-design-vue/es/modal/confirm').ModalStaticFunctions, 'warn'>
-    /** Ant-design-vue notification instance */
-    $notification?: import('ant-design-vue/es/notification/interface').NotificationInstance
+    /** NProgress instance */
+    NProgress?: import('nprogress').NProgress;
+    /** Loading bar instance */
+    $loadingBar?: import('naive-ui').LoadingBarProviderInst;
+    /** Dialog instance */
+    $dialog?: import('naive-ui').DialogProviderInst;
+    /** Message instance */
+    $message?: import('naive-ui').MessageProviderInst;
+    /** Notification instance */
+    $notification?: import('naive-ui').NotificationProviderInst;
   }
+
+  /** Build time of the project */
+  export const BUILD_TIME: string;
 }

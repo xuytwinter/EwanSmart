@@ -1,110 +1,177 @@
+/**
+ * Namespace Api
+ *
+ * All backend api type
+ */
 declare namespace Api {
-  interface PageParams {
-    page?: number
-    size?: number
-    keyword?: string
+  namespace Common {
+    /** common params of paginating */
+    interface PaginatingCommonParams {
+      /** current page number */
+      page?: number;
+      number: number;
+      /** page size */
+      size?: number;
+      /** total count */
+      totalElements: number;
+    }
+
+    /** common params of paginating query list data */
+    interface PaginatingQueryRecord<T = any> extends PaginatingCommonParams {
+      data: T[];
+      content: T[];
+    }
+
+    /** common search params of table */
+    type CommonSearchParams = Pick<Common.PaginatingCommonParams, 'page' | 'size'>;
   }
 
-  interface PageList<T> {
-    totalElements: number
-    totalPages: number
-    size: number
-    number: number
-    content: T[]
+  /**
+   * namespace Auth
+   *
+   * backend api module: "auth"
+   */
+  namespace Auth {
+    interface LoginToken {
+      token: string;
+      refreshToken: string;
+    }
+
+    interface UserInfo {
+      id: number;
+      username: string;
+      role: 'USER' | 'ADMIN';
+      orgTags: string[];
+      primaryOrg: string;
+    }
   }
 
-  type UserStatus = 0 | 1 // 0=禁用，1=启用
+  /**
+   * namespace Route
+   *
+   * backend api module: "route"
+   */
+  namespace Route {
+    type ElegantConstRoute = import('@elegant-router/types').ElegantConstRoute;
 
-  interface LoginToken {
-    token: string
+    interface MenuRoute extends ElegantConstRoute {
+      id: string;
+    }
+
+    interface UserRoute {
+      routes: MenuRoute[];
+      home: import('@elegant-router/types').LastLevelRouteKey;
+    }
+  }
+
+  namespace OrgTag {
+    interface Item {
+      tagId?: string;
+      name: string;
+      description: string;
+      parentTag: string | null;
+      children?: Item[];
+    }
+
+    type List = Common.PaginatingQueryRecord<Item>;
   }
 
   namespace User {
-    interface Info {
-      id: number
-      username: string
-      role: 'USER' | 'ADMIN'
-      orgTags: string[]
-      primaryOrg: string
-    }
+    type SearchParams = CommonType.RecordNullable<
+      Common.CommonSearchParams & {
+        keyword: string;
+        orgTag: string;
+        status: number;
+      }
+    >;
 
-    interface Params extends PageParams {
-      orgTag?: string
-      status?: UserStatus
-    }
+    type Item = {
+      userId: string;
+      username: string;
+      email: string;
+      status: number;
+      orgTags: Pick<OrgTag.Item, 'tagId' | 'name'>[];
+      primaryOrg: string;
+      createTime: string;
+      lastLoginTime: string;
+    };
 
-    interface Item {
-      userId: string
-      username: string
-      email: string
-      orgTags: string[]
-      primaryOrg: string
-      createTime: string
-      lastLoginTime: string
-      status: UserStatus
-    }
-
-    interface List extends PageList<Item> { }
+    type List = Common.PaginatingQueryRecord<Item>;
   }
 
-  interface OrgTag {
-    tagId?: string
-    name: string
-    description: string
-    parentTag?: string
-    disabled?: boolean
-    children?: OrgTag[]
-  }
+  namespace KnowledgeBase {
+    interface SearchParams {
+      query: string;
+      topK: number;
+    }
 
-  namespace File {
+    interface SearchResult {
+      fileMd5: string;
+      chunkId: number;
+      textContent: string;
+      score: number;
+      fileName: string;
+    }
 
     interface UploadState {
-      tasks: UploadTask[]
-      activeUploads: Set<string> // 当前正在上传的任务ID
+      tasks: UploadTask[];
+      activeUploads: Set<string>; // 当前正在上传的任务ID
     }
 
     interface Form {
-      orgTag: string | null
-      isPublic: boolean
-      fileList: import('ant-design-vue').UploadProps['fileList']
-    }
-
-    interface Item {
-      fileMd5: string
-      fileName: string
-      totalSize: number
-      status: 0 | 1 // 0=上传中,1=已完成
-      orgTag: string
-      isPublic: boolean
-      createdAt: string
+      orgTag: string | null;
+      isPublic: boolean;
+      fileList: import('naive-ui').UploadFileInfo[];
     }
 
     interface UploadTask {
-      file: File
-      chunk: Blob | null
-      fileMd5: string
-      chunkIndex: number
-      totalSize: number
-      fileName: string
-      orgTag: string | null
-      isPublic: boolean
-      uploadedChunks: number[]
-      progress: number
-      status: UploadStatus
-
+      file: File;
+      chunk: Blob | null;
+      fileMd5: string;
+      chunkIndex: number;
+      totalSize: number;
+      fileName: string;
+      orgTag: string | null;
+      isPublic: boolean;
+      uploadedChunks: number[];
+      progress: number;
+      status: UploadStatus;
+      createdAt?: string;
+      mergedAt?: string;
     }
+    type List = Common.PaginatingQueryRecord<UploadTask>;
 
-    type Merge = Pick<Chunk, 'fileMd5' | 'fileName'>
+    type Merge = Pick<UploadTask, 'fileMd5' | 'fileName'>;
 
     interface Progress {
-      uploaded: number[]
-      progress: number
-      totalChunks: number
+      uploaded: number[];
+      progress: number;
+      totalChunks: number;
     }
 
     interface Result {
-      objectUrl: string
-      fileSize: number
+      objectUrl: string;
+      fileSize: number;
+    }
+  }
+
+  namespace Chat {
+    interface Input {
+      message: string;
+      conversationId?: string;
+    }
+
+    interface Output {
+      chunk: string;
+    }
+
+    interface Conversation {
+      conversationId: string;
+    }
+
+    interface Message {
+      role: 'user' | 'assistant';
+      content: string;
     }
   }
 }
