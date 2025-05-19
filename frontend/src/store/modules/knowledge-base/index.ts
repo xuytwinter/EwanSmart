@@ -3,42 +3,41 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
   const activeUploads = ref<Set<string>>(new Set());
 
   async function uploadChunk(task: Api.KnowledgeBase.UploadTask): Promise<void> {
-    try {
-      const totalChunks = Math.ceil(task.totalSize / chunkSize);
+    const totalChunks = Math.ceil(task.totalSize / chunkSize);
 
-      const chunkStart = task.chunkIndex * chunkSize;
-      const chunkEnd = Math.min(chunkStart + chunkSize, task.totalSize);
-      const chunk = task.file.slice(chunkStart, chunkEnd);
+    const chunkStart = task.chunkIndex * chunkSize;
+    const chunkEnd = Math.min(chunkStart + chunkSize, task.totalSize);
+    const chunk = task.file.slice(chunkStart, chunkEnd);
 
-      task.chunk = chunk;
+    task.chunk = chunk;
 
-      const { error, data } = await request<Api.KnowledgeBase.Progress>({
-        url: '/upload/chunk',
-        data: { file: task.chunk },
-        headers: {
-          'X-File-Md5': task.fileMd5,
-          'X-Chunk-Index': task.chunkIndex,
-          'X-Total-Size': task.totalSize,
-          'X-File-Name': task.fileName,
-          'X-Org-Tag': task.orgTag,
-          'X-Is-Public': task.isPublic
-        }
-      });
-      if (error) throw new Error('分片上传失败');
-
-      // 更新任务状态
-      const updatedTask = tasks.value.find(t => t.fileMd5 === task.fileMd5)!;
-      updatedTask.uploadedChunks = data.uploaded;
-      updatedTask.progress = data.progress;
-
-      if (data.uploaded.length === totalChunks) {
-        const success = await mergeFile(task);
-        if (!success) throw new Error('文件合并失败');
+    const { error, data } = await request<Api.KnowledgeBase.Progress>({
+      url: '/upload/chunk',
+      method: 'POST',
+      data: { file: task.chunk },
+      headers: {
+        'X-File-Md5': task.fileMd5,
+        'X-Chunk-Index': task.chunkIndex,
+        'X-Total-Size': task.totalSize,
+        'X-File-Name': task.fileName,
+        'X-Org-Tag': task.orgTag,
+        'X-Is-Public': task.isPublic ?? false,
+        'Content-Type': 'multipart/form-data'
       }
-      Promise.resolve();
-    } catch {
-      Promise.reject(new Error('分片上传失败'));
+    });
+
+    if (error) throw new Error('分片上传失败');
+
+    // 更新任务状态
+    const updatedTask = tasks.value.find(t => t.fileMd5 === task.fileMd5)!;
+    updatedTask.uploadedChunks = data.uploaded;
+    updatedTask.progress = data.progress;
+
+    if (data.uploaded.length === totalChunks) {
+      const success = await mergeFile(task);
+      if (!success) throw new Error('文件合并失败');
     }
+    Promise.resolve();
   }
 
   async function mergeFile(task: Api.KnowledgeBase.UploadTask) {
@@ -64,6 +63,7 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
    * @returns 返回一个上传任务对象，无论是已存在的还是新创建的
    */
   async function enqueueUpload(form: Api.KnowledgeBase.Form) {
+    console.log('%c [ 👉 form 👈 ]-65', 'font-size:16px; background:#192cfe; color:#5d70ff;', form);
     // 获取文件列表中的第一个文件
     const file = form.fileList![0].file!;
     // 计算文件的MD5值，用于唯一标识文件
@@ -131,7 +131,10 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
         }
       }
       await Promise.all(promises);
+
+      console.log('%c [ 👉  Promise.all 👈 ]-137', 'font-size:16px; background:#f76da8; color:#ffb1ec;');
     } catch {
+      console.log('%c [ 👉  catch 👈 ]-140', 'font-size:16px; background:#14a626; color:#58ea6a;');
       // 如果上传失败，则将任务状态设置为中断
       const index = tasks.value.findIndex(t => t.fileMd5 === task.fileMd5);
       tasks.value[index].status = UploadStatus.Break;

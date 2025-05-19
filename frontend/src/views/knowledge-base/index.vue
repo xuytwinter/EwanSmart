@@ -174,7 +174,7 @@ async function onBeforeUpload(
   }
   const { error, data: progress } = await request<Api.KnowledgeBase.Progress>({
     url: 'upload/status',
-    params: { fileMd5: row.fileMd5 }
+    params: { file_md5: row.fileMd5 }
   });
   if (!error) {
     row.file = options.file as unknown as File;

@@ -64,7 +64,7 @@ function reset() {
 watch(visible, () => {
   if (visible.value) {
     reset();
-    // list.value = [];
+    list.value = [];
   }
 });
 </script>
