@@ -73,7 +73,17 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
     const existingTask = tasks.value.find(t => t.fileMd5 === md5);
     if (existingTask) {
       // 如果存在相同文件，直接返回该上传任务
-      return existingTask;
+      if (existingTask.status === UploadStatus.Completed) {
+        window.$message?.error('文件已存在');
+        return;
+      } else if (existingTask.status === UploadStatus.Pending || existingTask.status === UploadStatus.Uploading) {
+        window.$message?.error('文件正在上传中');
+        return;
+      } else if (existingTask.status === UploadStatus.Break) {
+        existingTask.status = UploadStatus.Pending;
+        startUpload();
+        return;
+      }
     }
 
     // 创建新的上传任务对象
@@ -96,7 +106,6 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
     // 启动上传流程
     startUpload();
     // 返回新的上传任务
-    return newTask;
   }
 
   /** 启动文件上传的异步函数 该函数负责从待上传队列中启动文件上传任务，并管理并发上传的数量 */
