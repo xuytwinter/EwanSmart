@@ -1,7 +1,23 @@
 <script setup lang="ts">
+import { NScrollbar } from 'naive-ui';
+
 const authStore = useAuthStore();
 const chatStore = useChatStore();
 const { list } = storeToRefs(chatStore);
+
+const scrollbarRef = ref<InstanceType<typeof NScrollbar>>();
+watch(
+  () => [...list.value],
+  () => {
+    nextTick(() => {
+      scrollbarRef.value?.scrollBy({
+        top: 999999,
+        behavior: 'auto'
+      });
+    });
+  }
+);
+
 async function getList() {
   const { error, data } = await request<Api.Chat.Message[]>({
     url: '/conversation/history',
@@ -25,7 +41,7 @@ function handleCopy(content: string) {
 </script>
 
 <template>
-  <NScrollbar class="h-0 flex-auto">
+  <NScrollbar ref="scrollbarRef" class="h-0 flex-auto">
     <div v-for="(item, index) in list" :key="index" class="mb-8 flex-col gap-2">
       <div v-if="item.role === 'user'" class="flex items-center gap-4">
         <NAvatar class="bg-success">
@@ -39,7 +55,12 @@ function handleCopy(content: string) {
         </NAvatar>
         <NText>派聪明</NText>
       </div>
-      <NText class="ml-12 mt-2">{{ item.content }}</NText>
+      <NText v-if="item.status === 'pending'">
+        <icon-eos-icons:three-dots-loading class="ml-12 mt-2 text-8" />
+      </NText>
+      <NText v-else-if="item.status === 'loading'" class="ml-12 mt-2"></NText>
+      <NText v-else-if="item.status === 'error'" class="ml-12 mt-2">服务器繁忙，请稍后再试</NText>
+      <NText v-else class="ml-12 mt-2">{{ item.content }}</NText>
       <NDivider class="ml-12 w-[calc(100%-3rem)] mb-0! mt-2!" />
       <div class="ml-12 flex gap-4">
         <NButton quaternary @click="handleCopy(item.content)">

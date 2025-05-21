@@ -63,7 +63,6 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
    * @returns 返回一个上传任务对象，无论是已存在的还是新创建的
    */
   async function enqueueUpload(form: Api.KnowledgeBase.Form) {
-    console.log('%c [ 👉 form 👈 ]-65', 'font-size:16px; background:#192cfe; color:#5d70ff;', form);
     // 获取文件列表中的第一个文件
     const file = form.fileList![0].file!;
     // 计算文件的MD5值，用于唯一标识文件
