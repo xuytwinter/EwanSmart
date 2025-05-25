@@ -1,7 +1,7 @@
 import axios, { AxiosError } from 'axios';
 import type { AxiosResponse, CreateAxiosDefaults, InternalAxiosRequestConfig } from 'axios';
 import axiosRetry from 'axios-retry';
-import { nanoid } from '@sa/utils';
+import { customAlphabet } from 'nanoid';
 import { createAxiosConfig, createDefaultOptions, createRetryOptions } from './options';
 import { BACKEND_ERROR_CODE, REQUEST_ID_KEY } from './constant';
 import type {
@@ -12,6 +12,8 @@ import type {
   RequestOption,
   ResponseType
 } from './type';
+
+const nanoid = customAlphabet('1234567890abcdefghijklmnopqrstuvwxyz', 20);
 
 function createCommonRequest<ResponseData = any>(
   axiosConfig?: CreateAxiosDefaults,
@@ -32,8 +34,11 @@ function createCommonRequest<ResponseData = any>(
     const config: InternalAxiosRequestConfig = { ...conf };
 
     // set request id
-    const requestId = nanoid();
-    config.headers.set(REQUEST_ID_KEY, requestId);
+    let requestId = config.headers.get(REQUEST_ID_KEY) as string;
+    if (!requestId) {
+      const requestId = nanoid();
+      config.headers.set(REQUEST_ID_KEY, requestId);
+    }
 
     // config abort controller
     if (!config.signal) {
