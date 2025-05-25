@@ -1,5 +1,5 @@
-import { REQUEST_ID_KEY } from "~/packages/axios/src";
-import { nanoid } from "~/packages/utils/src";
+import { REQUEST_ID_KEY } from '~/packages/axios/src';
+import { nanoid } from '~/packages/utils/src';
 
 export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () => {
   const tasks = ref<Api.KnowledgeBase.UploadTask[]>([]);
@@ -26,13 +26,13 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
         totalSize: task.totalSize,
         fileName: task.fileName,
         orgTag: task.orgTag,
-        isPublic: task.isPublic ?? false,
+        isPublic: task.isPublic ?? false
       },
       headers: {
         'Content-Type': 'multipart/form-data',
-        [REQUEST_ID_KEY]: requestId,
+        [REQUEST_ID_KEY]: requestId
       },
-      timeout: 10 * 60 * 1000,
+      timeout: 10 * 60 * 1000
     });
 
     task.requestIds = task.requestIds.filter(id => id !== requestId);
@@ -42,7 +42,7 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
     // 更新任务状态
     const updatedTask = tasks.value.find(t => t.fileMd5 === task.fileMd5)!;
     updatedTask.uploadedChunks = data.uploaded;
-    updatedTask.progress = parseFloat(data.progress.toFixed(2));
+    updatedTask.progress = Number.parseFloat(data.progress.toFixed(2));
 
     if (data.uploaded.length === totalChunks) {
       const success = await mergeFile(task);
@@ -53,7 +53,11 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
 
   async function mergeFile(task: Api.KnowledgeBase.UploadTask) {
     try {
-      const { error } = await request({ url: '/upload/merge', method: 'POST', data: { fileMd5: task.fileMd5, fileName: task.fileName } });
+      const { error } = await request({
+        url: '/upload/merge',
+        method: 'POST',
+        data: { fileMd5: task.fileMd5, fileName: task.fileName }
+      });
       if (error) return false;
 
       // 更新任务状态为已完成
@@ -111,7 +115,7 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
       orgTag: form.orgTag
     };
 
-    newTask.orgTagName = form.orgTagName ?? null
+    newTask.orgTagName = form.orgTagName ?? null;
 
     // 将新的上传任务添加到任务队列中
     tasks.value.push(newTask);
@@ -147,14 +151,14 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
       for (let i = 0; i < totalChunks; i += 1) {
         // 如果未上传，则上传
         if (!task.uploadedChunks.includes(i)) {
-          task.chunkIndex = i
+          task.chunkIndex = i;
           // promises.push(uploadChunk(task))
+          // eslint-disable-next-line no-await-in-loop
           const success = await uploadChunk(task);
-          if (!success) throw new Error('分片上传失败')
+          if (!success) throw new Error('分片上传失败');
         }
       }
       // await Promise.all(promises)
-
     } catch {
       // 如果上传失败，则将任务状态设置为中断
       const index = tasks.value.findIndex(t => t.fileMd5 === task.fileMd5);

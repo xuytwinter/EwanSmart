@@ -26,6 +26,7 @@ onMounted(() => {
 const visible = ref(false);
 const currentTagId = ref('');
 const showModal = (tagId: string) => {
+  if (tagId === tags.value.primaryOrg) return;
   visible.value = true;
   currentTagId.value = tagId;
 };

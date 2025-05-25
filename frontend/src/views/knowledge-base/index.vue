@@ -1,18 +1,16 @@
 <script setup lang="tsx">
-import { customAlphabet } from 'nanoid'
-import type { UploadFileInfo } from 'naive-ui'
-import { NButton, NPopconfirm, NProgress, NTag, NUpload } from 'naive-ui'
-import { uploadAccept } from '@/constants/common'
-import { fakePaginationRequest } from '@/service/request'
-import { UploadStatus } from '@/enum'
-import UploadDialog from './modules/upload-dialog.vue'
-import SearchDialog from './modules/search-dialog.vue'
-import { REQUEST_ID_KEY } from '~/packages/axios/src'
+import type { UploadFileInfo } from 'naive-ui';
+import { NButton, NPopconfirm, NProgress, NTag, NUpload } from 'naive-ui';
+import { uploadAccept } from '@/constants/common';
+import { fakePaginationRequest } from '@/service/request';
+import { UploadStatus } from '@/enum';
+import UploadDialog from './modules/upload-dialog.vue';
+import SearchDialog from './modules/search-dialog.vue';
 
-const appStore = useAppStore()
+const appStore = useAppStore();
 
 function apiFn() {
-  return fakePaginationRequest<Api.KnowledgeBase.List>({ url: '/documents/uploads' })
+  return fakePaginationRequest<Api.KnowledgeBase.List>({ url: '/documents/uploads' });
 }
 
 const { columns, columnChecks, data, getData, loading } = useTable({
@@ -81,73 +79,73 @@ const { columns, columnChecks, data, getData, loading } = useTable({
       )
     }
   ]
-})
+});
 
-const store = useKnowledgeBaseStore()
-const { tasks } = storeToRefs(store)
+const store = useKnowledgeBaseStore();
+const { tasks } = storeToRefs(store);
 onMounted(async () => {
-  await getList()
-})
+  await getList();
+});
 
 /** 异步获取列表函数 该函数主要用于更新或初始化上传任务列表 它首先调用getData函数获取数据，然后根据获取到的数据状态更新任务列表 */
 async function getList() {
   // 等待获取最新数据
-  await getData()
+  await getData();
 
   // 遍历获取到的数据，以处理每个项目
   data.value.forEach(item => {
     // 检查项目状态是否为已完成
     if (item.status === UploadStatus.Completed) {
       // 查找任务列表中是否有匹配的文件MD5
-      const index = tasks.value.findIndex(task => task.fileMd5 === item.fileMd5)
+      const index = tasks.value.findIndex(task => task.fileMd5 === item.fileMd5);
       // 如果找到匹配项，则更新其状态
       if (index !== -1) {
-        tasks.value[index].status = UploadStatus.Completed
+        tasks.value[index].status = UploadStatus.Completed;
       } else {
         // 如果没有找到匹配项，则将该项目添加到任务列表中
-        tasks.value.push(item)
+        tasks.value.push(item);
       }
     } else if (!tasks.value.some(task => task.fileMd5 === item.fileMd5)) {
       // 如果项目状态不是已完成，并且任务列表中没有相同的文件MD5，则将该项目的状态设置为中断，并添加到任务列表中
-      item.status = UploadStatus.Break
-      tasks.value.push(item)
+      item.status = UploadStatus.Break;
+      tasks.value.push(item);
     }
-  })
+  });
 }
 
 async function handleDelete(fileMd5: string) {
-  const { error } = await request({ url: `/documents/${fileMd5}`, method: 'DELETE' })
+  const { error } = await request({ url: `/documents/${fileMd5}`, method: 'DELETE' });
   if (!error) {
-    const index = tasks.value.findIndex(task => task.fileMd5 === fileMd5)
+    const index = tasks.value.findIndex(task => task.fileMd5 === fileMd5);
     if (index !== -1) {
       tasks.value[index].requestIds?.forEach(requestId => {
-        request.cancelRequest(requestId)
-      })
+        request.cancelRequest(requestId);
+      });
     }
-    tasks.value.splice(index, 1)
-    window.$message?.success('删除成功')
-    await getData()
+    tasks.value.splice(index, 1);
+    window.$message?.success('删除成功');
+    await getData();
   }
 }
 // #region 文件上传
-const uploadVisible = ref(false)
+const uploadVisible = ref(false);
 function handleUpload() {
-  uploadVisible.value = true
+  uploadVisible.value = true;
 }
 // #endregion
 
 // #region 检索知识库
-const searchVisible = ref(false)
+const searchVisible = ref(false);
 function handleSearch() {
-  searchVisible.value = true
+  searchVisible.value = true;
 }
 // #endregion
 
 // 渲染上传状态
 function renderStatus(status: UploadStatus, percentage: number) {
-  if (status === UploadStatus.Completed) return <NTag type="success">已完成</NTag>
-  else if (status === UploadStatus.Break) return <NTag type="error">上传中断</NTag>
-  return <NProgress percentage={percentage} processing />
+  if (status === UploadStatus.Completed) return <NTag type="success">已完成</NTag>;
+  else if (status === UploadStatus.Break) return <NTag type="error">上传中断</NTag>;
+  return <NProgress percentage={percentage} processing />;
 }
 
 // #region 文件续传
@@ -158,7 +156,7 @@ function renderResumeUploadButton(row: Api.KnowledgeBase.UploadTask) {
         <NButton type="primary" size="small" ghost onClick={() => resumeUpload(row)}>
           续传
         </NButton>
-      )
+      );
     return (
       <NUpload
         show-file-list={false}
@@ -171,40 +169,40 @@ function renderResumeUploadButton(row: Api.KnowledgeBase.UploadTask) {
           续传
         </NButton>
       </NUpload>
-    )
+    );
   }
-  return null
+  return null;
 }
 
 // 人物列表存在文件，直接续传
 function resumeUpload(row: Api.KnowledgeBase.UploadTask) {
-  row.status = UploadStatus.Pending
-  store.startUpload()
+  row.status = UploadStatus.Pending;
+  store.startUpload();
 }
 
 async function onBeforeUpload(
   options: { file: UploadFileInfo; fileList: UploadFileInfo[] },
   row: Api.KnowledgeBase.UploadTask
 ) {
-  const md5 = await calculateMD5(options.file.file!)
+  const md5 = await calculateMD5(options.file.file!);
   if (md5 !== row.fileMd5) {
-    window.$message?.error('两次上传的文件不一致')
-    return false
+    window.$message?.error('两次上传的文件不一致');
+    return false;
   }
-  loading.value = true
+  loading.value = true;
   const { error, data: progress } = await request<Api.KnowledgeBase.Progress>({
     url: '/upload/status',
-    params: { file_md5: row.fileMd5 },
-  })
+    params: { file_md5: row.fileMd5 }
+  });
   if (!error) {
-    row.file = options.file as unknown as File
-    row.status = UploadStatus.Pending
-    row.progress = progress.progress
-    store.startUpload()
-    return true
+    row.file = options.file as unknown as File;
+    row.status = UploadStatus.Pending;
+    row.progress = progress.progress;
+    store.startUpload();
+    return true;
   }
-  loading.value = false
-  return false
+  loading.value = false;
+  return false;
 }
 </script>
 
@@ -223,8 +221,19 @@ async function onBeforeUpload(
           </template>
         </TableHeaderOperation>
       </template>
-      <NDataTable striped :columns="columns" :data="tasks" size="small" :flex-height="!appStore.isMobile"
-        :scroll-x="962" :loading="loading" remote :row-key="row => row.id" :pagination="false" class="sm:h-full" />
+      <NDataTable
+        striped
+        :columns="columns"
+        :data="tasks"
+        size="small"
+        :flex-height="!appStore.isMobile"
+        :scroll-x="962"
+        :loading="loading"
+        remote
+        :row-key="row => row.id"
+        :pagination="false"
+        class="sm:h-full"
+      />
     </NCard>
     <UploadDialog v-model:visible="uploadVisible" />
     <SearchDialog v-model:visible="searchVisible" />
