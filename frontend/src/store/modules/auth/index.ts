@@ -28,6 +28,8 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
     primaryOrg: ''
   });
 
+  const isAdmin = computed(() => userInfo.role === 'ADMIN');
+
   /** is super role in static route */
   const isStaticSuper = computed(() => {
     const { VITE_AUTH_ROUTE_MODE, VITE_STATIC_SUPER_ROLE } = import.meta.env;
@@ -177,6 +179,7 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
     userInfo,
     isStaticSuper,
     isLogin,
+    isAdmin,
     loginLoading,
     resetStore,
     login,

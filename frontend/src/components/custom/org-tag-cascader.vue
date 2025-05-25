@@ -32,10 +32,13 @@ onMounted(async () => {
 });
 
 const emit = defineEmits<{
-  'change':[CascaderOption | Array<CascaderOption | null> | null]
-}>()
+  change: [CascaderOption | Array<CascaderOption | null> | null];
+}>();
 
-function onUpdate(_: string | number | Array<string | number> | null, option: CascaderOption | Array<CascaderOption | null> | null) {
+function onUpdate(
+  _: string | number | Array<string | number> | null,
+  option: CascaderOption | Array<CascaderOption | null> | null
+) {
   emit('change', option);
 }
 </script>
