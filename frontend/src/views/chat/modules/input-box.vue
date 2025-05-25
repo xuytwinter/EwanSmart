@@ -5,10 +5,10 @@ const chatStore = useChatStore();
 const { input, list } = storeToRefs(chatStore);
 
 const latestMessage = computed(() => {
-  return list.value[list.value.length - 1];
+  return list.value[list.value.length - 1] ?? {};
 });
 const isSending = computed(() => {
-  return latestMessage.value.role === 'assistant' && ['loading', 'pending'].includes(latestMessage.value?.status || '');
+  return latestMessage.value?.role === 'assistant' && ['loading', 'pending'].includes(latestMessage.value?.status || '');
 });
 
 const handleSend = () => {

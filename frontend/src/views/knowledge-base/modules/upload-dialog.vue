@@ -1,65 +1,65 @@
 <script setup lang="ts">
-import { uploadAccept } from '@/constants/common';
+import { uploadAccept } from '@/constants/common'
+import { CascaderOption } from 'naive-ui'
 defineOptions({
   name: 'UploadDialog'
-});
+})
 
-const loading = ref(false);
-const visible = defineModel<boolean>('visible', { default: false });
+const loading = ref(false)
+const visible = defineModel<boolean>('visible', { default: false })
 
-const { formRef, validate, restoreValidation } = useNaiveForm();
-const { defaultRequiredRule } = useFormRules();
+const { formRef, validate, restoreValidation } = useNaiveForm()
+const { defaultRequiredRule } = useFormRules()
 
-const model = ref<Api.KnowledgeBase.Form>(createDefaultModel());
+const model = ref<Api.KnowledgeBase.Form>(createDefaultModel())
 
 function createDefaultModel(): Api.KnowledgeBase.Form {
   return {
     orgTag: null,
+    orgTagName: '',
     isPublic: false,
     fileList: []
-  };
+  }
 }
 
 const rules = ref<FormRules>({
   orgTag: defaultRequiredRule,
   isPublic: defaultRequiredRule,
   fileList: defaultRequiredRule
-});
+})
 
 function close() {
-  visible.value = false;
+  visible.value = false
 }
 
-const store = useKnowledgeBaseStore();
+const store = useKnowledgeBaseStore()
 async function handleSubmit() {
-  await validate();
-  loading.value = true;
-  await store.enqueueUpload(model.value);
-  loading.value = false;
-  close();
+  await validate()
+  loading.value = true
+  await store.enqueueUpload(model.value)
+  loading.value = false
+  close()
 }
 
 watch(visible, () => {
   if (visible.value) {
-    model.value = createDefaultModel();
-    restoreValidation();
+    model.value = createDefaultModel()
+    restoreValidation()
   }
-});
+})
+
+function onUpdate(option: CascaderOption | Array<CascaderOption | null> | null) {
+  if (option)
+    model.value.orgTagName = (option as unknown as Api.OrgTag.Item).name
+}
 </script>
 
 <template>
-  <NModal
-    v-model:show="visible"
-    preset="dialog"
-    title="文件上传"
-    :show-icon="false"
-    :mask-closable="false"
-    class="w-500px!"
-    @positive-click="handleSubmit"
-  >
+  <NModal v-model:show="visible" preset="dialog" title="文件上传" :show-icon="false" :mask-closable="false" class="w-500px!"
+    @positive-click="handleSubmit">
     <NForm ref="formRef" :model="model" :rules="rules" label-placement="left" :label-width="100" mt-10>
       <NFormItem label="组织标签" path="orgTag">
-        <OrgTagCascader v-model:value="model.orgTag" />
+        <OrgTagCascader v-model:value="model.orgTag" @change="onUpdate" />
       </NFormItem>
       <NFormItem label="是否公开" path="isPublic">
         <NRadioGroup v-model:value="model.isPublic" name="radiogroup">
@@ -70,13 +70,8 @@ watch(visible, () => {
         </NRadioGroup>
       </NFormItem>
       <NFormItem label="标签描述" path="fileList">
-        <NUpload
-          v-model:file-list="model.fileList"
-          :accept="uploadAccept"
-          :max="1"
-          :multiple="false"
-          :default-upload="false"
-        >
+        <NUpload v-model:file-list="model.fileList" :accept="uploadAccept" :max="1" :multiple="false"
+          :default-upload="false">
           <NButton>上传文件</NButton>
         </NUpload>
       </NFormItem>

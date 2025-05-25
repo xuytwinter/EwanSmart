@@ -127,6 +127,7 @@ declare namespace Api {
 
     interface Form {
       orgTag: string | null;
+      orgTagName: string | null;
       isPublic: boolean;
       fileList: import('naive-ui').UploadFileInfo[];
     }
@@ -139,12 +140,14 @@ declare namespace Api {
       totalSize: number;
       fileName: string;
       orgTag: string | null;
+      orgTagName?: string | null;
       isPublic: boolean;
       uploadedChunks: number[];
       progress: number;
       status: UploadStatus;
       createdAt?: string;
       mergedAt?: string;
+      requestIds?: string[]; // 请求ID，用于取消上传
     }
     type List = Common.PaginatingQueryRecord<UploadTask>;
 

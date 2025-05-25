@@ -1,8 +1,11 @@
+import { REQUEST_ID_KEY } from "~/packages/axios/src";
+import { nanoid } from "~/packages/utils/src";
+
 export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () => {
   const tasks = ref<Api.KnowledgeBase.UploadTask[]>([]);
   const activeUploads = ref<Set<string>>(new Set());
 
-  async function uploadChunk(task: Api.KnowledgeBase.UploadTask): Promise<void> {
+  async function uploadChunk(task: Api.KnowledgeBase.UploadTask): Promise<boolean> {
     const totalChunks = Math.ceil(task.totalSize / chunkSize);
 
     const chunkStart = task.chunkIndex * chunkSize;
@@ -10,40 +13,48 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
     const chunk = task.file.slice(chunkStart, chunkEnd);
 
     task.chunk = chunk;
-
+    const requestId = nanoid();
+    task.requestIds ??= [];
+    task.requestIds.push(requestId);
     const { error, data } = await request<Api.KnowledgeBase.Progress>({
       url: '/upload/chunk',
       method: 'POST',
-      data: { file: task.chunk },
+      data: {
+        file: task.chunk,
+        fileMd5: task.fileMd5,
+        chunkIndex: task.chunkIndex,
+        totalSize: task.totalSize,
+        fileName: task.fileName,
+        orgTag: task.orgTag,
+        isPublic: task.isPublic ?? false,
+      },
       headers: {
-        'X-File-Md5': task.fileMd5,
-        'X-Chunk-Index': task.chunkIndex,
-        'X-Total-Size': task.totalSize,
-        'X-File-Name': task.fileName,
-        'X-Org-Tag': task.orgTag,
-        'X-Is-Public': task.isPublic ?? false,
-        'Content-Type': 'multipart/form-data'
-      }
+        'Content-Type': 'multipart/form-data',
+        [REQUEST_ID_KEY]: requestId,
+      },
+      timeout: 10 * 60 * 1000,
     });
 
-    if (error) throw new Error('分片上传失败');
+    task.requestIds = task.requestIds.filter(id => id !== requestId);
+
+    if (error) return false;
 
     // 更新任务状态
     const updatedTask = tasks.value.find(t => t.fileMd5 === task.fileMd5)!;
     updatedTask.uploadedChunks = data.uploaded;
-    updatedTask.progress = data.progress;
+    updatedTask.progress = parseFloat(data.progress.toFixed(2));
 
     if (data.uploaded.length === totalChunks) {
       const success = await mergeFile(task);
-      if (!success) throw new Error('文件合并失败');
+      if (!success) return false;
     }
-    Promise.resolve();
+    return true;
   }
 
   async function mergeFile(task: Api.KnowledgeBase.UploadTask) {
     try {
-      const res = await request({ url: '/upload/merge', data: { fileMd5: task.fileMd5, fileName: task.fileName } });
-      if (!res) return false;
+      const { error } = await request({ url: '/upload/merge', method: 'POST', data: { fileMd5: task.fileMd5, fileName: task.fileName } });
+      if (error) return false;
 
       // 更新任务状态为已完成
       const index = tasks.value.findIndex(t => t.fileMd5 === task.fileMd5);
@@ -100,6 +111,8 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
       orgTag: form.orgTag
     };
 
+    newTask.orgTagName = form.orgTagName ?? null
+
     // 将新的上传任务添加到任务队列中
     tasks.value.push(newTask);
     // 启动上传流程
@@ -129,20 +142,20 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
     const totalChunks = Math.ceil(task.totalSize / chunkSize);
 
     try {
-      const promises = [];
+      // const promises = [];
       // 遍历所有片数
       for (let i = 0; i < totalChunks; i += 1) {
         // 如果未上传，则上传
         if (!task.uploadedChunks.includes(i)) {
-          task.chunkIndex = i;
-          promises.push(uploadChunk(task));
+          task.chunkIndex = i
+          // promises.push(uploadChunk(task))
+          const success = await uploadChunk(task);
+          if (!success) throw new Error('分片上传失败')
         }
       }
-      await Promise.all(promises);
+      // await Promise.all(promises)
 
-      console.log('%c [ 👉  Promise.all 👈 ]-137', 'font-size:16px; background:#f76da8; color:#ffb1ec;');
     } catch {
-      console.log('%c [ 👉  catch 👈 ]-140', 'font-size:16px; background:#14a626; color:#58ea6a;');
       // 如果上传失败，则将任务状态设置为中断
       const index = tasks.value.findIndex(t => t.fileMd5 === task.fileMd5);
       tasks.value[index].status = UploadStatus.Break;
