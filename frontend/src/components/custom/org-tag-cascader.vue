@@ -30,6 +30,14 @@ onMounted(async () => {
     });
   }
 });
+
+const emit = defineEmits<{
+  'change':[CascaderOption | Array<CascaderOption | null> | null]
+}>()
+
+function onUpdate(_: string | number | Array<string | number> | null, option: CascaderOption | Array<CascaderOption | null> | null) {
+  emit('change', option);
+}
 </script>
 
 <template>
@@ -40,5 +48,6 @@ onMounted(async () => {
     value-field="tagId"
     label-field="name"
     expand-trigger="hover"
+    @update:value="onUpdate"
   />
 </template>
