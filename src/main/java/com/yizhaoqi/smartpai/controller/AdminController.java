@@ -371,7 +371,7 @@ public class AdminController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String orgTag,
             @RequestParam(required = false) Integer status,
-            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size) {
         
         String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
