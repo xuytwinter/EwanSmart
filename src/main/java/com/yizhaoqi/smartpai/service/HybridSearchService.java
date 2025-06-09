@@ -6,14 +6,19 @@ import co.elastic.clients.json.JsonData;
 import com.yizhaoqi.smartpai.client.EmbeddingClient;
 import com.yizhaoqi.smartpai.entity.EsDocument;
 import com.yizhaoqi.smartpai.entity.SearchResult;
+import com.yizhaoqi.smartpai.exception.CustomException;
+import com.yizhaoqi.smartpai.model.User;
+import com.yizhaoqi.smartpai.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.http.HttpStatus;
 
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 // 混合检索服务
@@ -31,6 +36,12 @@ public class HybridSearchService {
     @Autowired
     private UserService userService;
 
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private OrgTagCacheService orgTagCacheService;
+
     /**
      * 带权限控制的混合检索实现
      * 结合向量相似度搜索和权限过滤，确保用户只能搜索到有权限访问的文档
@@ -44,9 +55,9 @@ public class HybridSearchService {
         try {
             logger.debug("开始带权限的混合检索，查询: {}, 用户: {}, topK: {}", query, userId, topK);
 
-            // 获取用户的组织标签
-            List<String> userOrgTags = getUserOrgTags(userId);
-            logger.debug("用户组织标签: {}", userOrgTags);
+            // 获取用户的有效组织标签（包含父标签关系）
+            List<String> userEffectiveTags = getUserEffectiveOrgTags(userId);
+            logger.debug("用户有效组织标签: {}", userEffectiveTags);
 
             // 生成查询向量
             JsonData queryVector = generateQueryVector(query);
@@ -54,7 +65,7 @@ public class HybridSearchService {
             // 如果向量生成失败，仅使用文本匹配
             if (queryVector == null) {
                 logger.warn("向量生成失败，仅使用文本匹配进行搜索");
-                return textOnlySearchWithPermission(query, userId, userOrgTags, topK);
+                return textOnlySearchWithPermission(query, userId, userEffectiveTags, topK);
             }
 
             SearchResponse<EsDocument> response = esClient.search(s -> s
@@ -97,20 +108,20 @@ public class HybridSearchService {
                                                                     .value(true)
                                                             )
                                                     )
-                                                    // 条件3: 用户可以访问其所属组织的文档
+                                                    // 条件3: 用户可以访问其所属组织的文档（包含层级关系）
                                                     .should(s3 -> {
-                                                        if (userOrgTags.isEmpty()) {
+                                                        if (userEffectiveTags.isEmpty()) {
                                                             return s3.matchNone(mn -> mn);
-                                                        } else if (userOrgTags.size() == 1) {
+                                                        } else if (userEffectiveTags.size() == 1) {
                                                             // 单个标签使用 term 查询
                                                             return s3.term(t -> t
                                                                     .field("org_tag")
-                                                                    .value(userOrgTags.get(0))
+                                                                    .value(userEffectiveTags.get(0))
                                                             );
                                                         } else {
                                                             // 多个标签使用 bool should 组合多个 term 查询
                                                             return s3.bool(innerBool -> {
-                                                                userOrgTags.forEach(tag -> 
+                                                                userEffectiveTags.forEach(tag -> 
                                                                     innerBool.should(sh -> sh.term(t -> t
                                                                             .field("org_tag")
                                                                             .value(tag)
@@ -147,7 +158,7 @@ public class HybridSearchService {
             // 发生异常时尝试使用纯文本搜索作为后备方案
             try {
                 logger.info("尝试使用纯文本搜索作为后备方案");
-                return textOnlySearchWithPermission(query, userId, getUserOrgTags(userId), topK);
+                return textOnlySearchWithPermission(query, userId, getUserEffectiveOrgTags(userId), topK);
             } catch (Exception fallbackError) {
                 logger.error("后备搜索也失败", fallbackError);
                 throw new RuntimeException("搜索完全失败", fallbackError);
@@ -158,7 +169,7 @@ public class HybridSearchService {
     /**
      * 仅使用文本匹配的带权限搜索方法
      */
-    private List<SearchResult> textOnlySearchWithPermission(String query, String userId, List<String> userOrgTags, int topK) throws Exception {
+    private List<SearchResult> textOnlySearchWithPermission(String query, String userId, List<String> userEffectiveTags, int topK) throws Exception {
         SearchResponse<EsDocument> response = esClient.search(s -> s
                 .index("knowledge_base")
                 .query(q -> q
@@ -187,20 +198,20 @@ public class HybridSearchService {
                                                                 .value(true)
                                                         )
                                                 )
-                                                // 条件3: 用户可以访问其所属组织的文档
+                                                // 条件3: 用户可以访问其所属组织的文档（包含层级关系）
                                                 .should(s3 -> {
-                                                    if (userOrgTags.isEmpty()) {
+                                                    if (userEffectiveTags.isEmpty()) {
                                                         return s3.matchNone(mn -> mn);
-                                                    } else if (userOrgTags.size() == 1) {
-                                                        // 单个标签使用 term 查询（更高效）
+                                                    } else if (userEffectiveTags.size() == 1) {
+                                                        // 单个标签使用 term 查询
                                                         return s3.term(t -> t
                                                                 .field("org_tag")
-                                                                .value(userOrgTags.get(0))
+                                                                .value(userEffectiveTags.get(0))
                                                         );
                                                     } else {
                                                         // 多个标签使用 bool should 组合多个 term 查询
                                                         return s3.bool(innerBool -> {
-                                                            userOrgTags.forEach(tag -> 
+                                                            userEffectiveTags.forEach(tag -> 
                                                                 innerBool.should(sh -> sh.term(t -> t
                                                                         .field("org_tag")
                                                                         .value(tag)
@@ -355,17 +366,26 @@ public class HybridSearchService {
     }
     
     /**
-     * 获取用户的组织标签列表
+     * 获取用户的有效组织标签（包含层级关系）
      */
-    private List<String> getUserOrgTags(String userId) {
+    private List<String> getUserEffectiveOrgTags(String userId) {
         try {
-            String orgTagsStr = userService.getUserOrgTags(userId).get("orgTags").toString();
-            if (orgTagsStr == null || orgTagsStr.isEmpty()) {
-                return Collections.emptyList();
+            // 获取用户名
+            User user;
+            try {
+                Long userIdLong = Long.parseLong(userId);
+                user = userRepository.findById(userIdLong)
+                    .orElseThrow(() -> new CustomException("User not found with ID: " + userId, HttpStatus.NOT_FOUND));
+            } catch (NumberFormatException e) {
+                // 如果userId不是数字格式，则假设它就是username
+                user = userRepository.findByUsername(userId)
+                    .orElseThrow(() -> new CustomException("User not found: " + userId, HttpStatus.NOT_FOUND));
             }
-            return Arrays.asList(orgTagsStr.split(","));
+            
+            // 通过orgTagCacheService获取用户的有效标签集合
+            return orgTagCacheService.getUserEffectiveOrgTags(user.getUsername());
         } catch (Exception e) {
-            logger.error("获取用户组织标签失败", e);
+            logger.error("获取用户有效组织标签失败: {}", e.getMessage(), e);
             return Collections.emptyList(); // 返回空列表作为默认值
         }
     }

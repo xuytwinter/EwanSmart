@@ -50,6 +50,7 @@ public class JwtUtils {
         // 创建token内容
         Map<String, Object> claims = new HashMap<>();
         claims.put("role", user.getRole().name());
+        claims.put("userId", user.getId().toString()); // 添加用户ID到JWT
         
         // 添加组织标签信息
         if (user.getOrgTags() != null && !user.getOrgTags().isEmpty()) {
@@ -110,6 +111,24 @@ public class JwtUtils {
     }
     
     /**
+     * 从 JWT Token 中提取用户ID
+     */
+    public String extractUserIdFromToken(String token) {
+        try {
+            Claims claims = Jwts.parserBuilder()
+                    .setSigningKey(getSigningKey())
+                    .build()
+                    .parseClaimsJws(token)
+                    .getBody();
+
+            return claims.get("userId", String.class);
+        } catch (Exception e) {
+            logger.error("Error extracting userId from token: {}", token, e);
+            return null;
+        }
+    }
+    
+    /**
      * 从 JWT Token 中提取用户角色
      */
     public String extractRoleFromToken(String token) {
@@ -161,13 +180,5 @@ public class JwtUtils {
             logger.error("Error extracting primary organization from token: {}", token, e);
             return null;
         }
-    }
-    
-    /**
-     * 从 JWT Token 中提取用户ID
-     * 由于我们使用用户名作为ID，这里简单地返回用户名
-     */
-    public String extractUserIdFromToken(String token) {
-        return extractUsernameFromToken(token);
     }
 }
