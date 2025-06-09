@@ -6,15 +6,19 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
 
   const list = ref<Api.Chat.Message[]>([]);
 
+  const store = useAuthStore();
+
   const {
     status: wsStatus,
     data: wsData,
     send: wsSend,
     open: wsOpen,
     close: wsClose
-  } = useWebSocket('ws://localhost:8080/ws/chat', {
+  } = useWebSocket(`/proxy-ws/chat/${store.token}`, {
     autoReconnect: true
   });
+
+  const scrollToBottom = ref<null | (() => void)>(null);
 
   return {
     input,
@@ -24,6 +28,7 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     wsData,
     wsSend,
     wsOpen,
-    wsClose
+    wsClose,
+    scrollToBottom
   };
 });

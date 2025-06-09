@@ -182,7 +182,11 @@ declare namespace Api {
     interface Message {
       role: 'user' | 'assistant';
       content: string;
-      status?: 'pending' | 'loading' | 'done' | 'error';
+      status?: 'pending' | 'loading' | 'finished' | 'error';
+    }
+
+    interface Token {
+      cmdToken: string;
     }
   }
 }
