@@ -50,13 +50,21 @@ onMounted(() => {
 
 <template>
   <NScrollbar ref="scrollbarRef" class="h-0 flex-auto">
-    <Teleport to="#header-extra">
-      <div class="absolute right-0 top-0 z-10">
-        <NDatePicker v-model:value="range" type="datetimerange" clearable />
-      </div>
+    <Teleport defer to="#header-extra">
+      <NDatePicker v-model:value="range" type="datetimerange" class="dr mx-6" />
     </Teleport>
     <ChatMessage v-for="(item, index) in list" :key="index" :msg="item" />
   </NScrollbar>
 </template>
 
-<style scoped></style>
+<style scoped lang="scss">
+.dr {
+  :deep(.n-input) {
+    background: #0000;
+    --n-border: none !important;
+    --n-border-hover: none !important;
+    --n-border-focus: none !important;
+    --n-box-shadow-focus: none !important;
+  }
+}
+</style>

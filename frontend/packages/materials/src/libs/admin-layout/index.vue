@@ -129,7 +129,7 @@ function handleClickMask() {
             commonClass,
             headerClass,
             headerLeftGapClass,
-            { 'absolute top-4 right-4 w-fit': fixedHeaderAndTab }
+            { 'absolute top-4 right-4 w-full': fixedHeaderAndTab }
           ]"
         >
           <slot name="header"></slot>

@@ -3,7 +3,7 @@ import MarkdownIt from 'markdown-it';
 import mila from 'markdown-it-link-attributes';
 import mdKatex from '@traptitech/markdown-it-katex';
 import hljs from 'highlight.js';
-import 'github-markdown-css';
+// import 'github-markdown-css';
 
 defineOptions({ name: 'ChatMessage' });
 
