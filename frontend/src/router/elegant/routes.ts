@@ -51,6 +51,18 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
+    name: 'chat-history',
+    path: '/chat-history',
+    component: 'layout.base$view.chat-history',
+    meta: {
+      title: 'chat-history',
+      i18nKey: 'route.chat-history',
+      roles: ['ADMIN'],
+      icon: 'solar:hashtag-chat-broken',
+      order: 2
+    }
+  },
+  {
     name: 'iframe-page',
     path: '/iframe-page/:url',
     component: 'layout.base$view.iframe-page',
@@ -71,7 +83,7 @@ export const generatedRoutes: GeneratedRoute[] = [
       title: 'knowledge-base',
       i18nKey: 'route.knowledge-base',
       icon: 'solar:folder-line-duotone',
-      order: 2
+      order: 3
     }
   },
   {
@@ -95,7 +107,7 @@ export const generatedRoutes: GeneratedRoute[] = [
       i18nKey: 'route.org-tag',
       icon: 'solar:tag-line-duotone',
       roles: ['ADMIN'],
-      order: 3
+      order: 4
     }
   },
   {
@@ -106,7 +118,7 @@ export const generatedRoutes: GeneratedRoute[] = [
       title: 'personal-center',
       i18nKey: 'route.personal-center',
       icon: 'solar:people-nearby-line-duotone',
-      order: 5
+      order: 6
     }
   },
   {
@@ -118,7 +130,7 @@ export const generatedRoutes: GeneratedRoute[] = [
       i18nKey: 'route.user',
       icon: 'solar:user-line-duotone',
       roles: ['ADMIN'],
-      order: 4
+      order: 5
     }
   }
 ];
