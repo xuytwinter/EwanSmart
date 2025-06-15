@@ -32,7 +32,7 @@ function getFlatRequest(options: Partial<RequestOption<App.Service.Response>> = 
         return String(response.data.code) === import.meta.env.VITE_SERVICE_SUCCESS_CODE;
       },
       async onBackendFail(response, instance) {
-        console.log('%c [ 👉 response 👈 ]-35', 'font-size:16px; background:#3cd735; color:#80ff79;', response);
+        console.log('%c [ 👉 onBackendFail 👈 ]-35', 'font-size:16px; background:#3cd735; color:#80ff79;', response);
         const authStore = useAuthStore();
         const responseCode = String(response.data.code);
 
@@ -100,6 +100,8 @@ function getFlatRequest(options: Partial<RequestOption<App.Service.Response>> = 
       onError(error) {
         // when the request is fail, you can show error message
 
+        if (error.code === 'ERR_CANCELED') return;
+
         let message = error.message;
         let backendErrorCode = '';
 
@@ -121,7 +123,6 @@ function getFlatRequest(options: Partial<RequestOption<App.Service.Response>> = 
           return;
         }
 
-        console.log('%c [ 👉  👈 ]-131', 'font-size:16px; background:#724926; color:#b68d6a;', message);
         showErrorMsg(request.state, message);
       },
       ...options

@@ -114,19 +114,33 @@ async function getList() {
 }
 
 async function handleDelete(fileMd5: string) {
+  const index = tasks.value.findIndex(task => task.fileMd5 === fileMd5);
+
+  if (index !== -1) {
+    tasks.value[index].requestIds?.forEach(requestId => {
+      request.cancelRequest(requestId);
+    });
+  }
+  console.log(
+    '%c [ 👉 tasks.value[index].uploadedChunks  👈 ]-127',
+    'font-size:16px; background:#b92e07; color:#fd724b;',
+    tasks.value[index].uploadedChunks
+  );
+
+  // 如果文件一个分片也没有上传完成，则直接删除
+  if (tasks.value[index].uploadedChunks && tasks.value[index].uploadedChunks.length === 0) {
+    tasks.value.splice(index, 1);
+    return;
+  }
+
   const { error } = await request({ url: `/documents/${fileMd5}`, method: 'DELETE' });
   if (!error) {
-    const index = tasks.value.findIndex(task => task.fileMd5 === fileMd5);
-    if (index !== -1) {
-      tasks.value[index].requestIds?.forEach(requestId => {
-        request.cancelRequest(requestId);
-      });
-    }
     tasks.value.splice(index, 1);
     window.$message?.success('删除成功');
     await getData();
   }
 }
+
 // #region 文件上传
 const uploadVisible = ref(false);
 function handleUpload() {
