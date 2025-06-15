@@ -100,3 +100,8 @@ export async function calculateMD5(file: File): Promise<string> {
     loadNext();
   });
 }
+
+export function formatDate(date: string | number | null | undefined, format = 'YYYY-MM-DD HH:mm:ss') {
+  if (!date) return '';
+  return dayjs(date).format(format);
+}

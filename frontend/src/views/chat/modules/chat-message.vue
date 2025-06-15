@@ -1,10 +1,6 @@
 <script setup lang="ts">
-import MarkdownIt from 'markdown-it';
-import mila from 'markdown-it-link-attributes';
-import mdKatex from '@traptitech/markdown-it-katex';
-import hljs from 'highlight.js';
-// import 'github-markdown-css';
-
+import { VueMarkdownIt } from 'vue-markdown-shiki';
+import { formatDate } from '@/utils/common';
 defineOptions({ name: 'ChatMessage' });
 
 const props = defineProps<{ msg: Api.Chat.Message }>();
@@ -16,29 +12,10 @@ function handleCopy(content: string) {
   window.$message?.success('已复制');
 }
 
-const md = new MarkdownIt({
-  html: true,
-  linkify: true,
-  typographer: true,
-  highlight(code, lang) {
-    if (lang && hljs.getLanguage(lang)) {
-      return hljs.highlight(code, { language: lang }).value;
-    }
-    return hljs.highlightAuto(code).value;
-  }
-});
-
-md.use(mila, { attrs: { target: '_blank', rel: 'noopener' } });
-md.use(mdKatex, { blockClass: 'katexmath-block rounded-md p-[10px]', errorColor: ' #cc0000' });
-
 const chatStore = useChatStore();
 const content = computed(() => {
-  const value = props.msg.content ?? '';
-  if (props.msg.role === 'assistant') {
-    chatStore.scrollToBottom?.();
-    return md.render(value);
-  }
-  return value;
+  chatStore.scrollToBottom?.();
+  return props.msg.content ?? '';
 });
 </script>
 
@@ -48,19 +25,28 @@ const content = computed(() => {
       <NAvatar class="bg-success">
         <SvgIcon icon="ph:user-circle" class="text-icon-large color-white" />
       </NAvatar>
-      <NText>{{ authStore.userInfo.username }}</NText>
+      <div class="flex-col gap-1">
+        <NText class="text-4 font-bold">{{ authStore.userInfo.username }}</NText>
+        <NText class="text-3 color-gray-500">{{ formatDate(msg.timestamp) }}</NText>
+      </div>
     </div>
     <div v-else class="flex items-center gap-4">
       <NAvatar class="bg-primary">
         <SystemLogo class="text-6 text-white" />
       </NAvatar>
-      <NText>派聪明</NText>
+      <div class="flex-col gap-1">
+        <NText class="text-4 font-bold">派聪明</NText>
+        <NText class="text-3 color-gray-500">{{ formatDate(msg.timestamp) }}</NText>
+      </div>
     </div>
     <NText v-if="msg.status === 'pending'">
       <icon-eos-icons:three-dots-loading class="ml-12 mt-2 text-8" />
     </NText>
     <NText v-else-if="msg.status === 'error'" class="ml-12 mt-2 italic">服务器繁忙，请稍后再试</NText>
-    <div v-else class="markdown-body ml-12 mt-2" v-html="content"></div>
+    <div v-else-if="msg.role === 'assistant'" class="mt-2 pl-12">
+      <VueMarkdownIt :content="content" />
+    </div>
+    <NText v-else-if="msg.role === 'user'" class="ml-12 mt-2 text-4">{{ content }}</NText>
     <NDivider class="ml-12 w-[calc(100%-3rem)] mb-0! mt-2!" />
     <div class="ml-12 flex gap-4">
       <NButton quaternary @click="handleCopy(msg.content)">
@@ -72,15 +58,4 @@ const content = computed(() => {
   </div>
 </template>
 
-<style scoped lang="scss">
-.markdown-body {
-  box-sizing: border-box;
-  padding-left: 50px;
-}
-
-@media (prefers-color-scheme: dark) {
-  .markdown-body {
-    --bgColor-default: #121212;
-  }
-}
-</style>
+<style scoped lang="scss"></style>

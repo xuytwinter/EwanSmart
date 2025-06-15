@@ -59,7 +59,7 @@ const setPrimaryOrg = async () => {
           </div>
         </template>
         <NScrollbar class="max-h-60vh">
-          <div class="flex flex-wrap gap-4">
+          <div class="flex flex-wrap gap-4 p-4">
             <NCard
               v-for="tag in tags.orgTagDetails"
               :key="tag.tagId"

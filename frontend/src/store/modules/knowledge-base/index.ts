@@ -128,7 +128,6 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
   async function startUpload() {
     // 限制可同时上传的文件个数
     if (activeUploads.value.size >= 3) return;
-
     // 获取待上传的文件
     const pendingTasks = tasks.value.filter(
       t => t.status === UploadStatus.Pending && !activeUploads.value.has(t.fileMd5)
@@ -146,6 +145,10 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
     const totalChunks = Math.ceil(task.totalSize / chunkSize);
 
     try {
+      if (task.uploadedChunks.length === totalChunks) {
+        const success = await mergeFile(task);
+        if (!success) throw new Error('文件合并失败');
+      }
       // const promises = [];
       // 遍历所有片数
       for (let i = 0; i < totalChunks; i += 1) {
@@ -159,7 +162,8 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
         }
       }
       // await Promise.all(promises)
-    } catch {
+    } catch (e) {
+      console.error('%c [ 👉 upload error 👈 ]-168', 'font-size:16px; background:#94cc97; color:#d8ffdb;', e);
       // 如果上传失败，则将任务状态设置为中断
       const index = tasks.value.findIndex(t => t.fileMd5 === task.fileMd5);
       tasks.value[index].status = UploadStatus.Break;

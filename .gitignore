@@ -73,3 +73,5 @@ frontend/yarn.lock
 .VSCodeCounter
 frontend/src/typings/components.d.ts
 frontend/src/typings/auto-imports.d.ts
+frontend/public/languages
+frontend/public/themes

@@ -62,6 +62,7 @@ declare global {
   const filterTabsById: typeof import('../store/modules/tab/shared')['filterTabsById']
   const filterTabsByIds: typeof import('../store/modules/tab/shared')['filterTabsByIds']
   const findTabByRouteName: typeof import('../store/modules/tab/shared')['findTabByRouteName']
+  const formatDate: typeof import('../utils/common')['formatDate']
   const getActivePinia: typeof import('pinia')['getActivePinia']
   const getAllTabs: typeof import('../store/modules/tab/shared')['getAllTabs']
   const getBreadcrumbsByRoute: typeof import('../store/modules/route/shared')['getBreadcrumbsByRoute']

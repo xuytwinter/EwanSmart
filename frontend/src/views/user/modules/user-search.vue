@@ -22,7 +22,7 @@ async function search() {
 </script>
 
 <template>
-  <NCard :bordered="false" size="small" class="rd-full px-6 card-wrapper">
+  <NCard :bordered="false" size="small" class="rd-full px-6">
     <NForm ref="formRef" :model="model" label-placement="left" :show-feedback="false" inline>
       <NFormItem label="关键词" path="keyword">
         <NInput v-model:value="model.keyword" placeholder="请输入关键词" clearable />

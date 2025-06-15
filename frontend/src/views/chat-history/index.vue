@@ -1,31 +1,36 @@
 <script setup lang="ts">
 import type { NScrollbar } from 'naive-ui';
+import { VueMarkdownItProvider } from 'vue-markdown-shiki';
 import ChatMessage from '../chat/modules/chat-message.vue';
 
-const authStore = useAuthStore();
-const chatStore = useChatStore();
-const { list } = storeToRefs(chatStore);
+defineOptions({
+  name: 'ChatHistory'
+});
 
 const scrollbarRef = ref<InstanceType<typeof NScrollbar>>();
+
+const list = ref<Api.Chat.Message[]>([]);
+const loading = ref(false);
 
 watch(() => [...list.value], scrollToBottom);
 
 function scrollToBottom() {
-  nextTick(() => {
+  setTimeout(() => {
     scrollbarRef.value?.scrollBy({
-      top: 999999,
+      top: 999999999999999,
       behavior: 'auto'
     });
-  });
+  }, 100);
 }
 
 const range = ref<[number, number]>([dayjs().subtract(7, 'day').valueOf(), Date.now()]);
+const userId = ref<number | null>(null);
 
 const params = computed(() => {
   return {
-    userId: authStore.userInfo.id,
-    start: dayjs(range.value[0]).format('YYYY-MM-DD HH:mm:ss'),
-    end: dayjs(range.value[1]).format('YYYY-MM-DD HH:mm:ss')
+    userid: userId.value,
+    start_date: dayjs(range.value[0]).format('YYYY-MM-DDTHH:mm:ss'),
+    end_date: dayjs(range.value[1]).format('YYYY-MM-DDTHH:mm:ss')
   };
 });
 
@@ -34,63 +39,51 @@ watchEffect(() => {
 });
 
 async function getList() {
+  if (!params.value.userid) return;
+  loading.value = true;
   const { error, data } = await request<Api.Chat.Message[]>({
     url: 'admin/conversation',
     params: params.value
   });
   if (!error) {
     list.value = data;
+    scrollToBottom();
   }
+  loading.value = false;
 }
-
-onMounted(() => {
-  chatStore.scrollToBottom = scrollToBottom;
-});
 </script>
 
 <template>
   <div class="h-full">
     <Teleport defer to="#header-extra">
       <NForm :model="params" label-placement="left" :show-feedback="false" inline class="mx-10">
-        <NFormItem label="用户" path="userId">
+        <NFormItem label="用户">
           <TheSelect
-            v-model:value="params.userId"
+            v-model:value="userId"
             url="admin/users/list"
             :params="{ page: 1, size: 999 }"
+            select-first
             key-field="content"
+            value-field="userId"
+            label-field="username"
             class="clear w-200px!"
             :clearable="false"
           />
         </NFormItem>
-        <NFormItem label="时间" path="start">
+        <NFormItem label="时间">
           <NDatePicker v-model:value="range" type="datetimerange" class="clear" />
         </NFormItem>
       </NForm>
     </Teleport>
     <NScrollbar ref="scrollbarRef">
-      <ChatMessage v-for="(item, index) in list" :key="index" :msg="item" />
+      <NSpin :show="loading" class="h-full">
+        <VueMarkdownItProvider>
+          <ChatMessage v-for="(item, index) in list" :key="index" :msg="item" />
+        </VueMarkdownItProvider>
+        <NEmpty v-if="!list.length" description="暂无数据" class="mt-60" />
+      </NSpin>
     </NScrollbar>
   </div>
 </template>
 
-<style scoped lang="scss">
-// .clear {
-//   :deep(.n-input),
-//   :deep(.n-base-selection),
-//   :deep(.n-base-selection--active) {
-//     background: #0000;
-//     --n-border: none !important;
-//     --n-border-active: none !important;
-//     --n-border-hover: none !important;
-//     --n-border-focus: none !important;
-//     --n-box-shadow-active: none !important;
-//     --n-box-shadow-hover: none !important;
-//     --n-box-shadow-focus: none !important;
-//   }
-//   :deep(.n-base-selection) {
-//     .n-base-selection-label {
-//       background: #0000;
-//     }
-//   }
-// }
-</style>
+<style scoped lang="scss"></style>

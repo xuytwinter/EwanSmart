@@ -183,6 +183,7 @@ declare namespace Api {
       role: 'user' | 'assistant';
       content: string;
       status?: 'pending' | 'loading' | 'finished' | 'error';
+      timestamp?: string;
     }
 
     interface Token {

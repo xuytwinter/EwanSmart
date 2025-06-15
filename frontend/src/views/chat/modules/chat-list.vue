@@ -1,31 +1,35 @@
 <script setup lang="ts">
 import { NScrollbar } from 'naive-ui';
+import { VueMarkdownItProvider } from 'vue-markdown-shiki';
 import ChatMessage from './chat-message.vue';
 
-const authStore = useAuthStore();
+defineOptions({
+  name: 'ChatList'
+});
+
 const chatStore = useChatStore();
 const { list } = storeToRefs(chatStore);
 
+const loading = ref(false);
 const scrollbarRef = ref<InstanceType<typeof NScrollbar>>();
 
 watch(() => [...list.value], scrollToBottom);
 
 function scrollToBottom() {
-  nextTick(() => {
+  setTimeout(() => {
     scrollbarRef.value?.scrollBy({
-      top: 999999,
+      top: 999999999999999,
       behavior: 'auto'
     });
-  });
+  }, 100);
 }
 
-const range = ref<[number, number]>([dayjs().subtract(7, 'day').valueOf(), Date.now()]);
+const range = ref<[number, number]>([dayjs().subtract(7, 'day').valueOf(), dayjs().add(1, 'hours').valueOf()]);
 
 const params = computed(() => {
   return {
-    userId: authStore.userInfo.id,
-    start: dayjs(range.value[0]).format('YYYY-MM-DD HH:mm:ss'),
-    end: dayjs(range.value[1]).format('YYYY-MM-DD HH:mm:ss')
+    start_date: dayjs(range.value[0]).format('YYYY-MM-DDTHH:mm:ss'),
+    end_date: dayjs(range.value[1]).format('YYYY-MM-DDTHH:mm:ss')
   };
 });
 
@@ -34,6 +38,7 @@ watchEffect(() => {
 });
 
 async function getList() {
+  loading.value = true;
   const { error, data } = await request<Api.Chat.Message[]>({
     url: 'users/conversation',
     params: params.value
@@ -41,6 +46,7 @@ async function getList() {
   if (!error) {
     list.value = data;
   }
+  loading.value = false;
 }
 
 onMounted(() => {
@@ -49,16 +55,22 @@ onMounted(() => {
 </script>
 
 <template>
-  <NScrollbar ref="scrollbarRef" class="h-0 flex-auto">
-    <Teleport defer to="#header-extra">
-      <NForm :model="params" label-placement="left" :show-feedback="false" inline class="mx-10">
-        <NFormItem label="时间">
-          <NDatePicker v-model:value="range" type="datetimerange" />
-        </NFormItem>
-      </NForm>
-    </Teleport>
-    <ChatMessage v-for="(item, index) in list" :key="index" :msg="item" />
-  </NScrollbar>
+  <Suspense>
+    <NScrollbar ref="scrollbarRef" class="h-0 flex-auto">
+      <Teleport defer to="#header-extra">
+        <NForm :model="params" label-placement="left" :show-feedback="false" inline class="mx-10">
+          <NFormItem label="时间">
+            <NDatePicker v-model:value="range" type="datetimerange" />
+          </NFormItem>
+        </NForm>
+      </Teleport>
+      <NSpin :show="loading">
+        <VueMarkdownItProvider>
+          <ChatMessage v-for="(item, index) in list" :key="index" :msg="item" />
+        </VueMarkdownItProvider>
+      </NSpin>
+    </NScrollbar>
+  </Suspense>
 </template>
 
 <style scoped lang="scss"></style>

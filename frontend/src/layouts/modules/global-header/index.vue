@@ -43,7 +43,7 @@ const isDev = import.meta.env.DEV;
       <GlobalBreadcrumb v-if="!appStore.isMobile" class="ml-12px" />
     </div>
 -->
-    <div class="h-full flex-y-center justify-end rd-full bg-container px-8">
+    <div class="h-full flex-y-center justify-end rd-full bg-container px-8 shadow-2xl">
       <GlobalSearch />
       <FullScreen v-if="!appStore.isMobile" :full="isFullscreen" @click="toggle" />
       <LangSwitch

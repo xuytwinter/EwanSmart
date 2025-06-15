@@ -174,7 +174,7 @@ function renderResumeUploadButton(row: Api.KnowledgeBase.UploadTask) {
   return null;
 }
 
-// 人物列表存在文件，直接续传
+// 任务列表存在文件，直接续传
 function resumeUpload(row: Api.KnowledgeBase.UploadTask) {
   row.status = UploadStatus.Pending;
   store.startUpload();
@@ -195,10 +195,12 @@ async function onBeforeUpload(
     params: { file_md5: row.fileMd5 }
   });
   if (!error) {
-    row.file = options.file as unknown as File;
+    row.file = options.file.file!;
     row.status = UploadStatus.Pending;
     row.progress = progress.progress;
+    row.uploadedChunks = progress.uploaded;
     store.startUpload();
+    loading.value = false;
     return true;
   }
   loading.value = false;
