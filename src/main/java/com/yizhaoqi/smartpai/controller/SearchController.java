@@ -7,6 +7,9 @@ import org.springframework.web.bind.annotation.*;
 import com.yizhaoqi.smartpai.entity.SearchResult;
 
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.Collections;
 
 // 提供混合检索接口
 @RestController
@@ -41,9 +44,9 @@ public class SearchController {
      * ]
      */
     @GetMapping("/hybrid")
-    public List<SearchResult> hybridSearch(@RequestParam String query,
-                                          @RequestParam(defaultValue = "10") int topK,
-                                          @RequestAttribute(value = "userId", required = false) String userId) {
+    public Map<String, Object> hybridSearch(@RequestParam String query,
+                                            @RequestParam(defaultValue = "10") int topK,
+                                            @RequestAttribute(value = "userId", required = false) String userId) {
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("HYBRID_SEARCH");
         try {
             LogUtils.logBusiness("HYBRID_SEARCH", userId != null ? userId : "anonymous", 
@@ -64,12 +67,24 @@ public class SearchController {
                     "混合检索完成: 返回结果数量=%d", results.size());
             monitor.end("混合检索成功");
             
-            return results;
+            // 构造统一响应结构
+            Map<String, Object> responseBody = new HashMap<>(4);
+            responseBody.put("code", 200);
+            responseBody.put("message", "success");
+            responseBody.put("data", results);
+            
+            return responseBody;
         } catch (Exception e) {
             LogUtils.logBusinessError("HYBRID_SEARCH", userId != null ? userId : "anonymous", 
                     "混合检索失败: query=%s", e, query);
             monitor.end("混合检索失败: " + e.getMessage());
-            throw e;
+            
+            // 构造错误响应结构，保持与前端解析一致
+            Map<String, Object> errorBody = new HashMap<>(4);
+            errorBody.put("code", 500);
+            errorBody.put("message", e.getMessage());
+            errorBody.put("data", Collections.emptyList());
+            return errorBody;
         }
     }
 }
