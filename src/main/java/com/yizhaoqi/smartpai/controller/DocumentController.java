@@ -1,18 +1,21 @@
 package com.yizhaoqi.smartpai.controller;
 
 import com.yizhaoqi.smartpai.model.FileUpload;
+import com.yizhaoqi.smartpai.model.OrganizationTag;
 import com.yizhaoqi.smartpai.repository.FileUploadRepository;
+import com.yizhaoqi.smartpai.repository.OrganizationTagRepository;
 import com.yizhaoqi.smartpai.service.DocumentService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.yizhaoqi.smartpai.utils.LogUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * 文档控制器类，处理文档相关操作请求
@@ -21,13 +24,14 @@ import java.util.Optional;
 @RequestMapping("/api/v1/documents")
 public class DocumentController {
 
-    private static final Logger logger = LoggerFactory.getLogger(DocumentController.class);
-
     @Autowired
     private DocumentService documentService;
     
     @Autowired
     private FileUploadRepository fileUploadRepository;
+    
+    @Autowired
+    private OrganizationTagRepository organizationTagRepository;
 
     /**
      * 删除文档及其相关数据
@@ -43,36 +47,50 @@ public class DocumentController {
             @RequestAttribute("userId") String userId,
             @RequestAttribute("role") String role) {
         
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("DELETE_DOCUMENT");
         try {
-            logger.info("接收到删除文档请求: fileMd5={}, userId={}, role={}", fileMd5, userId, role);
+            LogUtils.logBusiness("DELETE_DOCUMENT", userId, "接收到删除文档请求: fileMd5=%s, role=%s", fileMd5, role);
             
             // 获取文件信息
             Optional<FileUpload> fileOpt = fileUploadRepository.findById(fileMd5);
             if (fileOpt.isEmpty()) {
-                logger.warn("文档不存在: fileMd5={}", fileMd5);
-                return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of("status", "error", "message", "文档不存在"));
+                LogUtils.logUserOperation(userId, "DELETE_DOCUMENT", fileMd5, "FAILED_NOT_FOUND");
+                monitor.end("删除失败：文档不存在");
+                Map<String, Object> response = new HashMap<>();
+                response.put("code", HttpStatus.NOT_FOUND.value());
+                response.put("message", "文档不存在");
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
             }
             
             FileUpload file = fileOpt.get();
             
             // 权限检查：只有文件所有者或管理员可以删除
             if (!file.getUserId().equals(userId) && !"ADMIN".equals(role)) {
-                logger.warn("用户无权删除文档: fileMd5={}, fileOwner={}, requestUser={}", 
-                        fileMd5, file.getUserId(), userId);
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body(Map.of("status", "error", "message", "没有权限删除此文档"));
+                LogUtils.logUserOperation(userId, "DELETE_DOCUMENT", fileMd5, "FAILED_PERMISSION_DENIED");
+                LogUtils.logBusiness("DELETE_DOCUMENT", userId, "用户无权删除文档: fileMd5=%s, fileOwner=%s", fileMd5, file.getUserId());
+                monitor.end("删除失败：权限不足");
+                Map<String, Object> response = new HashMap<>();
+                response.put("code", HttpStatus.FORBIDDEN.value());
+                response.put("message", "没有权限删除此文档");
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
             }
             
             // 执行删除操作
             documentService.deleteDocument(fileMd5);
             
-            logger.info("文档删除成功: fileMd5={}", fileMd5);
-            return ResponseEntity.ok(Map.of("status", "success", "message", "文档删除成功"));
+            LogUtils.logFileOperation(userId, "DELETE", file.getFileName(), fileMd5, "SUCCESS");
+            monitor.end("文档删除成功");
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 200);
+            response.put("message", "文档删除成功");
+            return ResponseEntity.ok(response);
         } catch (Exception e) {
-            logger.error("删除文档失败: fileMd5={}", fileMd5, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("status", "error", "message", "删除文档失败: " + e.getMessage()));
+            LogUtils.logBusinessError("DELETE_DOCUMENT", userId, "删除文档失败: fileMd5=%s", e, fileMd5);
+            monitor.end("删除失败: " + e.getMessage());
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
+            response.put("message", "删除文档失败: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
         }
     }
     
@@ -88,17 +106,28 @@ public class DocumentController {
             @RequestAttribute("userId") String userId,
             @RequestAttribute("orgTags") String orgTags) {
         
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("GET_ACCESSIBLE_FILES");
         try {
-            logger.info("接收到获取可访问文件请求: userId={}, orgTags={}", userId, orgTags);
+            LogUtils.logBusiness("GET_ACCESSIBLE_FILES", userId, "接收到获取可访问文件请求: orgTags=%s", orgTags);
             
             List<FileUpload> files = documentService.getAccessibleFiles(userId, orgTags);
             
-            logger.info("成功获取可访问文件: userId={}, fileCount={}", userId, files.size());
-            return ResponseEntity.ok(Map.of("status", "success", "data", files));
+            LogUtils.logUserOperation(userId, "GET_ACCESSIBLE_FILES", "file_list", "SUCCESS");
+            LogUtils.logBusiness("GET_ACCESSIBLE_FILES", userId, "成功获取可访问文件: fileCount=%d", files.size());
+            monitor.end("获取可访问文件成功");
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 200);
+            response.put("message", "获取可访问文件列表成功");
+            response.put("data", files);
+            return ResponseEntity.ok(response);
         } catch (Exception e) {
-            logger.error("获取可访问文件失败: userId={}", userId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("status", "error", "message", "获取可访问文件列表失败: " + e.getMessage()));
+            LogUtils.logBusinessError("GET_ACCESSIBLE_FILES", userId, "获取可访问文件失败", e);
+            monitor.end("获取可访问文件失败: " + e.getMessage());
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
+            response.put("message", "获取可访问文件列表失败: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
         }
     }
     
@@ -112,17 +141,72 @@ public class DocumentController {
     public ResponseEntity<?> getUserUploadedFiles(
             @RequestAttribute("userId") String userId) {
         
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("GET_USER_UPLOADED_FILES");
         try {
-            logger.info("接收到获取用户上传文件请求: userId={}", userId);
+            LogUtils.logBusiness("GET_USER_UPLOADED_FILES", userId, "接收到获取用户上传文件请求");
             
             List<FileUpload> files = documentService.getUserUploadedFiles(userId);
             
-            logger.info("成功获取用户上传文件: userId={}, fileCount={}", userId, files.size());
-            return ResponseEntity.ok(Map.of("status", "success", "data", files));
+            // 将FileUpload转换为包含tagName的DTO
+            List<Map<String, Object>> fileData = files.stream().map(file -> {
+                Map<String, Object> dto = new HashMap<>();
+                dto.put("fileMd5", file.getFileMd5());
+                dto.put("fileName", file.getFileName());
+                dto.put("totalSize", file.getTotalSize());
+                dto.put("status", file.getStatus());
+                dto.put("userId", file.getUserId());
+                dto.put("public", file.isPublic());
+                dto.put("createdAt", file.getCreatedAt());
+                dto.put("mergedAt", file.getMergedAt());
+                
+                // 将orgTag从tagId转换为tagName
+                String orgTagName = getOrgTagName(file.getOrgTag());
+                dto.put("orgTagName", orgTagName);
+                
+                return dto;
+            }).collect(Collectors.toList());
+            
+            LogUtils.logUserOperation(userId, "GET_USER_UPLOADED_FILES", "file_list", "SUCCESS");
+            LogUtils.logBusiness("GET_USER_UPLOADED_FILES", userId, "成功获取用户上传文件: fileCount=%d", files.size());
+            monitor.end("获取用户上传文件成功");
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 200);
+            response.put("message", "获取用户上传文件列表成功");
+            response.put("data", fileData);
+            return ResponseEntity.ok(response);
         } catch (Exception e) {
-            logger.error("获取用户上传文件失败: userId={}", userId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("status", "error", "message", "获取用户上传文件列表失败: " + e.getMessage()));
+            LogUtils.logBusinessError("GET_USER_UPLOADED_FILES", userId, "获取用户上传文件失败", e);
+            monitor.end("获取用户上传文件失败: " + e.getMessage());
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
+            response.put("message", "获取用户上传文件列表失败: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+    
+    /**
+     * 根据tagId获取tagName
+     *
+     * @param tagId 组织标签ID
+     * @return 组织标签名称，如果找不到则返回原tagId
+     */
+    private String getOrgTagName(String tagId) {
+        if (tagId == null || tagId.isEmpty()) {
+            return null;
+        }
+        
+        try {
+            Optional<OrganizationTag> tagOpt = organizationTagRepository.findByTagId(tagId);
+            if (tagOpt.isPresent()) {
+                return tagOpt.get().getName();
+            } else {
+                LogUtils.logBusiness("GET_ORG_TAG_NAME", "system", "找不到组织标签: tagId=%s", tagId);
+                return tagId; // 如果找不到标签名称，返回原tagId
+            }
+        } catch (Exception e) {
+            LogUtils.logBusinessError("GET_ORG_TAG_NAME", "system", "查询组织标签名称失败: tagId=%s", e, tagId);
+            return tagId; // 发生错误时返回原tagId
         }
     }
 } 

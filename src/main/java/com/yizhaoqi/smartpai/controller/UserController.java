@@ -5,8 +5,7 @@ import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.UserRepository;
 import com.yizhaoqi.smartpai.service.UserService;
 import com.yizhaoqi.smartpai.utils.JwtUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.yizhaoqi.smartpai.utils.LogUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -23,8 +22,6 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/v1/users")
 public class UserController {
 
-    private static final Logger logger = LoggerFactory.getLogger(UserController.class);
-
     @Autowired
     private UserService userService;
 
@@ -38,20 +35,27 @@ public class UserController {
     // 接收用户请求体中的用户名和密码，并调用用户服务进行注册
     @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody UserRequest request) {
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("USER_REGISTER");
         try {
             if (request.username() == null || request.username().isEmpty() ||
                     request.password() == null || request.password().isEmpty()) {
+                LogUtils.logUserOperation("anonymous", "REGISTER", "validation", "FAILED_EMPTY_PARAMS");
+                monitor.end("注册失败：参数为空");
                 return ResponseEntity.badRequest().body(Map.of("code", 400, "message", "Username and password cannot be empty"));
             }
+            
             userService.registerUser(request.username(), request.password());
+            LogUtils.logUserOperation(request.username(), "REGISTER", "user_creation", "SUCCESS");
+            monitor.end("注册成功");
+            
             return ResponseEntity.ok(Map.of("code", 200, "message", "User registered successfully"));
         } catch (CustomException e) {
-            // 记录完整的异常信息
-            logger.error("Register failed: ", e);
+            LogUtils.logBusinessError("USER_REGISTER", request.username(), "用户注册失败: %s", e, e.getMessage());
+            monitor.end("注册失败: " + e.getMessage());
             return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
         } catch (Exception e) {
-            // 记录完整的异常信息
-            logger.error("Register failed: ", e);
+            LogUtils.logBusinessError("USER_REGISTER", request.username(), "用户注册异常: %s", e, e.getMessage());
+            monitor.end("注册异常: " + e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "Internal server error"));
         }
     }
@@ -60,24 +64,32 @@ public class UserController {
     // 验证用户身份并生成JWT令牌
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody UserRequest request) {
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("USER_LOGIN");
         try {
             if (request.username() == null || request.username().isEmpty() ||
                     request.password() == null || request.password().isEmpty()) {
+                LogUtils.logUserOperation("anonymous", "LOGIN", "validation", "FAILED_EMPTY_PARAMS");
                 return ResponseEntity.badRequest().body(Map.of("code", 400, "message", "Username and password cannot be empty"));
             }
+            
             String username = userService.authenticateUser(request.username(), request.password());
             if (username == null) {
+                LogUtils.logUserOperation(request.username(), "LOGIN", "authentication", "FAILED_INVALID_CREDENTIALS");
                 return ResponseEntity.status(401).body(Map.of("code", 401, "message", "Invalid credentials"));
             }
+            
             String token = jwtUtils.generateToken(username);
+            LogUtils.logUserOperation(username, "LOGIN", "token_generation", "SUCCESS");
+            monitor.end("登录成功");
+            
             return ResponseEntity.ok(Map.of("code", 200, "message", "Login successful", "data", Map.of("token", token)));
         } catch (CustomException e) {
-            // 记录完整的异常信息
-            logger.error("Login failed: ", e);
+            LogUtils.logBusinessError("USER_LOGIN", request.username(), "登录失败: %s", e, e.getMessage());
+            monitor.end("登录失败: " + e.getMessage());
             return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
         } catch (Exception e) {
-            // 记录异常日志
-            logger.error("Login failed: {}", e.getMessage(), e);
+            LogUtils.logBusinessError("USER_LOGIN", request.username(), "登录异常: %s", e, e.getMessage());
+            monitor.end("登录异常: " + e.getMessage());
             return ResponseEntity.status(500).body(Map.of("code", 500, "message", "Internal server error"));
         }
     }
@@ -85,9 +97,13 @@ public class UserController {
     // 获取当前用户信息
     @GetMapping("/me")
     public ResponseEntity<?> getCurrentUser(@RequestHeader("Authorization") String token) {
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("GET_USER_INFO");
+        String username = null;
         try {
-            String username = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+            username = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
             if (username == null || username.isEmpty()) {
+                LogUtils.logUserOperation("anonymous", "GET_USER_INFO", "token_validation", "FAILED_INVALID_TOKEN");
+                monitor.end("获取用户信息失败：无效token");
                 throw new CustomException("Invalid token", HttpStatus.UNAUTHORIZED);
             }
 
@@ -114,13 +130,18 @@ public class UserController {
             displayUserData.put("createdAt", user.getCreatedAt());
             displayUserData.put("updatedAt", user.getUpdatedAt());
 
+            LogUtils.logUserOperation(username, "GET_USER_INFO", "user_profile", "SUCCESS");
+            monitor.end("获取用户信息成功");
+
             // 返回响应
             return ResponseEntity.ok(Map.of("code", 200, "message", "Get user detail successful", "data", displayUserData));
         } catch (CustomException e) {
-            logger.error("Get user detail failed: ", e);
+            LogUtils.logBusinessError("GET_USER_INFO", username, "获取用户信息失败: %s", e, e.getMessage());
+            monitor.end("获取用户信息失败: " + e.getMessage());
             return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
         } catch (Exception e) {
-            logger.error("Get user detail failed: ", e);
+            LogUtils.logBusinessError("GET_USER_INFO", username, "获取用户信息异常: %s", e, e.getMessage());
+            monitor.end("获取用户信息异常: " + e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "Internal server error"));
         }
     }
@@ -128,13 +149,20 @@ public class UserController {
     // 获取用户组织标签信息
     @GetMapping("/org-tags")
     public ResponseEntity<?> getUserOrgTags(@RequestHeader("Authorization") String token) {
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("GET_USER_ORG_TAGS");
+        String username = null;
         try {
-            String username = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+            username = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
             if (username == null || username.isEmpty()) {
+                LogUtils.logUserOperation("anonymous", "GET_ORG_TAGS", "token_validation", "FAILED_INVALID_TOKEN");
+                monitor.end("获取组织标签失败：无效token");
                 throw new CustomException("Invalid token", HttpStatus.UNAUTHORIZED);
             }
             
             Map<String, Object> orgTagsInfo = userService.getUserOrgTags(username);
+            
+            LogUtils.logUserOperation(username, "GET_ORG_TAGS", "organization_tags", "SUCCESS");
+            monitor.end("获取组织标签成功");
             
             return ResponseEntity.ok(Map.of(
                 "code", 200, 
@@ -142,10 +170,12 @@ public class UserController {
                 "data", orgTagsInfo
             ));
         } catch (CustomException e) {
-            logger.error("Get user organization tags failed: ", e);
+            LogUtils.logBusinessError("GET_USER_ORG_TAGS", username, "获取用户组织标签失败: %s", e, e.getMessage());
+            monitor.end("获取组织标签失败: " + e.getMessage());
             return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
         } catch (Exception e) {
-            logger.error("Get user organization tags failed: ", e);
+            LogUtils.logBusinessError("GET_USER_ORG_TAGS", username, "获取用户组织标签异常: %s", e, e.getMessage());
+            monitor.end("获取组织标签异常: " + e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "Internal server error"));
         }
     }
@@ -153,24 +183,35 @@ public class UserController {
     // 设置用户主组织标签
     @PutMapping("/primary-org")
     public ResponseEntity<?> setPrimaryOrg(@RequestHeader("Authorization") String token, @RequestBody PrimaryOrgRequest request) {
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("SET_PRIMARY_ORG");
+        String username = null;
         try {
-            String username = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+            username = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
             if (username == null || username.isEmpty()) {
+                LogUtils.logUserOperation("anonymous", "SET_PRIMARY_ORG", "token_validation", "FAILED_INVALID_TOKEN");
+                monitor.end("设置主组织失败：无效token");
                 throw new CustomException("Invalid token", HttpStatus.UNAUTHORIZED);
             }
             
             if (request.primaryOrg() == null || request.primaryOrg().isEmpty()) {
+                LogUtils.logUserOperation(username, "SET_PRIMARY_ORG", "validation", "FAILED_EMPTY_ORG");
+                monitor.end("设置主组织失败：组织标签为空");
                 return ResponseEntity.badRequest().body(Map.of("code", 400, "message", "Primary organization tag cannot be empty"));
             }
             
             userService.setUserPrimaryOrg(username, request.primaryOrg());
             
+            LogUtils.logUserOperation(username, "SET_PRIMARY_ORG", request.primaryOrg(), "SUCCESS");
+            monitor.end("设置主组织成功");
+            
             return ResponseEntity.ok(Map.of("code", 200, "message", "Primary organization set successfully"));
         } catch (CustomException e) {
-            logger.error("Set primary organization failed: ", e);
+            LogUtils.logBusinessError("SET_PRIMARY_ORG", username, "设置主组织失败: %s", e, e.getMessage());
+            monitor.end("设置主组织失败: " + e.getMessage());
             return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
         } catch (Exception e) {
-            logger.error("Set primary organization failed: ", e);
+            LogUtils.logBusinessError("SET_PRIMARY_ORG", username, "设置主组织异常: %s", e, e.getMessage());
+            monitor.end("设置主组织异常: " + e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "Internal server error"));
         }
     }
@@ -178,8 +219,9 @@ public class UserController {
     // 获取当前用户组织标签信息 (供上传文件时使用)
     @GetMapping("/upload-orgs")
     public ResponseEntity<?> getUploadOrgTags(@RequestAttribute("userId") String userId) {
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("GET_UPLOAD_ORG_TAGS");
         try {
-            logger.info("获取用户上传组织标签信息: userId={}", userId);
+            LogUtils.logBusiness("GET_UPLOAD_ORG_TAGS", userId, "获取用户上传组织标签信息");
             
             // 获取用户所有组织标签
             List<String> orgTags = Arrays.asList(userService.getUserOrgTags(userId).get("orgTags").toString().split(","));
@@ -190,13 +232,17 @@ public class UserController {
             responseData.put("orgTags", orgTags);
             responseData.put("primaryOrg", primaryOrg);
             
+            LogUtils.logUserOperation(userId, "GET_UPLOAD_ORG_TAGS", "upload_organizations", "SUCCESS");
+            monitor.end("获取上传组织标签成功");
+            
             return ResponseEntity.ok(Map.of(
                 "code", 200, 
                 "message", "获取用户上传组织标签成功", 
                 "data", responseData
             ));
         } catch (Exception e) {
-            logger.error("获取用户上传组织标签失败: ", e);
+            LogUtils.logBusinessError("GET_UPLOAD_ORG_TAGS", userId, "获取用户上传组织标签失败: %s", e, e.getMessage());
+            monitor.end("获取上传组织标签失败: " + e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
                 "code", 500, 
                 "message", "获取用户上传组织标签失败: " + e.getMessage()

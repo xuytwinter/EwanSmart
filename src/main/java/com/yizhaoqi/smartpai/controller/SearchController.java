@@ -1,12 +1,9 @@
 package com.yizhaoqi.smartpai.controller;
 
-import com.yizhaoqi.smartpai.entity.SearchRequest;
 import com.yizhaoqi.smartpai.service.HybridSearchService;
+import com.yizhaoqi.smartpai.utils.LogUtils;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import com.yizhaoqi.smartpai.entity.SearchResult;
 
 import java.util.List;
@@ -21,9 +18,58 @@ public class SearchController {
 
     /**
      * 混合检索接口
+     * 
+     * URL: /api/search/hybrid
+     * Method: GET
+     * Parameters:
+     *   - query: 搜索查询字符串（必需）
+     *   - topK: 返回结果数量（可选，默认10）
+     * 
+     * 示例: /api/search/hybrid?query=人工智能的发展&topK=10
+     * 
+     * Response:
+     * [
+     *   {
+     *     "fileMd5": "abc123...",
+     *     "chunkId": 1,
+     *     "textContent": "人工智能是未来科技发展的核心方向。",
+     *     "score": 0.92,
+     *     "userId": "user123",
+     *     "orgTag": "TECH_DEPT",
+     *     "isPublic": true
+     *   }
+     * ]
      */
-    @PostMapping("/hybrid")
-    public List<SearchResult> hybridSearch(@RequestBody SearchRequest request) {
-        return hybridSearchService.search(request.getQuery(), request.getTopK());
+    @GetMapping("/hybrid")
+    public List<SearchResult> hybridSearch(@RequestParam String query,
+                                          @RequestParam(defaultValue = "10") int topK,
+                                          @RequestAttribute(value = "userId", required = false) String userId) {
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("HYBRID_SEARCH");
+        try {
+            LogUtils.logBusiness("HYBRID_SEARCH", userId != null ? userId : "anonymous", 
+                    "开始混合检索: query=%s, topK=%d", query, topK);
+            
+            List<SearchResult> results;
+            if (userId != null) {
+                // 如果有用户ID，使用带权限的搜索
+                results = hybridSearchService.searchWithPermission(query, userId, topK);
+            } else {
+                // 如果没有用户ID，使用普通搜索（仅公开内容）
+                results = hybridSearchService.search(query, topK);
+            }
+            
+            LogUtils.logUserOperation(userId != null ? userId : "anonymous", "HYBRID_SEARCH", 
+                    "search_query", "SUCCESS");
+            LogUtils.logBusiness("HYBRID_SEARCH", userId != null ? userId : "anonymous", 
+                    "混合检索完成: 返回结果数量=%d", results.size());
+            monitor.end("混合检索成功");
+            
+            return results;
+        } catch (Exception e) {
+            LogUtils.logBusinessError("HYBRID_SEARCH", userId != null ? userId : "anonymous", 
+                    "混合检索失败: query=%s", e, query);
+            monitor.end("混合检索失败: " + e.getMessage());
+            throw e;
+        }
     }
 }

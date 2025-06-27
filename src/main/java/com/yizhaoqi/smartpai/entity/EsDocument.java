@@ -21,6 +21,12 @@ public class EsDocument {
     private boolean isPublic;      // 是否公开
 
     /**
+     * 默认构造函数，用于Jackson反序列化
+     */
+    public EsDocument() {
+    }
+
+    /**
      * 完整构造函数，包含权限字段
      */
     public EsDocument(String id, String fileMd5, int chunkId, String content, 

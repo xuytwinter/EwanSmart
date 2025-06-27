@@ -44,7 +44,7 @@ public class SecurityConfig {
                     // 配置请求的授权规则
                     .authorizeHttpRequests(authorize -> authorize
                             // 允许静态资源访问
-                            .requestMatchers("/", "/test.html", "/static/**", "/*.js", "/*.css", "/*.ico").permitAll()
+                            .requestMatchers("/", "/test.html", "/static/test.html", "/static/**", "/*.js", "/*.css", "/*.ico").permitAll()
                             // 允许 WebSocket 连接
                             .requestMatchers("/chat/**", "/ws/**").permitAll()
                             // 允许登录注册接口
@@ -52,9 +52,11 @@ public class SecurityConfig {
                             // 文件上传和提问相关接口 - 普通用户和管理员都可访问
                             .requestMatchers("/api/v1/upload/**", "/api/v1/parse").hasAnyRole("USER", "ADMIN")
                             // 对话历史相关接口 - 用户只能查看自己的历史，管理员可以查看所有
-                            .requestMatchers("/api/v1/users/conversations/**").hasAnyRole("USER", "ADMIN")
+                            .requestMatchers("/api/v1/users/conversation/**").hasAnyRole("USER", "ADMIN")
                             // 搜索接口 - 普通用户和管理员都可访问
                             .requestMatchers("/api/search/**").hasAnyRole("USER", "ADMIN")
+                            // 聊天相关接口 - WebSocket停止Token获取
+                            .requestMatchers("/api/chat/websocket-token").hasAnyRole("USER", "ADMIN")
                             // 管理员专属接口 - 知识库管理、系统状态、用户活动监控
                             .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                             // 用户组织标签管理接口
