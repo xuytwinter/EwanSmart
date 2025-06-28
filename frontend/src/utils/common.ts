@@ -105,3 +105,9 @@ export function formatDate(date: string | number | null | undefined, format = 'Y
   if (!date) return '';
   return dayjs(date).format(format);
 }
+
+// 获取文件扩展名
+export function getFileExt(fileName: string) {
+  if (!fileName) return '';
+  return fileName.split('.').pop();
+}

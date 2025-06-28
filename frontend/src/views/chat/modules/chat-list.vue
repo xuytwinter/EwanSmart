@@ -28,8 +28,8 @@ const range = ref<[number, number]>([dayjs().subtract(7, 'day').valueOf(), dayjs
 
 const params = computed(() => {
   return {
-    start_date: dayjs(range.value[0]).format('YYYY-MM-DDTHH:mm:ss'),
-    end_date: dayjs(range.value[1]).format('YYYY-MM-DDTHH:mm:ss')
+    start_date: dayjs(range.value[0]).format('YYYY-MM-DD'),
+    end_date: dayjs(range.value[1]).format('YYYY-MM-DD')
   };
 });
 
@@ -58,11 +58,13 @@ onMounted(() => {
   <Suspense>
     <NScrollbar ref="scrollbarRef" class="h-0 flex-auto">
       <Teleport defer to="#header-extra">
-        <NForm :model="params" label-placement="left" :show-feedback="false" inline class="mx-10">
-          <NFormItem label="时间">
-            <NDatePicker v-model:value="range" type="datetimerange" />
-          </NFormItem>
-        </NForm>
+        <div class="px-10">
+          <NForm :model="params" label-placement="left" :show-feedback="false" inline>
+            <NFormItem label="时间">
+              <NDatePicker v-model:value="range" type="daterange" />
+            </NFormItem>
+          </NForm>
+        </div>
       </Teleport>
       <NSpin :show="loading">
         <VueMarkdownItProvider>

@@ -54,15 +54,46 @@ const handleSend = async () => {
   });
   input.value.message = '';
 };
+
+const inputRef = ref();
+// 手动插入换行符（确保所有浏览器兼容）
+const insertNewline = () => {
+  const textarea = inputRef.value;
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+
+  // 在光标位置插入换行符
+  input.value.message = `${input.value.message.substring(0, start)}\n${input.value.message.substring(end)}`;
+
+  // 更新光标位置（在插入的换行符之后）
+  nextTick(() => {
+    textarea.selectionStart = start + 1;
+    textarea.selectionEnd = start + 1;
+    textarea.focus(); // 确保保持焦点
+  });
+};
+
+// ctrl + enter 换行
+// enter 发送
+const handShortcut = (e: KeyboardEvent) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+
+    if (!e.shiftKey && !e.ctrlKey) {
+      handleSend();
+    } else insertNewline();
+  }
+};
 </script>
 
 <template>
   <div class="relative w-full b-1 b-#1c1c1c20 bg-#fff p-4 card-wrapper dark:bg-#1c1c1c">
     <textarea
+      ref="inputRef"
       v-model.trim="input.message"
       placeholder="给 派聪明 发送消息"
       class="min-h-10 w-full cursor-text resize-none b-none bg-transparent color-#333 caret-[rgb(var(--primary-color))] outline-none dark:color-#f1f1f1"
-      @keydown.ctrl.enter="handleSend"
+      @keydown="handShortcut"
     />
     <div class="flex items-center justify-between pt-2">
       <div class="flex items-center text-18px color-gray-500">

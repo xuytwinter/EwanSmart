@@ -29,8 +29,8 @@ const userId = ref<number | null>(null);
 const params = computed(() => {
   return {
     userid: userId.value,
-    start_date: dayjs(range.value[0]).format('YYYY-MM-DDTHH:mm:ss'),
-    end_date: dayjs(range.value[1]).format('YYYY-MM-DDTHH:mm:ss')
+    start_date: dayjs(range.value[0]).format('YYYY-MM-DD'),
+    end_date: dayjs(range.value[1]).format('YYYY-MM-DD')
   };
 });
 
@@ -56,24 +56,26 @@ async function getList() {
 <template>
   <div class="h-full">
     <Teleport defer to="#header-extra">
-      <NForm :model="params" label-placement="left" :show-feedback="false" inline class="mx-10">
-        <NFormItem label="用户">
-          <TheSelect
-            v-model:value="userId"
-            url="admin/users/list"
-            :params="{ page: 1, size: 999 }"
-            select-first
-            key-field="content"
-            value-field="userId"
-            label-field="username"
-            class="clear w-200px!"
-            :clearable="false"
-          />
-        </NFormItem>
-        <NFormItem label="时间">
-          <NDatePicker v-model:value="range" type="datetimerange" class="clear" />
-        </NFormItem>
-      </NForm>
+      <div class="px-10">
+        <NForm :model="params" label-placement="left" :show-feedback="false" inline>
+          <NFormItem label="用户">
+            <TheSelect
+              v-model:value="userId"
+              url="admin/users/list"
+              :params="{ page: 1, size: 999 }"
+              select-first
+              key-field="content"
+              value-field="userId"
+              label-field="username"
+              class="clear w-200px!"
+              :clearable="false"
+            />
+          </NFormItem>
+          <NFormItem label="时间">
+            <NDatePicker v-model:value="range" type="daterange" class="clear" />
+          </NFormItem>
+        </NForm>
+      </div>
     </Teleport>
     <NScrollbar ref="scrollbarRef">
       <NSpin :show="loading" class="h-full">

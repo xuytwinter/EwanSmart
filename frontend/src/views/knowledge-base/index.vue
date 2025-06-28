@@ -1,9 +1,10 @@
 <script setup lang="tsx">
 import type { UploadFileInfo } from 'naive-ui';
-import { NButton, NPopconfirm, NProgress, NTag, NUpload } from 'naive-ui';
+import { NButton, NEllipsis, NPopconfirm, NProgress, NTag, NUpload } from 'naive-ui';
 import { uploadAccept } from '@/constants/common';
 import { fakePaginationRequest } from '@/service/request';
 import { UploadStatus } from '@/enum';
+import SvgIcon from '@/components/custom/svg-icon.vue';
 import UploadDialog from './modules/upload-dialog.vue';
 import SearchDialog from './modules/search-dialog.vue';
 
@@ -13,6 +14,15 @@ function apiFn() {
   return fakePaginationRequest<Api.KnowledgeBase.List>({ url: '/documents/uploads' });
 }
 
+function renderIcon(fileName: string) {
+  const ext = getFileExt(fileName);
+  if (ext) {
+    if (uploadAccept.split(',').includes(ext)) return <SvgIcon localIcon={ext} class="mx-4 text-20" />;
+    return <SvgIcon localIcon="dflt" class="mx-4 text-20" />;
+  }
+  return null;
+}
+
 const { columns, columnChecks, data, getData, loading } = useTable({
   apiFn,
   immediate: false,
@@ -20,8 +30,15 @@ const { columns, columnChecks, data, getData, loading } = useTable({
     {
       key: 'fileName',
       title: '文件名',
-      minWidth: 200,
-      ellipsis: { tooltip: true, lineClamp: 2 }
+      minWidth: 400,
+      render: row => (
+        <div class="flex items-center">
+          {renderIcon(row.fileName)}
+          <NEllipsis lineClamp={2} tooltip>
+            {row.fileName}
+          </NEllipsis>
+        </div>
+      )
     },
     {
       key: 'totalSize',
@@ -32,12 +49,13 @@ const { columns, columnChecks, data, getData, loading } = useTable({
     {
       key: 'status',
       title: '上传状态',
+      width: 250,
       render: row => renderStatus(row.status, row.progress)
     },
     {
       key: 'orgTagName',
       title: '组织标签',
-      minWidth: 100,
+      width: 150,
       ellipsis: { tooltip: true, lineClamp: 2 }
     },
     {
@@ -49,14 +67,14 @@ const { columns, columnChecks, data, getData, loading } = useTable({
     {
       key: 'createdAt',
       title: '上传时间',
-      width: 200,
-      render: row => dayjs(row.createdAt).format('YYYY-MM-DD HH:mm:ss')
+      width: 100,
+      render: row => dayjs(row.createdAt).format('YYYY-MM-DD')
     },
     {
       key: 'mergedAt',
       title: '完成时间',
-      width: 200,
-      render: row => dayjs(row.mergedAt).format('YYYY-MM-DD HH:mm:ss')
+      width: 100,
+      render: row => dayjs(row.mergedAt).format('YYYY-MM-DD')
     },
     {
       key: 'operate',
@@ -121,11 +139,6 @@ async function handleDelete(fileMd5: string) {
       request.cancelRequest(requestId);
     });
   }
-  console.log(
-    '%c [ 👉 tasks.value[index].uploadedChunks  👈 ]-127',
-    'font-size:16px; background:#b92e07; color:#fd724b;',
-    tasks.value[index].uploadedChunks
-  );
 
   // 如果文件一个分片也没有上传完成，则直接删除
   if (tasks.value[index].uploadedChunks && tasks.value[index].uploadedChunks.length === 0) {

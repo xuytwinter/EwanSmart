@@ -31,7 +31,7 @@ const { columns, columnChecks, data, getData, loading, mobilePagination, searchP
       key: 'orgTags',
       title: '标签',
       render: row => (
-        <div class="flex gap-8px">
+        <div class="flex flex-wrap gap-2">
           {row.orgTags.map(tag => (
             <NTag key={tag.tagId} type={tag.tagId === row.primaryOrg ? 'primary' : 'default'}>
               {tag.name}
@@ -43,24 +43,24 @@ const { columns, columnChecks, data, getData, loading, mobilePagination, searchP
     {
       key: 'email',
       title: '邮箱',
-      minWidth: 100
+      width: 200
     },
     {
       key: 'status',
       title: '是否启用',
-      minWidth: 100,
+      width: 100,
       render: row => <NTag type={row.status ? 'success' : 'warning'}>{row.status ? '已启用' : '已禁用'}</NTag>
     },
     {
       key: 'createTime',
       title: '创建时间',
-      minWidth: 200,
+      width: 200,
       render: row => dayjs(row.createTime).format('YYYY-MM-DD HH:mm:ss')
     },
     {
       key: 'lastLoginTime',
       title: '最后登录时间',
-      minWidth: 200,
+      width: 200,
       render: row => dayjs(row.lastLoginTime).format('YYYY-MM-DD HH:mm:ss')
     },
     {

@@ -70,6 +70,7 @@ declare global {
   const getCurrentInstance: typeof import('vue')['getCurrentInstance']
   const getCurrentScope: typeof import('vue')['getCurrentScope']
   const getDefaultHomeTab: typeof import('../store/modules/tab/shared')['getDefaultHomeTab']
+  const getFileExt: typeof import('../utils/common')['getFileExt']
   const getFixedTabIds: typeof import('../store/modules/tab/shared')['getFixedTabIds']
   const getFixedTabs: typeof import('../store/modules/tab/shared')['getFixedTabs']
   const getGlobalMenusByAuthRoutes: typeof import('../store/modules/route/shared')['getGlobalMenusByAuthRoutes']

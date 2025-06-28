@@ -26,10 +26,9 @@ const { columns, columnChecks, data, loading, getData } = useTable({
     {
       key: 'operate',
       title: '操作',
-      align: 'center',
       width: 240,
       render: row => (
-        <div class="flex-center gap-8px">
+        <div class="flex gap-2">
           <NButton type="success" ghost size="small" onClick={() => addChild(row)}>
             新增下级
           </NButton>

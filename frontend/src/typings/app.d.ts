@@ -516,7 +516,7 @@ declare namespace App {
   /** Service namespace */
   namespace Service {
     /** Other baseURL key */
-    type OtherBaseURLKey = 'demo';
+    type OtherBaseURLKey = 'api' | 'ws';
 
     interface ServiceConfigItem {
       /** The backend service base url */
