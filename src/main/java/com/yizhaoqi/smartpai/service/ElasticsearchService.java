@@ -76,7 +76,7 @@ public class ElasticsearchService {
         try {
             DeleteByQueryRequest request = DeleteByQueryRequest.of(d -> d
                     .index("knowledge_base")
-                    .query(q -> q.term(t -> t.field("fileMd5.keyword").value(fileMd5)))
+                    .query(q -> q.term(t -> t.field("fileMd5").value(fileMd5)))
             );
             esClient.deleteByQuery(request);
         } catch (Exception e) {

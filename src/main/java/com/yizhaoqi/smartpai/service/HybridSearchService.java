@@ -2,7 +2,6 @@ package com.yizhaoqi.smartpai.service;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
-import co.elastic.clients.json.JsonData;
 import com.yizhaoqi.smartpai.client.EmbeddingClient;
 import com.yizhaoqi.smartpai.entity.EsDocument;
 import com.yizhaoqi.smartpai.entity.SearchResult;
@@ -16,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import co.elastic.clients.elasticsearch._types.query_dsl.Operator;
 
 import java.util.Collections;
 import java.util.List;
@@ -73,86 +73,66 @@ public class HybridSearchService {
             logger.debug("用户 {} 的数据库ID: {}", userId, userDbId);
 
             // 生成查询向量
-            JsonData queryVector = generateQueryVector(query);
-            
+            final List<Float> queryVector = embedToVectorList(query);
+
             // 如果向量生成失败，仅使用文本匹配
             if (queryVector == null) {
                 logger.warn("向量生成失败，仅使用文本匹配进行搜索");
                 return textOnlySearchWithPermission(query, userDbId, userEffectiveTags, topK);
             }
 
-            logger.debug("向量生成成功，开始执行混合搜索");
+            logger.debug("向量生成成功，开始执行混合搜索 KNN");
 
-            SearchResponse<EsDocument> response = esClient.search(s -> s
-                    .index("knowledge_base")
-                    .query(q -> q
-                            .bool(b -> b
-                                    // 匹配内容相关性
-                                    .should(sh -> sh
-                                            .match(m -> m
-                                                    .field("textContent")
-                                                    .query(query)
-                                            )
-                                    )
-                                    // 匹配向量相似度
-                                    .should(sh -> sh
-                                            .scriptScore(sc -> sc
-                                                    .query(qq -> qq.matchAll(ma -> ma))
-                                                    .script(script -> script
-                                                            .inline(i -> i
-                                                                    .source("cosineSimilarity(params.queryVector, 'vector') + 1.0")
-                                                                    .params("queryVector", queryVector)
-                                                            )
-                                                    )
-                                            )
-                                    )
-                                    // 权限过滤
-                                    .filter(f -> f
-                                            .bool(bf -> bf
-                                                    // 条件1: 用户可以访问自己的文档
-                                                    .should(s1 -> s1
-                                                            .term(t -> t
-                                                                    .field("userId")
-                                                                    .value(userDbId)
-                                                            )
-                                                    )
-                                                    // 条件2: 用户可以访问公开的文档
-                                                    .should(s2 -> s2
-                                                            .term(t -> t
-                                                                    .field("public")
-                                                                    .value(true)
-                                                            )
-                                                    )
-                                                    // 条件3: 用户可以访问其所属组织的文档（包含层级关系）
-                                                    .should(s3 -> {
-                                                        if (userEffectiveTags.isEmpty()) {
-                                                            return s3.matchNone(mn -> mn);
-                                                        } else if (userEffectiveTags.size() == 1) {
-                                                            // 单个标签使用 term 查询
-                                                            return s3.term(t -> t
-                                                                    .field("orgTag")
-                                                                    .value(userEffectiveTags.get(0))
-                                                            );
-                                                        } else {
-                                                            // 多个标签使用 bool should 组合多个 term 查询
-                                                            return s3.bool(innerBool -> {
-                                                                userEffectiveTags.forEach(tag -> 
-                                                                    innerBool.should(sh -> sh.term(t -> t
-                                                                            .field("orgTag")
-                                                                            .value(tag)
-                                                                    ))
-                                                                );
-                                                                return innerBool;
-                                                            });
-                                                        }
-                                                    })
-                                            )
-                                    )
-                            )
-                    )
-                    .size(topK),
-                    EsDocument.class
-            );
+            SearchResponse<EsDocument> response = esClient.search(s -> {
+                        s.index("knowledge_base");
+                        // KNN 召回
+                        int recallK = topK * 30; // KNN 召回窗口
+                        s.knn(kn -> kn
+                                .field("vector")
+                                .queryVector(queryVector)
+                                .k(recallK)
+                                .numCandidates(recallK)
+                        );
+                        // 必须命中关键词 + 权限过滤
+                        s.query(q -> q.bool(b -> b
+                                .must(mst -> mst.match(m -> m.field("textContent").query(query)))
+                                .filter(f -> f.bool(bf -> bf
+                                        // 条件1: 用户可访问自己的文档
+                                        .should(s1 -> s1.term(t -> t.field("userId").value(userDbId)))
+                                        // 条件2: 公开文档
+                                        .should(s2 -> s2.term(t -> t.field("public").value(true)))
+                                        // 条件3: 组织标签
+                                        .should(s3 -> {
+                                            if (userEffectiveTags.isEmpty()) {
+                                                return s3.matchNone(mn -> mn);
+                                            } else if (userEffectiveTags.size() == 1) {
+                                                return s3.term(t -> t.field("orgTag").value(userEffectiveTags.get(0)));
+                                            } else {
+                                                return s3.bool(inner -> {
+                                                    userEffectiveTags.forEach(tag -> inner.should(sh2 -> sh2.term(t -> t.field("orgTag").value(tag))));
+                                                    return inner;
+                                                });
+                                            }
+                                        })
+                                ))
+                        ));
+
+                        // 第二阶段 BM25 rescore
+                        s.rescore(r -> r
+                                .windowSize(recallK)
+                                .query(rq -> rq
+                                        .queryWeight(0.2d)               // 保留部分 KNN 分
+                                        .rescoreQueryWeight(1.0d)        // BM25 主导
+                                        .query(rqq -> rqq.match(m -> m
+                                                .field("textContent")
+                                                .query(query)
+                                                .operator(Operator.And)
+                                        ))
+                                )
+                        );
+                        s.size(topK);
+                        return s;
+                    }, EsDocument.class);
 
             logger.debug("Elasticsearch查询执行完成，命中数量: {}, 最大分数: {}", 
                 response.hits().total().value(), response.hits().maxScore());
@@ -253,6 +233,7 @@ public class HybridSearchService {
                                     )
                             )
                     )
+                    .minScore(0.3d)
                     .size(topK),
                     EsDocument.class
             );
@@ -296,7 +277,7 @@ public class HybridSearchService {
             logger.warn("使用了没有权限过滤的搜索方法，建议使用 searchWithPermission 方法");
 
             // 生成查询向量
-            JsonData queryVector = generateQueryVector(query);
+            final List<Float> queryVector = embedToVectorList(query);
             
             // 如果向量生成失败，仅使用文本匹配
             if (queryVector == null) {
@@ -304,32 +285,35 @@ public class HybridSearchService {
                 return textOnlySearch(query, topK);
             }
 
-            SearchResponse<EsDocument> response = esClient.search(s -> s
-                    .index("knowledge_base")
-                    .query(q -> q
-                            .bool(b -> b
-                                    .should(sh -> sh
-                                            .match(m -> m
-                                                    .field("textContent")
-                                                    .query(query)
-                                            )
-                                    )
-                                    .should(sh -> sh
-                                            .scriptScore(sc -> sc
-                                                    .query(qq -> qq.matchAll(ma -> ma))
-                                                    .script(script -> script
-                                                            .inline(i -> i
-                                                                    .source("cosineSimilarity(params.queryVector, 'vector') + 1.0")
-                                                                    .params("queryVector", queryVector)
-                                                            )
-                                                    )
-                                            )
-                                    )
-                            )
-                    )
-                    .size(topK),
-                    EsDocument.class
-            );
+            SearchResponse<EsDocument> response = esClient.search(s -> {
+                        s.index("knowledge_base");
+                        int recallK = topK * 30;
+                        s.knn(kn -> kn
+                                .field("vector")
+                                .queryVector(queryVector)
+                                .k(recallK)
+                                .numCandidates(recallK)
+                        );
+
+                        // 过滤仅保留包含关键词的文本
+                        s.query(q -> q.match(m -> m.field("textContent").query(query)));
+
+                        // rescore BM25
+                        s.rescore(r -> r
+                                .windowSize(recallK)
+                                .query(rq -> rq
+                                        .queryWeight(0.2d)
+                                        .rescoreQueryWeight(1.0d)
+                                        .query(rqq -> rqq.match(m -> m
+                                                .field("textContent")
+                                                .query(query)
+                                                .operator(Operator.And)
+                                        ))
+                                )
+                        );
+                        s.size(topK);
+                        return s;
+                    }, EsDocument.class);
 
             return response.hits().hits().stream()
                     .map(hit -> {
@@ -385,24 +369,23 @@ public class HybridSearchService {
     }
 
     /**
-     * 生成查询向量（调用嵌入模型）
-     * 该方法将输入的查询字符串转换为向量表示，以便进行向量相似度搜索。
-     * 如果生成向量失败，则返回null。
-     *
-     * @param query 输入的查询字符串
-     * @return 返回查询向量的Json表示，或null表示失败
+     * 生成查询向量，返回 List<Float>，失败时返回 null
      */
-    private JsonData generateQueryVector(String query) {
+    private List<Float> embedToVectorList(String text) {
         try {
-            logger.debug("生成查询向量，查询: {}", query);
-            List<float[]> vectors = embeddingClient.embed(List.of(query));
-            if (vectors == null || vectors.isEmpty()) {
-                logger.warn("生成的向量为空或为null");
+            List<float[]> vecs = embeddingClient.embed(List.of(text));
+            if (vecs == null || vecs.isEmpty()) {
+                logger.warn("生成的向量为空");
                 return null;
             }
-            return JsonData.of(vectors.get(0));
+            float[] raw = vecs.get(0);
+            List<Float> list = new ArrayList<>(raw.length);
+            for (float v : raw) {
+                list.add(v);
+            }
+            return list;
         } catch (Exception e) {
-            logger.error("生成查询向量失败", e);
+            logger.error("生成向量失败", e);
             return null;
         }
     }
@@ -477,8 +460,7 @@ public class HybridSearchService {
             Set<String> md5Set = results.stream()
                     .map(SearchResult::getFileMd5)
                     .collect(Collectors.toSet());
-            // 批量查询 FileUpload
-            List<FileUpload> uploads = fileUploadRepository.findAllById(md5Set);
+            List<FileUpload> uploads = fileUploadRepository.findByFileMd5In(new java.util.ArrayList<>(md5Set));
             Map<String, String> md5ToName = uploads.stream()
                     .collect(Collectors.toMap(FileUpload::getFileMd5, FileUpload::getFileName));
             // 填充文件名

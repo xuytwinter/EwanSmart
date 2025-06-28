@@ -25,6 +25,9 @@ public class EmbeddingClient {
     @Value("${embedding.api.model}")
     private String modelId;
     
+    @Value("${embedding.api.batch-size:100}")
+    private int batchSize;
+    
     private static final Logger logger = LoggerFactory.getLogger(EmbeddingClient.class);
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
@@ -43,48 +46,55 @@ public class EmbeddingClient {
         try {
             logger.info("开始生成向量，文本数量: {}", texts.size());
             
-            // 构造请求体
-            Map<String, Object> requestBody = new HashMap<>();
-            requestBody.put("model", modelId);
-            requestBody.put("input", texts);
-            requestBody.put("encoding_format", "float");
-            
-            // 发送请求，添加重试机制
-            String response = webClient.post()
-                    .uri("/embeddings")
-                    .bodyValue(requestBody)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .retryWhen(Retry.fixedDelay(3, Duration.ofSeconds(1))
-                        .filter(e -> e instanceof WebClientResponseException))
-                    .block(Duration.ofSeconds(30));
-            
-            logger.debug("收到响应: {}", response);
-            
-            // 解析响应
-            JsonNode jsonNode = objectMapper.readTree(response);
-            JsonNode data = jsonNode.get("data");
-            if (data == null || !data.isArray()) {
-                throw new RuntimeException("API 响应格式错误: data 字段不存在或不是数组");
+            List<float[]> all = new ArrayList<>(texts.size());
+            for (int start = 0; start < texts.size(); start += batchSize) {
+                int end = Math.min(start + batchSize, texts.size());
+                List<String> sub = texts.subList(start, end);
+                logger.debug("调用向量 API, 批次: {}-{} (size={})", start, end - 1, sub.size());
+                String response = callApiOnce(sub);
+                all.addAll(parseVectors(response));
             }
-
-            List<float[]> vectors = new ArrayList<>();
-            for (JsonNode item : data) {
-                JsonNode embedding = item.get("embedding");
-                if (embedding != null && embedding.isArray()) {
-                    float[] vector = new float[embedding.size()];
-                    for (int i = 0; i < embedding.size(); i++) {
-                        vector[i] = (float) embedding.get(i).asDouble();
-                    }
-                    vectors.add(vector);
-                }
-            }
-
-            logger.info("成功生成向量，数量: {}", vectors.size());
-            return vectors;
+            logger.info("成功生成向量，总数量: {}", all.size());
+            return all;
         } catch (Exception e) {
             logger.error("调用向量化 API 失败: {}", e.getMessage(), e);
             throw new RuntimeException("向量生成失败", e);
         }
+    }
+
+    private String callApiOnce(List<String> batch) {
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("model", modelId);
+        requestBody.put("input", batch);
+        requestBody.put("encoding_format", "float");
+
+        return webClient.post()
+                .uri("/embeddings")
+                .bodyValue(requestBody)
+                .retrieve()
+                .bodyToMono(String.class)
+                .retryWhen(Retry.fixedDelay(3, Duration.ofSeconds(1))
+                        .filter(e -> e instanceof WebClientResponseException))
+                .block(Duration.ofSeconds(30));
+    }
+
+    private List<float[]> parseVectors(String response) throws Exception {
+        JsonNode jsonNode = objectMapper.readTree(response);
+        JsonNode data = jsonNode.get("data");
+        if (data == null || !data.isArray()) {
+            throw new RuntimeException("API 响应格式错误: data 字段不存在或不是数组");
+        }
+        List<float[]> vectors = new ArrayList<>();
+        for (JsonNode item : data) {
+            JsonNode embedding = item.get("embedding");
+            if (embedding != null && embedding.isArray()) {
+                float[] vector = new float[embedding.size()];
+                for (int i = 0; i < embedding.size(); i++) {
+                    vector[i] = (float) embedding.get(i).asDouble();
+                }
+                vectors.add(vector);
+            }
+        }
+        return vectors;
     }
 }
