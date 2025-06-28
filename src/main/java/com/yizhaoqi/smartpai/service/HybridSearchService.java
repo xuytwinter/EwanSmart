@@ -9,6 +9,8 @@ import com.yizhaoqi.smartpai.entity.SearchResult;
 import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.exception.CustomException;
 import com.yizhaoqi.smartpai.repository.UserRepository;
+import com.yizhaoqi.smartpai.repository.FileUploadRepository;
+import com.yizhaoqi.smartpai.model.FileUpload;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,6 +20,9 @@ import org.springframework.stereotype.Service;
 import java.util.Collections;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Set;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 混合搜索服务，结合文本匹配和向量相似度搜索
@@ -42,6 +47,9 @@ public class HybridSearchService {
 
     @Autowired
     private OrgTagCacheService orgTagCacheService;
+
+    @Autowired
+    private FileUploadRepository fileUploadRepository;
 
     /**
      * 使用文本匹配和向量相似度进行混合搜索，支持权限过滤
@@ -168,6 +176,7 @@ public class HybridSearchService {
                     .toList();
 
             logger.debug("返回搜索结果数量: {}", results.size());
+            attachFileNames(results);
             return results;
         } catch (Exception e) {
             logger.error("带权限的搜索失败", e);
@@ -270,6 +279,7 @@ public class HybridSearchService {
                     .toList();
 
             logger.debug("返回纯文本搜索结果数量: {}", results.size());
+            attachFileNames(results);
             return results;
         } catch (Exception e) {
             logger.error("纯文本搜索失败", e);
@@ -455,6 +465,26 @@ public class HybridSearchService {
         } catch (Exception e) {
             logger.error("获取用户数据库ID失败: {}", e.getMessage(), e);
             throw new RuntimeException("获取用户数据库ID失败", e);
+        }
+    }
+
+    private void attachFileNames(List<SearchResult> results) {
+        if (results == null || results.isEmpty()) {
+            return;
+        }
+        try {
+            // 收集所有唯一的 fileMd5
+            Set<String> md5Set = results.stream()
+                    .map(SearchResult::getFileMd5)
+                    .collect(Collectors.toSet());
+            // 批量查询 FileUpload
+            List<FileUpload> uploads = fileUploadRepository.findAllById(md5Set);
+            Map<String, String> md5ToName = uploads.stream()
+                    .collect(Collectors.toMap(FileUpload::getFileMd5, FileUpload::getFileName));
+            // 填充文件名
+            results.forEach(r -> r.setFileName(md5ToName.get(r.getFileMd5())));
+        } catch (Exception e) {
+            logger.error("补充文件名失败", e);
         }
     }
 }

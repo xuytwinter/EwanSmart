@@ -80,14 +80,6 @@ public class VectorizationService {
         }
     }
     
-    /**
-     * 兼容旧版本的向量化方法
-     * @param fileMd5 文件指纹
-     */
-    public void vectorize(String fileMd5) {
-        // 使用默认值调用新方法
-        vectorize(fileMd5, "unknown", "DEFAULT", false);
-    }
 
     /**
      * 获取文件分块内容

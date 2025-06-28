@@ -43,10 +43,5 @@ public class EsDocument {
         this.isPublic = isPublic;
     }
     
-    /**
-     * 兼容旧版本的构造函数
-     */
-    public EsDocument(String id, String fileMd5, int chunkId, String content, float[] vector, String modelVersion) {
-        this(id, fileMd5, chunkId, content, vector, modelVersion, "unknown", "DEFAULT", false);
-    }
+
 }

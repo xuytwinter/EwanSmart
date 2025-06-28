@@ -1,13 +1,13 @@
 {
   "mappings": {
     "properties": {
-      "file_md5": {
+      "fileMd5": {
         "type": "keyword"
       },
-      "chunk_id": {
+      "chunkId": {
         "type": "integer"
       },
-      "text_content": {
+      "textContent": {
         "type": "text",
         "analyzer": "standard"
       },
@@ -17,16 +17,16 @@
         "index": true,
         "similarity": "cosine"
       },
-      "model_version": {
+      "modelVersion": {
         "type": "keyword"
       },
-      "user_id": {
+      "userId": {
         "type": "keyword"
       },
-      "org_tag": {
+      "orgTag": {
         "type": "keyword"
       },
-      "is_public": {
+      "isPublic": {
         "type": "boolean"
       }
     }
