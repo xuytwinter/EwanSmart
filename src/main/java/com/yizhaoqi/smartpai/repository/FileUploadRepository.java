@@ -8,10 +8,19 @@ import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 @Repository
-public interface FileUploadRepository extends JpaRepository<FileUpload, String> {
+public interface FileUploadRepository extends JpaRepository<FileUpload, Long> {
     Optional<FileUpload> findByFileMd5(String fileMd5);
+    
+    Optional<FileUpload> findByFileMd5AndUserId(String fileMd5, String userId);
+    
+    long countByFileMd5(String fileMd5);
+    
+    void deleteByFileMd5(String fileMd5);
+    
+    void deleteByFileMd5AndUserId(String fileMd5, String userId);
     
     /**
      * 查询用户自己的文件和公开文件
@@ -48,4 +57,6 @@ public interface FileUploadRepository extends JpaRepository<FileUpload, String> 
      * @return 用户上传的文件列表
      */
     List<FileUpload> findByUserId(String userId);
+
+    List<FileUpload> findAllById(Set<String> md5Set);
 }

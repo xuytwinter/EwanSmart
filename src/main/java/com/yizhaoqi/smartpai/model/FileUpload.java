@@ -20,6 +20,10 @@ public class FileUpload {
      * 使用文件的MD5值来唯一确定一个文件
      */
     @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id; // 自增主键
+
+    @Column(name = "file_md5", length = 32, nullable = false)
     private String fileMd5;
 
     /**
@@ -44,6 +48,7 @@ public class FileUpload {
      * 上传文件的用户的标识符
      * 用于记录哪个用户上传了文件
      */
+    @Column(name = "user_id", length = 64, nullable = false)
     private String userId;
     
     /**

@@ -21,18 +21,22 @@ CREATE TABLE organization_tags (
                                    FOREIGN KEY (created_by) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='组织标签表';
 
-CREATE TABLE file_upload (
-                             file_md5 VARCHAR(32) PRIMARY KEY COMMENT '文件的MD5值，作为主键唯一标识文件',
-                             file_name VARCHAR(255) NOT NULL COMMENT '文件的原始名称',
-                             total_size BIGINT NOT NULL COMMENT '文件总大小(字节)',
-                             status INT NOT NULL DEFAULT 0 COMMENT '文件上传状态：0-上传中，1-已完成',
-                             user_id VARCHAR(64) NOT NULL COMMENT '上传用户的标识符',
-                             org_tag VARCHAR(50) COMMENT '文件所属组织标签',
-                             is_public BOOLEAN NOT NULL DEFAULT FALSE COMMENT '文件是否公开',
-                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '文件上传创建时间',
-                             merged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '文件合并完成时间'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文件上传记录表';
 
+CREATE TABLE file_upload (
+                             id           BIGINT           NOT NULL AUTO_INCREMENT COMMENT '主键',
+                             file_md5     VARCHAR(32)      NOT NULL COMMENT '文件 MD5',
+                             file_name    VARCHAR(255)     NOT NULL COMMENT '文件名称',
+                             total_size   BIGINT           NOT NULL COMMENT '文件大小',
+                             status       TINYINT          NOT NULL DEFAULT 0 COMMENT '上传状态',
+                             user_id      VARCHAR(64)      NOT NULL COMMENT '用户 ID',
+                             org_tag      VARCHAR(50)      DEFAULT NULL COMMENT '组织标签',
+                             is_public    BOOLEAN          NOT NULL DEFAULT FALSE COMMENT '是否公开',                             created_at   TIMESTAMP        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                             merged_at    TIMESTAMP        NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '合并时间',
+                             PRIMARY KEY (id),
+                             UNIQUE KEY uk_md5_user (file_md5, user_id),
+                             INDEX idx_user (user_id),
+                             INDEX idx_org_tag (org_tag)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文件上传记录';
 CREATE TABLE chunk_info (
                             id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '分块记录唯一标识',
                             file_md5 VARCHAR(32) NOT NULL COMMENT '关联的文件MD5值',

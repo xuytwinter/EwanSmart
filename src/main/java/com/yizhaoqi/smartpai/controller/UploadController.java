@@ -171,7 +171,7 @@ public class UploadController {
             String fileName = "unknown";
             String fileType = "unknown";
             try {
-                Optional<FileUpload> fileUpload = fileUploadRepository.findById(fileMd5);
+                Optional<FileUpload> fileUpload = fileUploadRepository.findByFileMd5(fileMd5);
                 if (fileUpload.isPresent()) {
                     fileName = fileUpload.get().getFileName();
                     fileType = getFileType(fileName);
@@ -235,7 +235,7 @@ public class UploadController {
             
             // 检查文件完整性和权限
             LogUtils.logBusiness("MERGE_FILE", userId, "检查文件记录和权限: fileMd5=%s, fileName=%s", request.fileMd5(), request.fileName());
-            FileUpload fileUpload = fileUploadRepository.findById(request.fileMd5())
+            FileUpload fileUpload = fileUploadRepository.findByFileMd5AndUserId(request.fileMd5(), userId)
                     .orElseThrow(() -> {
                         LogUtils.logUserOperation(userId, "MERGE_FILE", request.fileMd5(), "FAILED_FILE_NOT_FOUND");
                         return new RuntimeException("文件记录不存在");

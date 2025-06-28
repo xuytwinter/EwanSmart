@@ -52,7 +52,7 @@ public class DocumentController {
             LogUtils.logBusiness("DELETE_DOCUMENT", userId, "接收到删除文档请求: fileMd5=%s, role=%s", fileMd5, role);
             
             // 获取文件信息
-            Optional<FileUpload> fileOpt = fileUploadRepository.findById(fileMd5);
+            Optional<FileUpload> fileOpt = fileUploadRepository.findByFileMd5AndUserId(fileMd5, userId);
             if (fileOpt.isEmpty()) {
                 LogUtils.logUserOperation(userId, "DELETE_DOCUMENT", fileMd5, "FAILED_NOT_FOUND");
                 monitor.end("删除失败：文档不存在");

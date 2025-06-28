@@ -60,7 +60,7 @@ public class DocumentService {
         
         try {
             // 获取文件信息以获取文件名
-            FileUpload fileUpload = fileUploadRepository.findById(fileMd5)
+            FileUpload fileUpload = fileUploadRepository.findByFileMd5(fileMd5)
                     .orElseThrow(() -> new RuntimeException("文件不存在"));
             
             // 1. 删除Elasticsearch中的数据
@@ -97,7 +97,7 @@ public class DocumentService {
             }
             
             // 4. 删除FileUpload记录
-            fileUploadRepository.deleteById(fileMd5);
+            fileUploadRepository.deleteByFileMd5(fileMd5);
             logger.info("成功删除文件上传记录: {}", fileMd5);
             
             logger.info("文档删除完成: {}", fileMd5);
