@@ -13,21 +13,25 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.yizhaoqi.smartpai.config.AiProperties;
 
 @Service
 public class DeepSeekClient {
 
     private final WebClient webClient;
     private final String apiKey;
+    private final AiProperties aiProperties;
     private static final Logger logger = LoggerFactory.getLogger(DeepSeekClient.class);
     
     public DeepSeekClient(@Value("${deepseek.api.url}") String apiUrl,
-                         @Value("${deepseek.api.key}") String apiKey) {
+                         @Value("${deepseek.api.key}") String apiKey,
+                         AiProperties aiProperties) {
         this.webClient = WebClient.builder()
                 .baseUrl(apiUrl)
                 .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
                 .build();
         this.apiKey = apiKey;
+        this.aiProperties = aiProperties;
     }
     
     public void streamResponse(String userMessage, 
@@ -58,34 +62,69 @@ public class DeepSeekClient {
                    context != null ? context.length() : 0, 
                    history != null ? history.size() : 0);
         
-        return Map.of(
-            "model", "deepseek-chat",
-            "messages", buildMessages(userMessage, context, history),
-            "stream", true,
-            "temperature", 0.7,
-            "max_tokens", 2000
-        );
+        Map<String, Object> request = new java.util.HashMap<>();
+        request.put("model", "deepseek-chat");
+        request.put("messages", buildMessages(userMessage, context, history));
+        request.put("stream", true);
+        // 生成参数
+        AiProperties.Generation gen = aiProperties.getGeneration();
+        if (gen.getTemperature() != null) {
+            request.put("temperature", gen.getTemperature());
+        }
+        if (gen.getTopP() != null) {
+            request.put("top_p", gen.getTopP());
+        }
+        if (gen.getMaxTokens() != null) {
+            request.put("max_tokens", gen.getMaxTokens());
+        }
+        return request;
     }
     
     private List<Map<String, String>> buildMessages(String userMessage,
                                                   String context,
                                                   List<Map<String, String>> history) {
-        List<Map<String, String>> messages = new ArrayList<>(history);
-        
-        // 添加上下文
-        if (!context.isEmpty()) {
-            messages.add(Map.of(
-                "role", "system",
-                "content", "以下是相关的参考信息：\n" + context
-            ));
+        List<Map<String, String>> messages = new ArrayList<>();
+
+        AiProperties.Prompt promptCfg = aiProperties.getPrompt();
+
+        // 1. 构建统一的 system 指令（规则 + 参考信息）
+        StringBuilder sysBuilder = new StringBuilder();
+        String rules = promptCfg.getRules();
+        if (rules != null) {
+            sysBuilder.append(rules).append("\n\n");
         }
-        
-        // 添加用户的新消息
+
+        String refStart = promptCfg.getRefStart() != null ? promptCfg.getRefStart() : "<<REF>>";
+        String refEnd = promptCfg.getRefEnd() != null ? promptCfg.getRefEnd() : "<<END>>";
+        sysBuilder.append(refStart).append("\n");
+
+        if (context != null && !context.isEmpty()) {
+            sysBuilder.append(context);
+        } else {
+            String noResult = promptCfg.getNoResultText() != null ? promptCfg.getNoResultText() : "（本轮无检索结果）";
+            sysBuilder.append(noResult).append("\n");
+        }
+
+        sysBuilder.append(refEnd);
+
+        String systemContent = sysBuilder.toString();
+        messages.add(Map.of(
+            "role", "system",
+            "content", systemContent
+        ));
+        logger.debug("添加了系统消息，长度: {}", systemContent.length());
+
+        // 2. 追加历史消息（若有）
+        if (history != null && !history.isEmpty()) {
+            messages.addAll(history);
+        }
+
+        // 3. 当前用户问题
         messages.add(Map.of(
             "role", "user",
             "content", userMessage
         ));
-        
+
         return messages;
     }
     

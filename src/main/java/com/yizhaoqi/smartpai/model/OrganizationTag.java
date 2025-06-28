@@ -21,7 +21,7 @@ public class OrganizationTag {
     @Column(columnDefinition = "TEXT")
     private String description; // 描述
 
-    @Column(name = "parent_tag")
+    @Column(name = "parent_tag", length = 255)
     private String parentTag; // 父标签ID
 
     @ManyToOne

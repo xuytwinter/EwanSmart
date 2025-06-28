@@ -28,6 +28,14 @@ import java.util.stream.Collectors;
  * 1. 用户私人空间：仅资源创建者可访问
  * 2. 组织资源：组织成员可访问
  * 3. 公开资源：所有用户可访问
+ * 
+ * 实现说明：
+ * 本过滤器主要解决两类请求的授权需求：
+ * 1. 基于资源ID的权限验证：对特定资源的访问需验证用户是否有权限
+ * 2. 基于用户身份的简单授权：某些API只需验证用户身份并传递用户ID
+ *    - 如上传文件、获取文档列表等接口，不涉及特定资源的权限检查
+ *    - 这类API的控制器方法通过@RequestAttribute("userId")获取用户ID
+ *    - 由本过滤器负责从JWT令牌中提取用户ID并设置为请求属性
  */
 @Component
 public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
@@ -48,18 +56,39 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
         try {
             String path = request.getRequestURI();
             
-            // 特殊处理：对上传相关的请求进行特殊处理
-            if (path.matches(".*/upload/chunk.*") || path.matches(".*/upload/merge.*")) {
-                String operation = path.contains("/chunk") ? "分片上传" : "合并分片";
-                logger.info("特殊处理：直接放行{}请求: {}", operation, path);
+            // 需要用户ID但不需要资源权限检查的API路径
+            // 这些API只需要用户身份验证，不需要对特定资源进行权限检查
+            // 控制器方法通过@RequestAttribute("userId")获取用户ID
+            if (path.matches(".*/upload/chunk.*") || 
+                path.matches(".*/upload/merge.*") || 
+                path.matches(".*/documents/uploads.*") ||
+                path.matches(".*/search/hybrid.*") ||
+                (path.matches(".*/documents/[a-fA-F0-9]{32}.*") && "DELETE".equals(request.getMethod()))) {
                 
-                // 设置userId到请求属性中，供Controller使用
+                String operation = "未知操作";
+                if (path.contains("/chunk")) {
+                    operation = "分片上传";
+                } else if (path.contains("/merge")) {
+                    operation = "合并分片";
+                } else if (path.contains("/uploads")) {
+                    operation = "获取用户文档";
+                } else if (path.contains("/search/hybrid")) {
+                    operation = "混合检索";
+                } else if ("DELETE".equals(request.getMethod()) && path.matches(".*/documents/[a-fA-F0-9]{32}.*")) {
+                    operation = "删除文档";
+                }
+                
+                logger.info("处理{}请求: {}", operation, path);
+                
+                // 将用户ID和角色设置为请求属性，供控制器方法使用
                 String token = extractToken(request);
                 if (token != null) {
                     String userId = jwtUtils.extractUserIdFromToken(token);
+                    String role = jwtUtils.extractRoleFromToken(token);
                     if (userId != null) {
                         request.setAttribute("userId", userId);
-                        logger.debug("在{}请求中设置userId属性: {}", operation, userId);
+                        request.setAttribute("role", role);
+                        logger.debug("为{}请求设置userId属性: {}, role: {}", operation, userId, role);
                     } else {
                         logger.warn("{}请求中无法从token提取userId", operation);
                     }
@@ -184,21 +213,28 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
             return fileId;
         }
         
-        // 2. 文档资源: /api/v1/documents/{docId}
+        // 2. 文档删除资源: /api/v1/documents/{file_md5}
+        if (path.matches(".*/documents/[a-fA-F0-9]{32}.*")) {
+            String fileMd5 = path.replaceAll(".*/documents/([a-fA-F0-9]{32}).*", "$1");
+            logger.debug("检测到文档删除请求，提取文件MD5: {}", fileMd5);
+            return fileMd5;
+        }
+        
+        // 3. 文档资源: /api/v1/documents/{docId} (数字ID)
         if (path.matches(".*/documents/\\d+.*")) {
             String docId = path.replaceAll(".*/documents/(\\d+).*", "$1");
             logger.debug("检测到文档资源请求，提取ID: {}", docId);
             return docId;
         }
         
-        // 3. 上传分片: /api/v1/upload/chunk
+        // 4. 上传分片: /api/v1/upload/chunk
         if (path.matches(".*/upload/chunk.*")) {
             String fileMd5 = request.getHeader("X-File-MD5");
             logger.debug("检测到分片上传请求，从请求头提取文件MD5: {}", fileMd5);
             return fileMd5;
         }
         
-        // 4. 知识库资源: /api/v1/knowledge/{resourceId}
+        // 5. 知识库资源: /api/v1/knowledge/{resourceId}
         if (path.matches(".*/knowledge/[^/]+.*")) {
             String knowledgeId = path.replaceAll(".*/knowledge/([^/]+).*", "$1");
             logger.debug("检测到知识库资源请求，提取ID: {}", knowledgeId);

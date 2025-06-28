@@ -154,11 +154,16 @@ public class OrgTagCacheService {
             
             // 缓存未命中，计算有效标签集合
             List<String> userTags = getUserOrgTags(username);
-            Set<String> allEffectiveTags = new HashSet<>(userTags);
+            Set<String> allEffectiveTags = new HashSet<>();
+            
+            // 如果用户有标签，添加到集合中并查找父标签
+            if (userTags != null && !userTags.isEmpty()) {
+                allEffectiveTags.addAll(userTags);
             
             // 查找所有父标签
             for (String tagId : userTags) {
                 collectParentTags(tagId, allEffectiveTags);
+                }
             }
             
             // 确保默认标签在结果中
