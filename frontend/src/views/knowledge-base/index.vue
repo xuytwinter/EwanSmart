@@ -49,7 +49,7 @@ const { columns, columnChecks, data, getData, loading } = useTable({
     {
       key: 'status',
       title: '上传状态',
-      width: 250,
+      width: 100,
       render: row => renderStatus(row.status, row.progress)
     },
     {
@@ -69,12 +69,6 @@ const { columns, columnChecks, data, getData, loading } = useTable({
       title: '上传时间',
       width: 100,
       render: row => dayjs(row.createdAt).format('YYYY-MM-DD')
-    },
-    {
-      key: 'mergedAt',
-      title: '完成时间',
-      width: 100,
-      render: row => dayjs(row.mergedAt).format('YYYY-MM-DD')
     },
     {
       key: 'operate',
