@@ -17,7 +17,7 @@ function apiFn() {
 function renderIcon(fileName: string) {
   const ext = getFileExt(fileName);
   if (ext) {
-    if (uploadAccept.split(',').includes(ext)) return <SvgIcon localIcon={ext} class="mx-4 text-20" />;
+    if (uploadAccept.split(',').includes(`.${ext}`)) return <SvgIcon localIcon={ext} class="mx-4 text-20" />;
     return <SvgIcon localIcon="dflt" class="mx-4 text-20" />;
   }
   return null;
