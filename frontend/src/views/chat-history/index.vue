@@ -23,7 +23,7 @@ function scrollToBottom() {
   }, 100);
 }
 
-const range = ref<[number, number]>([dayjs().subtract(7, 'day').valueOf(), Date.now()]);
+const range = ref<[number, number]>([dayjs().subtract(7, 'day').valueOf(), dayjs().add(1, 'day').valueOf()]);
 const userId = ref<number | null>(null);
 
 const params = computed(() => {

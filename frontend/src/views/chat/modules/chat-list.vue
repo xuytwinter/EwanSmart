@@ -24,7 +24,7 @@ function scrollToBottom() {
   }, 100);
 }
 
-const range = ref<[number, number]>([dayjs().subtract(7, 'day').valueOf(), dayjs().add(1, 'hours').valueOf()]);
+const range = ref<[number, number]>([dayjs().subtract(7, 'day').valueOf(), dayjs().add(1, 'day').valueOf()]);
 
 const params = computed(() => {
   return {
