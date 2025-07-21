@@ -174,6 +174,12 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
     }
   }
 
+  /** Set token (used for seamless token refresh) */
+  function setToken(newToken: string) {
+    token.value = newToken;
+    localStg.set('token', newToken);
+  }
+
   return {
     token,
     userInfo,
@@ -183,6 +189,7 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
     loginLoading,
     resetStore,
     login,
-    initUserInfo
+    initUserInfo,
+    setToken
   };
 });

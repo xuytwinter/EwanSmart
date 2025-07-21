@@ -55,6 +55,13 @@ function createCommonRequest<ResponseData = any>(
 
   instance.interceptors.response.use(
     async response => {
+      // 检查响应头中的新token（无感知刷新机制）
+      const newToken = response.headers['new-token'];
+      if (newToken) {
+        // 调用更新token的回调函数（如果提供了的话）
+        await opts.onTokenRefresh?.(newToken);
+      }
+
       const responseType: ResponseType = (response.config?.responseType as ResponseType) || 'json';
 
       if (responseType !== 'json' || opts.isBackendSuccess(response)) {
