@@ -12,6 +12,8 @@ const scrollbarRef = ref<InstanceType<typeof NScrollbar>>();
 const list = ref<Api.Chat.Message[]>([]);
 const loading = ref(false);
 
+const store = useAuthStore();
+
 watch(() => [...list.value], scrollToBottom);
 
 function scrollToBottom() {
@@ -24,7 +26,7 @@ function scrollToBottom() {
 }
 
 const range = ref<[number, number]>([dayjs().subtract(7, 'day').valueOf(), dayjs().add(1, 'day').valueOf()]);
-const userId = ref<number | null>(null);
+const userId = ref<number>(store.userInfo.id);
 
 const params = computed(() => {
   return {
@@ -62,8 +64,7 @@ async function getList() {
             <TheSelect
               v-model:value="userId"
               url="admin/users/list"
-              :params="{ page: 1, size: 999 }"
-              select-first
+              :params="{ page: 1, size: 999, orgTag: store.userInfo.primaryOrg }"
               key-field="content"
               value-field="userId"
               label-field="username"
