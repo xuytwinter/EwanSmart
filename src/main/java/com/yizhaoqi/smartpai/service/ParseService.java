@@ -27,6 +27,12 @@ public class ParseService {
 
     @Value("${file.parsing.chunk-size}")
     private int chunkSize;
+    
+    @Value("${file.parsing.buffer-size:8192}")
+    private int bufferSize;
+    
+    @Value("${file.parsing.max-memory-threshold:0.8}")
+    private double maxMemoryThreshold;
 
     /**
      * 解析文件并保存文本内容到数据库
@@ -76,19 +82,18 @@ public class ParseService {
      * @throws TikaException 如果文件解析过程中发生错误
      */
     private String extractText(InputStream fileStream) throws IOException, TikaException {
-        try {
-            // 缓存输入流以支持多次读取
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            fileStream.transferTo(baos);
-            InputStream cachedStream = new ByteArrayInputStream(baos.toByteArray());
-
-            BodyContentHandler handler = new BodyContentHandler(-1); // 不限制内容长度
+        // 检查内存使用情况
+        checkMemoryThreshold();
+        
+        try (BufferedInputStream bufferedStream = new BufferedInputStream(fileStream, bufferSize)) {
+            // 使用流式处理handler，限制内存使用
+            StreamingContentHandler handler = new StreamingContentHandler();
             Metadata metadata = new Metadata();
             ParseContext context = new ParseContext();
             AutoDetectParser parser = new AutoDetectParser();
 
             // 解析文件
-            parser.parse(cachedStream, handler, metadata, context);
+            parser.parse(bufferedStream, handler, metadata, context);
 
             // 打印元数据
             logger.debug("文件元数据:");
@@ -97,8 +102,8 @@ public class ParseService {
             }
 
             // 获取解析内容
-            String content = handler.toString();
-            logger.debug("提取的文本内容: {}", content);
+            String content = handler.getContent();
+            logger.debug("提取的文本内容长度: {}", content.length());
 
             if (content.isEmpty()) {
                 logger.warn("解析结果为空，请检查文件内容或格式");
@@ -108,6 +113,59 @@ public class ParseService {
         } catch (org.xml.sax.SAXException e) {
             logger.error("文档解析失败", e);
             throw new RuntimeException("文档解析失败", e);
+        }
+    }
+    
+    private void checkMemoryThreshold() {
+        Runtime runtime = Runtime.getRuntime();
+        long maxMemory = runtime.maxMemory();
+        long totalMemory = runtime.totalMemory();
+        long freeMemory = runtime.freeMemory();
+        long usedMemory = totalMemory - freeMemory;
+        
+        double memoryUsage = (double) usedMemory / maxMemory;
+        
+        if (memoryUsage > maxMemoryThreshold) {
+            logger.warn("内存使用率过高: {:.2f}%, 触发垃圾回收", memoryUsage * 100);
+            System.gc();
+            
+            // 重新检查
+            usedMemory = runtime.totalMemory() - runtime.freeMemory();
+            memoryUsage = (double) usedMemory / maxMemory;
+            
+            if (memoryUsage > maxMemoryThreshold) {
+                throw new RuntimeException("内存不足，无法处理大文件。当前使用率: " + 
+                    String.format("%.2f%%", memoryUsage * 100));
+            }
+        }
+    }
+    
+    private static class StreamingContentHandler extends BodyContentHandler {
+        private final StringBuilder content = new StringBuilder();
+        private static final int MAX_CHUNK_SIZE = 1024 * 1024; // 1MB chunks
+        
+        public StreamingContentHandler() {
+            super(-1);
+        }
+        
+        @Override
+        public void characters(char[] ch, int start, int length) {
+            // 分块处理字符数据
+            if (content.length() + length > MAX_CHUNK_SIZE) {
+                // 如果添加新内容会超过阈值，先处理当前内容
+                processChunk();
+            }
+            content.append(ch, start, length);
+        }
+        
+        private void processChunk() {
+            // 这里可以实现流式处理逻辑，如写入临时文件
+            // 当前简化实现，保留在内存中
+            logger.debug("处理文本块，大小: {}", content.length());
+        }
+        
+        public String getContent() {
+            return content.toString();
         }
     }
 

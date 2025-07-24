@@ -66,6 +66,8 @@ admin:
 file:
   parsing:
     chunk-size: 512 # 每个文本块的最大字符数
+    buffer-size: 8192    # 8KB 缓冲区
+    max-memory-threshold: 0.8  # 80% 内存阈值
 
 elasticsearch:
   host: localhost       # Elasticsearch主机地址
@@ -91,7 +93,7 @@ log4j:
 
 deepseek:
   api:
-    url: http://localhost:11434/v1 # 本地是 http://localhost:11434/v1 官方：https://api.deepseek.com/v1
+    url: http://localhost:11434/v1  # 本地是 http://localhost:11434/v1 官方：https://api.deepseek.com/v1
     model: deepseek-r1:7b  # 本地: deepseek-r1:7b, 官方: deepseek-chat
     key:  # DeepSeek API Key 如果是本地就为空
 
