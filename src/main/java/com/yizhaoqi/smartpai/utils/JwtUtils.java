@@ -130,13 +130,8 @@ public class JwtUtils {
      */
     public String extractUsernameFromToken(String token) {
         try {
-            Claims claims = Jwts.parserBuilder()
-                    .setSigningKey(getSigningKey()) // 使用正确的密钥
-                    .build()
-                    .parseClaimsJws(token)
-                    .getBody();
-
-            return claims.getSubject();
+            Claims claims = extractClaimsIgnoreExpiration(token);
+            return claims != null ? claims.getSubject() : null;
         } catch (Exception e) {
             logger.error("Error extracting username from token: {}", token, e);
             return null;
@@ -148,13 +143,8 @@ public class JwtUtils {
      */
     public String extractUserIdFromToken(String token) {
         try {
-            Claims claims = Jwts.parserBuilder()
-                    .setSigningKey(getSigningKey())
-                    .build()
-                    .parseClaimsJws(token)
-                    .getBody();
-
-            return claims.get("userId", String.class);
+            Claims claims = extractClaimsIgnoreExpiration(token);
+            return claims != null ? claims.get("userId", String.class) : null;
         } catch (Exception e) {
             logger.error("Error extracting userId from token: {}", token, e);
             return null;
@@ -166,13 +156,8 @@ public class JwtUtils {
      */
     public String extractRoleFromToken(String token) {
         try {
-            Claims claims = Jwts.parserBuilder()
-                    .setSigningKey(getSigningKey())
-                    .build()
-                    .parseClaimsJws(token)
-                    .getBody();
-
-            return claims.get("role", String.class);
+            Claims claims = extractClaimsIgnoreExpiration(token);
+            return claims != null ? claims.get("role", String.class) : null;
         } catch (Exception e) {
             logger.error("Error extracting role from token: {}", token, e);
             return null;
@@ -184,13 +169,8 @@ public class JwtUtils {
      */
     public String extractOrgTagsFromToken(String token) {
         try {
-            Claims claims = Jwts.parserBuilder()
-                    .setSigningKey(getSigningKey())
-                    .build()
-                    .parseClaimsJws(token)
-                    .getBody();
-
-            return claims.get("orgTags", String.class);
+            Claims claims = extractClaimsIgnoreExpiration(token);
+            return claims != null ? claims.get("orgTags", String.class) : null;
         } catch (Exception e) {
             logger.error("Error extracting organization tags from token: {}", token, e);
             return null;
@@ -202,13 +182,8 @@ public class JwtUtils {
      */
     public String extractPrimaryOrgFromToken(String token) {
         try {
-            Claims claims = Jwts.parserBuilder()
-                    .setSigningKey(getSigningKey())
-                    .build()
-                    .parseClaimsJws(token)
-                    .getBody();
-
-            return claims.get("primaryOrg", String.class);
+            Claims claims = extractClaimsIgnoreExpiration(token);
+            return claims != null ? claims.get("primaryOrg", String.class) : null;
         } catch (Exception e) {
             logger.error("Error extracting primary organization from token: {}", token, e);
             return null;
