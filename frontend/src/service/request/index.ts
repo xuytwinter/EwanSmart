@@ -25,6 +25,12 @@ function getFlatRequest(options: Partial<RequestOption<App.Service.Response>> = 
 
         return config;
       },
+      onTokenRefresh(newToken) {
+        // 无感知token刷新：自动更新本地存储的token
+        const authStore = useAuthStore();
+        authStore.setToken(newToken);
+        console.log('🔄 Token automatically refreshed');
+      },
       isBackendSuccess(response) {
         // when the backend response code is "0000"(default), it means the request is success
         // to change this logic by yourself, you can modify the `VITE_SERVICE_SUCCESS_CODE` in `.env` file

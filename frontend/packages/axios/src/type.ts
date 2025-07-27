@@ -49,6 +49,14 @@ export interface RequestOption<ResponseData = any> {
    * @param error
    */
   onError: (error: AxiosError<ResponseData>) => void | Promise<void>;
+  /**
+   * The hook to handle token refresh (when New-Token header is present)
+   *
+   * This enables seamless token refresh without user intervention
+   *
+   * @param newToken The new token from response header
+   */
+  onTokenRefresh?: (newToken: string) => void | Promise<void>;
 }
 
 interface ResponseMap {

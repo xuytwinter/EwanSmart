@@ -20,17 +20,24 @@ public class DeepSeekClient {
 
     private final WebClient webClient;
     private final String apiKey;
+    private final String model;
     private final AiProperties aiProperties;
     private static final Logger logger = LoggerFactory.getLogger(DeepSeekClient.class);
     
     public DeepSeekClient(@Value("${deepseek.api.url}") String apiUrl,
                          @Value("${deepseek.api.key}") String apiKey,
+                         @Value("${deepseek.api.model}") String model,
                          AiProperties aiProperties) {
-        this.webClient = WebClient.builder()
-                .baseUrl(apiUrl)
-                .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
-                .build();
+        WebClient.Builder builder = WebClient.builder().baseUrl(apiUrl);
+        
+        // 只有当 API key 不为空时才添加 Authorization header
+        if (apiKey != null && !apiKey.trim().isEmpty()) {
+            builder.defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey);
+        }
+        
+        this.webClient = builder.build();
         this.apiKey = apiKey;
+        this.model = model;
         this.aiProperties = aiProperties;
     }
     
@@ -63,7 +70,7 @@ public class DeepSeekClient {
                    history != null ? history.size() : 0);
         
         Map<String, Object> request = new java.util.HashMap<>();
-        request.put("model", "deepseek-chat");
+        request.put("model", model);
         request.put("messages", buildMessages(userMessage, context, history));
         request.put("stream", true);
         // 生成参数

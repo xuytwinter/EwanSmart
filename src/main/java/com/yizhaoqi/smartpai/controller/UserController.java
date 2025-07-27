@@ -16,7 +16,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/users")
@@ -79,10 +78,14 @@ public class UserController {
             }
             
             String token = jwtUtils.generateToken(username);
+            String refreshToken = jwtUtils.generateRefreshToken(username);
             LogUtils.logUserOperation(username, "LOGIN", "token_generation", "SUCCESS");
             monitor.end("登录成功");
             
-            return ResponseEntity.ok(Map.of("code", 200, "message", "Login successful", "data", Map.of("token", token)));
+            return ResponseEntity.ok(Map.of("code", 200, "message", "Login successful", "data", Map.of(
+                "token", token,
+                "refreshToken", refreshToken
+            )));
         } catch (CustomException e) {
             LogUtils.logBusinessError("USER_LOGIN", request.username(), "登录失败: %s", e, e.getMessage());
             monitor.end("登录失败: " + e.getMessage());
@@ -247,6 +250,77 @@ public class UserController {
                 "code", 500, 
                 "message", "获取用户上传组织标签失败: " + e.getMessage()
             ));
+        }
+    }
+
+    // 用户登出接口
+    @PostMapping("/logout")
+    public ResponseEntity<?> logout(@RequestHeader("Authorization") String token) {
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("USER_LOGOUT");
+        String username = null;
+        try {
+            if (token == null || !token.startsWith("Bearer ")) {
+                LogUtils.logUserOperation("anonymous", "LOGOUT", "validation", "FAILED_INVALID_TOKEN");
+                monitor.end("登出失败：token格式无效");
+                return ResponseEntity.badRequest().body(Map.of("code", 400, "message", "Invalid token format"));
+            }
+
+            String jwtToken = token.replace("Bearer ", "");
+            username = jwtUtils.extractUsernameFromToken(jwtToken);
+            
+            if (username == null || username.isEmpty()) {
+                LogUtils.logUserOperation("anonymous", "LOGOUT", "token_extraction", "FAILED_NO_USERNAME");
+                monitor.end("登出失败：无法提取用户名");
+                return ResponseEntity.status(401).body(Map.of("code", 401, "message", "Invalid token"));
+            }
+
+            // 使当前token失效
+            jwtUtils.invalidateToken(jwtToken);
+            
+            LogUtils.logUserOperation(username, "LOGOUT", "token_invalidation", "SUCCESS");
+            monitor.end("登出成功");
+
+            return ResponseEntity.ok(Map.of("code", 200, "message", "Logout successful"));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("USER_LOGOUT", username, "登出异常: %s", e, e.getMessage());
+            monitor.end("登出异常: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "Internal server error"));
+        }
+    }
+
+    // 用户批量登出接口（登出所有设备）
+    @PostMapping("/logout-all")
+    public ResponseEntity<?> logoutAll(@RequestHeader("Authorization") String token) {
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("USER_LOGOUT_ALL");
+        String username = null;
+        try {
+            if (token == null || !token.startsWith("Bearer ")) {
+                LogUtils.logUserOperation("anonymous", "LOGOUT_ALL", "validation", "FAILED_INVALID_TOKEN");
+                monitor.end("批量登出失败：token格式无效");
+                return ResponseEntity.badRequest().body(Map.of("code", 400, "message", "Invalid token format"));
+            }
+
+            String jwtToken = token.replace("Bearer ", "");
+            username = jwtUtils.extractUsernameFromToken(jwtToken);
+            String userId = jwtUtils.extractUserIdFromToken(jwtToken);
+            
+            if (username == null || username.isEmpty() || userId == null) {
+                LogUtils.logUserOperation("anonymous", "LOGOUT_ALL", "token_extraction", "FAILED_NO_USER_INFO");
+                monitor.end("批量登出失败：无法提取用户信息");
+                return ResponseEntity.status(401).body(Map.of("code", 401, "message", "Invalid token"));
+            }
+
+            // 使用户所有token失效
+            jwtUtils.invalidateAllUserTokens(userId);
+            
+            LogUtils.logUserOperation(username, "LOGOUT_ALL", "all_tokens_invalidation", "SUCCESS");
+            monitor.end("批量登出成功");
+
+            return ResponseEntity.ok(Map.of("code", 200, "message", "Logout from all devices successful"));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("USER_LOGOUT_ALL", username, "批量登出异常: %s", e, e.getMessage());
+            monitor.end("批量登出异常: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "Internal server error"));
         }
     }
 }

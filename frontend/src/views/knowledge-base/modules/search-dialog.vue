@@ -62,7 +62,15 @@ watch(visible, () => {
     :mask-closable="false"
     class="w-1000px!"
   >
-    <NForm ref="formRef" :model="model" label-placement="left" :label-width="60" inline :show-feedback="false">
+    <NForm
+      ref="formRef"
+      :model="model"
+      label-placement="left"
+      :label-width="60"
+      inline
+      class="pb-2"
+      :show-feedback="false"
+    >
       <NGrid>
         <NFormItemGi label="topK" path="topK" class="pr-24px" span="6">
           <NInputNumber
@@ -99,9 +107,9 @@ watch(visible, () => {
       <NEmpty v-if="list.length === 0" description="暂无数据" class="py-100px" />
       <NScrollbar v-else class="max-h-500px">
         <NCard
-          v-for="item in list"
-          :key="item.fileMd5"
-          class="mt-8"
+          v-for="(item, index) in list"
+          :key="index"
+          class="my-8"
           embedded
           :segmented="{
             content: true,

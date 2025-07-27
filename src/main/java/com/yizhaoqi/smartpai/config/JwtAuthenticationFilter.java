@@ -10,7 +10,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -32,6 +31,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     /**
      * 每次请求都会调用此方法，用于解析 JWT Token 并设置用户认证信息。
+     * 实现无感知的token自动刷新机制。
      */
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
@@ -39,15 +39,44 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             // 从请求头中提取 JWT Token
             String token = extractToken(request);
-            if (token != null && jwtUtils.validateToken(token)) { // 验证 Token 是否有效
-                String username = jwtUtils.extractUsernameFromToken(token); // 从 Token 中提取用户名
-                UserDetails userDetails = userDetailsService.loadUserByUsername(username); // 加载用户详细信息
-
-                // 创建认证对象并设置到 Security 上下文中
-                UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                        userDetails, null, userDetails.getAuthorities());
-                authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(authentication);
+            if (token != null) {
+                String newToken = null;
+                String username = null;
+                
+                // 首先检查token是否有效
+                if (jwtUtils.validateToken(token)) {
+                    // Token有效，检查是否需要预刷新
+                    if (jwtUtils.shouldRefreshToken(token)) {
+                        newToken = jwtUtils.refreshToken(token);
+                        if (newToken != null) {
+                            logger.info("Token auto-refreshed proactively");
+                        }
+                    }
+                    username = jwtUtils.extractUsernameFromToken(token);
+                } else {
+                    // Token无效/过期，检查是否在宽限期内可以刷新
+                    if (jwtUtils.canRefreshExpiredToken(token)) {
+                        newToken = jwtUtils.refreshToken(token);
+                        if (newToken != null) {
+                            logger.info("Expired token refreshed within grace period");
+                            username = jwtUtils.extractUsernameFromToken(newToken);
+                        }
+                    }
+                }
+                
+                // 如果有新token，通过响应头返回给前端
+                if (newToken != null) {
+                    response.setHeader("New-Token", newToken);
+                }
+                
+                // 设置用户认证信息
+                if (username != null && !username.isEmpty()) {
+                    UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+                    UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
+                            userDetails, null, userDetails.getAuthorities());
+                    authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                }
             }
             filterChain.doFilter(request, response); // 继续执行过滤链
         } catch (Exception e) {

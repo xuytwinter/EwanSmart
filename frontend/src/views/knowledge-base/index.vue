@@ -17,8 +17,8 @@ function apiFn() {
 function renderIcon(fileName: string) {
   const ext = getFileExt(fileName);
   if (ext) {
-    if (uploadAccept.split(',').includes(ext)) return <SvgIcon localIcon={ext} class="mx-4 text-20" />;
-    return <SvgIcon localIcon="dflt" class="mx-4 text-20" />;
+    if (uploadAccept.split(',').includes(`.${ext}`)) return <SvgIcon localIcon={ext} class="mx-4 text-12" />;
+    return <SvgIcon localIcon="dflt" class="mx-4 text-12" />;
   }
   return null;
 }
@@ -49,7 +49,7 @@ const { columns, columnChecks, data, getData, loading } = useTable({
     {
       key: 'status',
       title: '上传状态',
-      width: 250,
+      width: 100,
       render: row => renderStatus(row.status, row.progress)
     },
     {
@@ -69,12 +69,6 @@ const { columns, columnChecks, data, getData, loading } = useTable({
       title: '上传时间',
       width: 100,
       render: row => dayjs(row.createdAt).format('YYYY-MM-DD')
-    },
-    {
-      key: 'mergedAt',
-      title: '完成时间',
-      width: 100,
-      render: row => dayjs(row.mergedAt).format('YYYY-MM-DD')
     },
     {
       key: 'operate',
