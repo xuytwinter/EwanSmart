@@ -303,7 +303,8 @@ public class ChatHandler {
             if (snippet.length() > MAX_SNIPPET_LEN) {
                 snippet = snippet.substring(0, MAX_SNIPPET_LEN) + "…";
             }
-            context.append(String.format("[%d] %s\n", i + 1, snippet));
+            String fileLabel = result.getFileName() != null ? result.getFileName() : "unknown";
+            context.append(String.format("[%d] (%s) %s\n", i + 1, fileLabel, snippet));
         }
         return context.toString();
     }
