@@ -63,6 +63,8 @@ public class FileProcessingConsumer {
             log.info("向量化完成，fileMd5: {}", task.getFileMd5());
         } catch (Exception e) {
             log.error("Error processing task: {}", task, e);
+            // 抛出异常让 Kafka 的 DefaultErrorHandler 捕获并触发重试 / 死信
+            throw new RuntimeException("Error processing task", e);
         } finally {
             // 确保关闭输入流
             if (fileStream != null) {

@@ -10,6 +10,11 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.core.*;
 import org.springframework.kafka.support.serializer.JsonDeserializer;
 import org.springframework.kafka.support.serializer.JsonSerializer;
+import org.apache.kafka.common.TopicPartition;
+import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
+import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
+import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.util.backoff.FixedBackOff;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -22,6 +27,9 @@ public class KafkaConfig {
 
     @Value("${spring.kafka.topic.file-processing}")
     private String fileProcessingTopic;
+
+    @Value("${spring.kafka.topic.dlt}")
+    private String fileProcessingDltTopic;
 
     @Value("${spring.kafka.consumer.group-id}")
     private String fileProcessingGroupId;
@@ -47,7 +55,15 @@ public class KafkaConfig {
         config.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
-        return new DefaultKafkaProducerFactory<>(config);
+        // 可靠投递配置
+        config.put(ProducerConfig.ACKS_CONFIG, "all"); // 全部 ISR 落盘才确认
+        config.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true); // 幂等生产者
+        config.put(ProducerConfig.RETRIES_CONFIG, 3); // 自动重试 3 次
+
+        DefaultKafkaProducerFactory<String, Object> factory = new DefaultKafkaProducerFactory<>(config);
+        // 设置事务前缀，启用事务能力
+        factory.setTransactionIdPrefix("file-upload-tx-");
+        return factory;
     }
 
     @Bean
@@ -64,5 +80,24 @@ public class KafkaConfig {
         config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
         config.put(JsonDeserializer.TRUSTED_PACKAGES, trustedPackages);
         return new DefaultKafkaConsumerFactory<>(config);
+    }
+
+    // 带自动重试和死信队列的监听器工厂
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, Object> kafkaListenerContainerFactory(
+            ConsumerFactory<String, Object> consumerFactory,
+            KafkaTemplate<String, Object> kafkaTemplate) {
+        // 当重试失败后，消息发送至 file-processing-dlt 主题，分区与原消息保持一致
+        DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
+                kafkaTemplate,
+                (record, ex) -> new TopicPartition(fileProcessingDltTopic, record.partition()));
+
+        // 固定退避策略：每 3 秒重试一次，最多重试 4 次（加首次共 5 次）
+        DefaultErrorHandler errorHandler = new DefaultErrorHandler(recoverer, new FixedBackOff(3000L, 4));
+
+        ConcurrentKafkaListenerContainerFactory<String, Object> factory = new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(consumerFactory);
+        factory.setCommonErrorHandler(errorHandler);
+        return factory;
     }
 }

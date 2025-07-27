@@ -28,6 +28,10 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+      enable-idempotence: true
+      transactional-id-prefix: file-upload-tx-
       properties:
         client.dns.lookup: use_all_dns_ips
     consumer:
@@ -40,6 +44,7 @@ spring:
         client.dns.lookup: use_all_dns_ips
     topic:
       file-processing: file-processing-topic1 # 新增的 Topic 配置
+      dlt: file-processing-dlt # 死信队列主题
   webflux:
     client:
       max-in-memory-size: 16MB  # 增加响应大小限制

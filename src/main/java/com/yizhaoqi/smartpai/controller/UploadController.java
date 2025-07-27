@@ -14,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -222,6 +223,7 @@ public class UploadController {
      * @param userId 当前用户ID
      * @return 返回包含合并后文件访问URL的响应
      */
+    @Transactional
     @PostMapping("/merge")
     public ResponseEntity<Map<String, Object>> mergeFile(
             @RequestBody MergeRequest request,
@@ -288,9 +290,12 @@ public class UploadController {
                     fileUpload.isPublic()
             );
             
-            LogUtils.logBusiness("MERGE_FILE", userId, "发送文件处理任务到Kafka: topic=%s, fileMd5=%s, fileName=%s", 
+            LogUtils.logBusiness("MERGE_FILE", userId, "发送文件处理任务到Kafka(事务): topic=%s, fileMd5=%s, fileName=%s", 
                     kafkaConfig.getFileProcessingTopic(), request.fileMd5(), request.fileName());
-            kafkaTemplate.send(kafkaConfig.getFileProcessingTopic(), task);
+            kafkaTemplate.executeInTransaction(kt -> {
+                kt.send(kafkaConfig.getFileProcessingTopic(), task);
+                return true;
+            });
             LogUtils.logBusiness("MERGE_FILE", userId, "文件处理任务已发送: fileMd5=%s, fileName=%s, fileType=%s", request.fileMd5(), request.fileName(), fileType);
 
             // 构建数据对象
