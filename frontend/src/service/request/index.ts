@@ -107,6 +107,13 @@ function getFlatRequest(options: Partial<RequestOption<App.Service.Response>> = 
 
         if (error.code === 'ERR_CANCELED') return;
 
+        // handle 403 Forbidden error - user needs to login
+        if (error.response?.status === 403) {
+          const authStore = useAuthStore();
+          authStore.resetStore();
+          return;
+        }
+
         let message = error.message;
         let backendErrorCode = '';
 

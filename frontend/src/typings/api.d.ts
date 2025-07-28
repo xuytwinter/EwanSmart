@@ -190,4 +190,12 @@ declare namespace Api {
       cmdToken: string;
     }
   }
+
+  namespace Document {
+    interface DownloadResponse {
+      fileName: string;
+      downloadUrl: string;
+      fileSize: number;
+    }
+  }
 }

@@ -7,10 +7,17 @@ import com.yizhaoqi.smartpai.repository.OrganizationTagRepository;
 import com.yizhaoqi.smartpai.service.DocumentService;
 import com.yizhaoqi.smartpai.utils.LogUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -181,6 +188,79 @@ public class DocumentController {
             Map<String, Object> response = new HashMap<>();
             response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
             response.put("message", "获取用户上传文件列表失败: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+    
+    /**
+     * 根据文件名下载文件
+     * 
+     * @param fileName 文件名
+     * @param userId 当前用户ID  
+     * @param orgTags 用户所属组织标签
+     * @return 文件资源或错误响应
+     */
+    @GetMapping("/download")
+    public ResponseEntity<?> downloadFileByName(
+            @RequestParam String fileName,
+            @RequestAttribute("userId") String userId,
+            @RequestAttribute("orgTags") String orgTags) {
+        
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("DOWNLOAD_FILE_BY_NAME");
+        try {
+            LogUtils.logBusiness("DOWNLOAD_FILE_BY_NAME", userId, "接收到文件下载请求: fileName=%s", fileName);
+            
+            // 查找用户可访问的文件
+            List<FileUpload> accessibleFiles = documentService.getAccessibleFiles(userId, orgTags);
+            
+            // 根据文件名查找匹配的文件
+            Optional<FileUpload> targetFile = accessibleFiles.stream()
+                    .filter(file -> file.getFileName().equals(fileName))
+                    .findFirst();
+                    
+            if (targetFile.isEmpty()) {
+                LogUtils.logUserOperation(userId, "DOWNLOAD_FILE_BY_NAME", fileName, "FAILED_NOT_FOUND");
+                monitor.end("下载失败：文件不存在或无权限访问");
+                Map<String, Object> response = new HashMap<>();
+                response.put("code", HttpStatus.NOT_FOUND.value());
+                response.put("message", "文件不存在或无权限访问");
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+            }
+            
+            FileUpload file = targetFile.get();
+            
+            // 生成下载链接或返回预签名URL
+            String downloadUrl = documentService.generateDownloadUrl(file.getFileMd5());
+            
+            if (downloadUrl == null) {
+                LogUtils.logUserOperation(userId, "DOWNLOAD_FILE_BY_NAME", fileName, "FAILED_GENERATE_URL");
+                monitor.end("下载失败：无法生成下载链接");
+                Map<String, Object> response = new HashMap<>();
+                response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
+                response.put("message", "无法生成下载链接");
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+            }
+            
+            LogUtils.logFileOperation(userId, "DOWNLOAD", file.getFileName(), file.getFileMd5(), "SUCCESS");
+            LogUtils.logUserOperation(userId, "DOWNLOAD_FILE_BY_NAME", fileName, "SUCCESS");
+            monitor.end("文件下载链接生成成功");
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 200);
+            response.put("message", "文件下载链接生成成功");
+            response.put("data", Map.of(
+                "fileName", file.getFileName(),
+                "downloadUrl", downloadUrl,
+                "fileSize", file.getTotalSize()
+            ));
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            LogUtils.logBusinessError("DOWNLOAD_FILE_BY_NAME", userId, "文件下载失败: fileName=%s", e, fileName);
+            monitor.end("下载失败: " + e.getMessage());
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
+            response.put("message", "文件下载失败: " + e.getMessage()); 
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
         }
     }

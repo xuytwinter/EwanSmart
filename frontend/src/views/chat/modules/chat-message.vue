@@ -13,10 +13,81 @@ function handleCopy(content: string) {
 }
 
 const chatStore = useChatStore();
+
+// 处理来源文件链接的函数
+function processSourceLinks(text: string): string {
+  // 匹配 (来源#数字: 文件名) 的正则表达式
+  const sourcePattern = /\(来源#(\d+):\s*([^)]+)\)/g;
+  
+  return text.replace(sourcePattern, (match, sourceNum, fileName) => {
+    // 为文件名创建可点击的链接
+    const linkClass = 'source-file-link';
+    const encodedFileName = encodeURIComponent(fileName.trim());
+    // 生成唯一的ID用于事件绑定
+    const linkId = `source-link-${Math.random().toString(36).substr(2, 9)}`;
+    
+    // 在下一个tick中绑定事件
+    nextTick(() => {
+      const linkElement = document.getElementById(linkId);
+      if (linkElement) {
+        linkElement.addEventListener('click', () => handleSourceFileClick(encodedFileName));
+      }
+    });
+    
+    return `(来源#${sourceNum}: <span id="${linkId}" class="${linkClass}" data-filename="${encodedFileName}">${fileName}</span>)`;
+  });
+}
+
 const content = computed(() => {
   chatStore.scrollToBottom?.();
-  return props.msg.content ?? '';
+  const rawContent = props.msg.content ?? '';
+  
+  // 只对助手消息处理来源链接
+  if (props.msg.role === 'assistant') {
+    return processSourceLinks(rawContent);
+  }
+  
+  return rawContent;
 });
+
+// 处理来源文件点击事件
+async function handleSourceFileClick(fileName: string) {
+  const decodedFileName = decodeURIComponent(fileName);
+  console.log('点击了来源文件:', decodedFileName);
+  
+  try {
+    window.$message?.loading(`正在获取文件下载链接: ${decodedFileName}`, {
+      duration: 0,
+      closable: false
+    });
+    
+    // 调用文件下载接口
+    const { error, data } = await request<Api.Document.DownloadResponse>({
+      url: 'documents/download',
+      params: { fileName: decodedFileName },
+      baseURL: 'proxy-api'
+    });
+    
+    window.$message?.destroyAll();
+    
+    if (error) {
+      window.$message?.error(`文件下载失败: ${error.response?.data?.message || '未知错误'}`);
+      return;
+    }
+    
+    if (data?.downloadUrl) {
+      // 在新窗口打开下载链接
+      window.open(data.downloadUrl, '_blank');
+      window.$message?.success(`文件下载链接已打开: ${decodedFileName}`);
+    } else {
+      window.$message?.error('未能获取到下载链接');
+    }
+  } catch (err) {
+    window.$message?.destroyAll();
+    console.error('文件下载失败:', err);
+    window.$message?.error(`文件下载失败: ${decodedFileName}`);
+  }
+}
 </script>
 
 <template>
@@ -58,4 +129,20 @@ const content = computed(() => {
   </div>
 </template>
 
-<style scoped lang="scss"></style>
+<style scoped lang="scss">
+:deep(.source-file-link) {
+  color: #1890ff;
+  cursor: pointer;
+  text-decoration: underline;
+  transition: color 0.2s;
+  
+  &:hover {
+    color: #40a9ff;
+    text-decoration: none;
+  }
+  
+  &:active {
+    color: #096dd9;
+  }
+}
+</style>
