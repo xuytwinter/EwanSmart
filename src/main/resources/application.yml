@@ -77,7 +77,7 @@ file:
 elasticsearch:
   host: localhost       # Elasticsearch主机地址
   port: 9200            # Elasticsearch端口号
-  scheme: https         # 协议（http/https）
+  scheme: http         # 协议（http/https）
   username: elastic     # 安装后生成的默认用户
   password: zVLf2sb05Pnuk8toM+ws
 
@@ -98,15 +98,16 @@ log4j:
 
 deepseek:
   api:
-    url: http://localhost:11434/v1  # 本地是 http://localhost:11434/v1 官方：https://api.deepseek.com/v1
-    model: deepseek-r1:7b  # 本地: deepseek-r1:7b, 官方: deepseek-chat
-    key:  # DeepSeek API Key 如果是本地就为空
+    url: https://api.deepseek.com/v1  # 本地是 http://localhost:11434/v1 官方：https://api.deepseek.com/v1
+    model: deepseek-chat  # 本地: deepseek-r1:7b, 官方: deepseek-chat
+    key:   # DeepSeek API Key 如果是本地就为空
 
 embedding:
   api:
-    url: https://ark.cn-beijing.volces.com/api/v3
-    key:    # 直接写入火山引擎的 API key
-    model: doubao-embedding-text-240515
+    url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    key:    # 填入通义千问API key
+    model: text-embedding-v4
+    dimension: 2048  # 指定向量维度
 
 ai:
   prompt:
