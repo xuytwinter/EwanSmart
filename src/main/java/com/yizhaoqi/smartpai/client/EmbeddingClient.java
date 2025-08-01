@@ -25,6 +25,9 @@ public class EmbeddingClient {
     
     @Value("${embedding.api.batch-size:100}")
     private int batchSize;
+
+    @Value("${embedding.api.dimension:2048}")
+    private int dimension;
     
     private static final Logger logger = LoggerFactory.getLogger(EmbeddingClient.class);
     private final WebClient webClient;
@@ -36,7 +39,7 @@ public class EmbeddingClient {
     }
 
     /**
-     * 调用 DeepSeek API 生成向量
+     * 调用通义千问 API 生成向量
      * @param texts 输入文本列表
      * @return 对应的向量列表
      */
@@ -64,7 +67,8 @@ public class EmbeddingClient {
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("model", modelId);
         requestBody.put("input", batch);
-        requestBody.put("encoding_format", "float");
+        requestBody.put("dimension", dimension);  // 直接在根级别设置dimension
+        requestBody.put("encoding_format", "float");  // 添加编码格式
 
         return webClient.post()
                 .uri("/embeddings")
@@ -78,10 +82,11 @@ public class EmbeddingClient {
 
     private List<float[]> parseVectors(String response) throws Exception {
         JsonNode jsonNode = objectMapper.readTree(response);
-        JsonNode data = jsonNode.get("data");
+        JsonNode data = jsonNode.get("data");  // 兼容模式下使用data字段
         if (data == null || !data.isArray()) {
             throw new RuntimeException("API 响应格式错误: data 字段不存在或不是数组");
         }
+        
         List<float[]> vectors = new ArrayList<>();
         for (JsonNode item : data) {
             JsonNode embedding = item.get("embedding");

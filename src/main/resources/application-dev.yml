@@ -94,11 +94,12 @@ log4j:
 deepseek:
   api:
     url: https://api.deepseek.com/v1
-    key: sk-cfd92d6071d246f9a4c8f941a735c271
+    key:
     # DeepSeek API Key
 
 embedding:
   api:
-    url: https://ark.cn-beijing.volces.com/api/v3
-    key: b22d5f8a-a3cf-4c95-bb74-e05c45211474  # 直接写入火山引擎的 API key
-    model: doubao-embedding-text-240515
+    url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    key:    # 填入通义千问API key
+    model: text-embedding-v4
+    dimension: 2048  # 指定向量维度
