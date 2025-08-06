@@ -108,6 +108,7 @@ declare namespace Api {
 
   namespace KnowledgeBase {
     interface SearchParams {
+      userId: string;
       query: string;
       topK: number;
     }

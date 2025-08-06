@@ -8,10 +8,12 @@ const visible = defineModel<boolean>('visible', { default: false });
 
 const { formRef, restoreValidation } = useNaiveForm();
 
+const store = useAuthStore();
 const model = ref<Api.KnowledgeBase.SearchParams>(createDefaultModel());
 
 function createDefaultModel(): Api.KnowledgeBase.SearchParams {
   return {
+    userId: `${store.userInfo.id}`,
     query: '',
     topK: 10
   };
