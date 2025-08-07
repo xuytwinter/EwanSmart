@@ -140,7 +140,7 @@ services:
       bash -c "
       if ! elasticsearch-plugin list | grep -q 'analysis-ik'; then
         echo 'Installing analysis-ik plugin...';
-        elasticsearch-plugin install --batch http://cdn-us-west-release.infinilabs.com/analysis-ik/stable/elasticsearch-analysis-ik-8.10.4.zip;
+        elasticsearch-plugin install --batch https://release.infinilabs.com/analysis-ik/stable/elasticsearch-analysis-ik-8.10.4.zip;
       else
         echo 'analysis-ik plugin already installed.';
       fi;
