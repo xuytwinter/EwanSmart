@@ -62,7 +62,7 @@ const { columns, columnChecks, data, getData, loading } = useTable({
       key: 'isPublic',
       title: '是否公开',
       width: 100,
-      render: row => (row.isPublic ? <NTag type="success">公开</NTag> : <NTag type="warning">私有</NTag>)
+      render: row => (row.public || row.isPublic ? <NTag type="success">公开</NTag> : <NTag type="warning">私有</NTag>)
     },
     {
       key: 'createdAt',
