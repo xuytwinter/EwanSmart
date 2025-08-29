@@ -6,6 +6,7 @@ import com.yizhaoqi.smartpai.repository.FileUploadRepository;
 import com.yizhaoqi.smartpai.repository.OrganizationTagRepository;
 import com.yizhaoqi.smartpai.service.DocumentService;
 import com.yizhaoqi.smartpai.utils.LogUtils;
+import com.yizhaoqi.smartpai.utils.JwtUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
@@ -39,6 +40,9 @@ public class DocumentController {
     
     @Autowired
     private OrganizationTagRepository organizationTagRepository;
+    
+    @Autowired
+    private JwtUtils jwtUtils;
 
     /**
      * 删除文档及其相关数据
@@ -196,21 +200,66 @@ public class DocumentController {
      * 根据文件名下载文件
      * 
      * @param fileName 文件名
-     * @param userId 当前用户ID  
-     * @param orgTags 用户所属组织标签
+     * @param token JWT token
      * @return 文件资源或错误响应
      */
     @GetMapping("/download")
     public ResponseEntity<?> downloadFileByName(
             @RequestParam String fileName,
-            @RequestAttribute("userId") String userId,
-            @RequestAttribute("orgTags") String orgTags) {
+            @RequestParam(required = false) String token) {
         
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("DOWNLOAD_FILE_BY_NAME");
         try {
-            LogUtils.logBusiness("DOWNLOAD_FILE_BY_NAME", userId, "接收到文件下载请求: fileName=%s", fileName);
+            // 验证token并获取用户信息
+            String userId = null;
+            String orgTags = null;
             
-            // 查找用户可访问的文件
+            if (token != null && !token.trim().isEmpty()) {
+                try {
+                    // 解析JWT token获取用户信息
+                    // 注意：JWT中的sub字段存储用户名，userId字段存储用户ID（但有时可能存储的是用户名）
+                    userId = jwtUtils.extractUsernameFromToken(token);
+                    orgTags = jwtUtils.extractOrgTagsFromToken(token);
+                } catch (Exception e) {
+                    LogUtils.logBusiness("DOWNLOAD_FILE_BY_NAME", "anonymous", "Token解析失败: fileName=%s", fileName);
+                }
+            }
+            
+            LogUtils.logBusiness("DOWNLOAD_FILE_BY_NAME", userId != null ? userId : "anonymous", "接收到文件下载请求: fileName=%s", fileName);
+            
+            // 如果没有提供token或token无效，只允许下载公开文件
+            if (userId == null) {
+                // 查找公开文件
+                Optional<FileUpload> publicFile = fileUploadRepository.findByFileNameAndIsPublicTrue(fileName);
+                if (publicFile.isEmpty()) {
+                    Map<String, Object> response = new HashMap<>();
+                    response.put("code", HttpStatus.NOT_FOUND.value());
+                    response.put("message", "文件不存在或需要登录访问");
+                    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+                }
+                
+                FileUpload file = publicFile.get();
+                String downloadUrl = documentService.generateDownloadUrl(file.getFileMd5());
+                
+                if (downloadUrl == null) {
+                    Map<String, Object> response = new HashMap<>();
+                    response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
+                    response.put("message", "无法生成下载链接");
+                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+                }
+                
+                Map<String, Object> response = new HashMap<>();
+                response.put("code", 200);
+                response.put("message", "文件下载链接生成成功");
+                response.put("data", Map.of(
+                    "fileName", file.getFileName(),
+                    "downloadUrl", downloadUrl,
+                    "fileSize", file.getTotalSize()
+                ));
+                return ResponseEntity.ok(response);
+            }
+            
+            // 有token的情况，查找用户可访问的文件
             List<FileUpload> accessibleFiles = documentService.getAccessibleFiles(userId, orgTags);
             
             // 根据文件名查找匹配的文件
@@ -256,6 +305,13 @@ public class DocumentController {
             return ResponseEntity.ok(response);
             
         } catch (Exception e) {
+            String userId = "unknown";
+            try {
+                if (token != null && !token.trim().isEmpty()) {
+                    userId = jwtUtils.extractUsernameFromToken(token);
+                }
+            } catch (Exception ignored) {}
+            
             LogUtils.logBusinessError("DOWNLOAD_FILE_BY_NAME", userId, "文件下载失败: fileName=%s", e, fileName);
             monitor.end("下载失败: " + e.getMessage());
             Map<String, Object> response = new HashMap<>();

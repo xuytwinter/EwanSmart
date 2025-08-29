@@ -122,7 +122,7 @@ public class DocumentService {
         
         try {
             // 获取用户有效的组织标签（包含层级关系）
-            User user = userRepository.findById(Long.parseLong(userId))
+            User user = userRepository.findByUsername(userId)
                 .orElseThrow(() -> new RuntimeException("用户不存在: " + userId));
             
             List<String> userEffectiveTags = orgTagCacheService.getUserEffectiveOrgTags(user.getUsername());
