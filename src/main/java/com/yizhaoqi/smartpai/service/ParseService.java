@@ -52,7 +52,7 @@ public class ParseService {
         // 使用 Apache Tika 提取文档内容
         String textContent = extractText(fileStream);
         // 将文本内容分割为固定大小的块
-        List<String> chunks = splitTextIntoChunksWithSemantics(textContent, chunkSize);
+        List<String> chunks = splitTextIntoChunks(textContent, chunkSize);
 
         // 保存每个文本块到数据库
         saveChunks(fileMd5, chunks, userId, orgTag, isPublic);
