@@ -16,6 +16,8 @@ import org.springframework.stereotype.Service;
 import java.io.*;
 import java.util.ArrayList;
 import java.util.List;
+import com.hankcs.hanlp.seg.common.Term;
+import com.hankcs.hanlp.tokenizer.StandardTokenizer;
 
 @Service
 public class ParseService {
@@ -33,6 +35,10 @@ public class ParseService {
     
     @Value("${file.parsing.max-memory-threshold:0.8}")
     private double maxMemoryThreshold;
+    
+    public ParseService() {
+        // 无需初始化，StandardTokenizer是静态方法
+    }
 
     /**
      * 解析文件并保存文本内容到数据库
@@ -52,7 +58,7 @@ public class ParseService {
         // 使用 Apache Tika 提取文档内容
         String textContent = extractText(fileStream);
         // 将文本内容分割为固定大小的块
-        List<String> chunks = splitTextIntoChunks(textContent, chunkSize);
+        List<String> chunks = splitTextIntoChunksWithSemantics(textContent, chunkSize);
 
         // 保存每个文本块到数据库
         saveChunks(fileMd5, chunks, userId, orgTag, isPublic);
@@ -273,30 +279,63 @@ public class ParseService {
     }
 
     /**
-     * 分割超长句子，按词边界
+     * 使用HanLP智能分割超长句子，中文按语义切割
      */
     private List<String> splitLongSentence(String sentence, int chunkSize) {
         List<String> chunks = new ArrayList<>();
-        String[] words = sentence.split("\\s+");
-
-        StringBuilder currentChunk = new StringBuilder();
-
-        for (String word : words) {
-            if (currentChunk.length() + word.length() + 1 > chunkSize) {
-                if (currentChunk.length() > 0) {
-                    chunks.add(currentChunk.toString().trim());
+        
+        try {
+            // 使用HanLP StandardTokenizer进行分词
+            List<Term> termList = StandardTokenizer.segment(sentence);
+            
+            StringBuilder currentChunk = new StringBuilder();
+            for (Term term : termList) {
+                String word = term.word;
+                
+                // 如果添加这个词会超过chunk大小限制，且当前chunk不为空
+                if (currentChunk.length() + word.length() > chunkSize && !currentChunk.isEmpty()) {
+                    chunks.add(currentChunk.toString());
                     currentChunk = new StringBuilder();
                 }
+                
+                currentChunk.append(word);
+            }
+            
+            if (!currentChunk.isEmpty()) {
+                chunks.add(currentChunk.toString());
+            }
+            
+            logger.debug("HanLP智能分词成功，原文长度: {}, 分词数: {}, 分块数: {}", 
+                    sentence.length(), termList.size(), chunks.size());
+                    
+        } catch (Exception e) {
+            logger.warn("HanLP分词异常: {}, 使用字符分割作为备用方案", e.getMessage());
+            chunks = splitByCharacters(sentence, chunkSize);
+        }
+        
+        return chunks;
+    }
+    
+    /**
+     * 备用方案：按字符分割
+     */
+    private List<String> splitByCharacters(String sentence, int chunkSize) {
+        List<String> chunks = new ArrayList<>();
+        StringBuilder currentChunk = new StringBuilder();
+
+        for (int i = 0; i < sentence.length(); i++) {
+            char c = sentence.charAt(i);
+
+            if (currentChunk.length() + 1 > chunkSize && !currentChunk.isEmpty()) {
+                chunks.add(currentChunk.toString());
+                currentChunk = new StringBuilder();
             }
 
-            if (currentChunk.length() > 0) {
-                currentChunk.append(" ");
-            }
-            currentChunk.append(word);
+            currentChunk.append(c);
         }
 
-        if (currentChunk.length() > 0) {
-            chunks.add(currentChunk.toString().trim());
+        if (!currentChunk.isEmpty()) {
+            chunks.add(currentChunk.toString());
         }
 
         return chunks;
