@@ -160,8 +160,19 @@ onMounted(async () => {
 
 /** 异步获取列表函数 该函数主要用于更新或初始化上传任务列表 它首先调用getData函数获取数据，然后根据获取到的数据状态更新任务列表 */
 async function getList() {
+  console.log('[知识库] 开始获取文件列表');
+
   // 等待获取最新数据
   await getData();
+
+  console.log('[知识库] 获取到原始数据，数量:', data.value.length);
+  data.value.forEach((item, index) => {
+    console.log(`[知识库] 原始数据[${index}]:`, {
+      fileName: item.fileName,
+      fileMd5: item.fileMd5,
+      status: item.status
+    });
+  });
 
   if (data.value.length === 0) {
     tasks.value = [];
@@ -169,7 +180,7 @@ async function getList() {
   }
 
   // 遍历获取到的数据，以处理每个项目
-  data.value.forEach(item => {
+  data.value.forEach((item, dataIndex) => {
     // 检查项目状态是否为已完成
     if (item.status === UploadStatus.Completed) {
       // 查找任务列表中是否有匹配的文件MD5
@@ -177,15 +188,36 @@ async function getList() {
       // 如果找到匹配项，则更新其状态
       if (index !== -1) {
         tasks.value[index].status = UploadStatus.Completed;
+        console.log(`[知识库] 更新现有任务[${index}]:`, {
+          fileName: item.fileName,
+          fileMd5: item.fileMd5
+        });
       } else {
         // 如果没有找到匹配项，则将该项目添加到任务列表中
         tasks.value.push(item);
+        console.log(`[知识库] 添加新任务[${tasks.value.length - 1}]:`, {
+          fileName: item.fileName,
+          fileMd5: item.fileMd5
+        });
       }
     } else if (!tasks.value.some(task => task.fileMd5 === item.fileMd5)) {
       // 如果项目状态不是已完成，并且任务列表中没有相同的文件MD5，则将该项目的状态设置为中断，并添加到任务列表中
       item.status = UploadStatus.Break;
       tasks.value.push(item);
+      console.log(`[知识库] 添加中断任务[${tasks.value.length - 1}]:`, {
+        fileName: item.fileName,
+        fileMd5: item.fileMd5
+      });
     }
+  });
+
+  console.log('[知识库] 任务列表处理完成，总数:', tasks.value.length);
+  tasks.value.forEach((task, index) => {
+    console.log(`[知识库] 最终任务[${index}]:`, {
+      fileName: task.fileName,
+      fileMd5: task.fileMd5,
+      status: task.status
+    });
   });
 }
 

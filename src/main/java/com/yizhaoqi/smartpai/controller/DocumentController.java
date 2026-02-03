@@ -159,7 +159,16 @@ public class DocumentController {
             LogUtils.logBusiness("GET_USER_UPLOADED_FILES", userId, "接收到获取用户上传文件请求");
             
             List<FileUpload> files = documentService.getUserUploadedFiles(userId);
-            
+
+            // 添加详细日志：追踪每个文件的MD5
+            LogUtils.logBusiness("GET_USER_UPLOADED_FILES", userId, "开始处理文件列表，总数: %d", files.size());
+            for (int i = 0; i < files.size(); i++) {
+                FileUpload file = files.get(i);
+                LogUtils.logBusiness("GET_USER_UPLOADED_FILES", userId,
+                    "文件[%d]: fileName=%s, fileMd5=%s, totalSize=%d",
+                    i, file.getFileName(), file.getFileMd5(), file.getTotalSize());
+            }
+
             // 将FileUpload转换为包含tagName的DTO
             List<Map<String, Object>> fileData = files.stream().map(file -> {
                 Map<String, Object> dto = new HashMap<>();
