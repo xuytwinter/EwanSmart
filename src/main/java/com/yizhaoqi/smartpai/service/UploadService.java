@@ -576,7 +576,8 @@ public class UploadService {
             }
             logger.info("分片检查完成，所有分片都存在 => fileMd5: {}, fileName: {}, fileType: {}", fileMd5, fileName, fileType);
             
-            String mergedPath = "merged/" + fileName;
+            // 使用 MD5 作为 MinIO 对象路径，确保同名不同内容的文件不会互相覆盖
+            String mergedPath = "merged/" + fileMd5;
             logger.info("开始合并分片 => fileMd5: {}, fileName: {}, fileType: {}, 合并后路径: {}", fileMd5, fileName, fileType, mergedPath);
             
             try {

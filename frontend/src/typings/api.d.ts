@@ -198,6 +198,12 @@ declare namespace Api {
       fileName: string;
       downloadUrl: string;
       fileSize: number;
+      fileMd5?: string;
+    }
+
+    interface ReferenceMd5Response {
+      fileMd5: string;
+      referenceNumber: number;
     }
   }
 }

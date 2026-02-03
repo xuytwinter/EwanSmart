@@ -13,9 +13,11 @@ import java.util.Set;
 @Repository
 public interface FileUploadRepository extends JpaRepository<FileUpload, Long> {
     Optional<FileUpload> findByFileMd5(String fileMd5);
-    
+
     Optional<FileUpload> findByFileMd5AndUserId(String fileMd5, String userId);
-    
+
+    Optional<FileUpload> findByFileMd5AndIsPublicTrue(String fileMd5);
+
     Optional<FileUpload> findByFileNameAndIsPublicTrue(String fileName);
     
     long countByFileMd5(String fileMd5);

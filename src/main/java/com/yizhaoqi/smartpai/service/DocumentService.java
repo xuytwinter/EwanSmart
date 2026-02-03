@@ -78,9 +78,9 @@ public class DocumentService {
                 // 继续删除其他数据
             }
             
-            // 2. 删除MinIO中的文件
+            // 2. 删除MinIO中的文件（使用MD5作为对象路径）
             try {
-                String objectName = "merged/" + fileUpload.getFileName();
+                String objectName = "merged/" + fileUpload.getFileMd5();
                 minioClient.removeObject(
                         RemoveObjectArgs.builder()
                                 .bucket("uploads")
@@ -89,8 +89,21 @@ public class DocumentService {
                 );
                 logger.info("成功从MinIO删除文件: {}", objectName);
             } catch (Exception e) {
-                logger.error("从MinIO删除文件时出错: {}", fileMd5, e);
-                // 继续删除其他数据
+                logger.warn("使用MD5路径删除文件失败，尝试使用文件名路径: {}", fileMd5);
+                // 降级：尝试使用旧的文件名路径（兼容旧数据）
+                try {
+                    String oldObjectName = "merged/" + fileUpload.getFileName();
+                    minioClient.removeObject(
+                            RemoveObjectArgs.builder()
+                                    .bucket("uploads")
+                                    .object(oldObjectName)
+                                    .build()
+                    );
+                    logger.info("使用旧路径成功从MinIO删除文件: {}", oldObjectName);
+                } catch (Exception ex) {
+                    logger.error("从MinIO删除文件时出错（新旧路径都失败）: {}", fileMd5, ex);
+                    // 继续删除其他数据
+                }
             }
             
             // 3. 删除DocumentVector记录
@@ -179,28 +192,44 @@ public class DocumentService {
      */
     public String generateDownloadUrl(String fileMd5) {
         logger.info("生成文件下载链接: fileMd5={}", fileMd5);
-        
+
         try {
             // 从数据库获取文件信息
             FileUpload fileUpload = fileUploadRepository.findByFileMd5(fileMd5)
                     .orElseThrow(() -> new RuntimeException("文件不存在: " + fileMd5));
-            
-            // MinIO中的对象路径格式: merged/文件名
-            String objectName = "merged/" + fileUpload.getFileName();
-            
-            // 生成预签名URL，有效期1小时
-            String presignedUrl = minioClient.getPresignedObjectUrl(
-                    GetPresignedObjectUrlArgs.builder()
-                            .method(Method.GET)
-                            .bucket("uploads")
-                            .object(objectName)
-                            .expiry(3600) // 1小时有效期
-                            .build()
-            );
-            
-            logger.info("成功生成文件下载链接: fileMd5={}, fileName={}, objectName={}", 
-                    fileMd5, fileUpload.getFileName(), objectName);
-            return presignedUrl;
+
+            // 优先使用新的MD5路径
+            String objectName = "merged/" + fileMd5;
+
+            try {
+                // 尝试使用新路径（MD5）
+                String presignedUrl = minioClient.getPresignedObjectUrl(
+                        GetPresignedObjectUrlArgs.builder()
+                                .method(Method.GET)
+                                .bucket("uploads")
+                                .object(objectName)
+                                .expiry(3600)
+                                .build()
+                );
+                logger.info("成功生成文件下载链接（新路径）: fileMd5={}, fileName={}, objectName={}",
+                        fileMd5, fileUpload.getFileName(), objectName);
+                return presignedUrl;
+            } catch (Exception e) {
+                logger.warn("使用新路径生成下载链接失败，尝试使用旧路径（文件名）: fileMd5={}", fileMd5);
+                // 降级：尝试使用旧的文件名路径（兼容旧数据）
+                String oldObjectName = "merged/" + fileUpload.getFileName();
+                String presignedUrl = minioClient.getPresignedObjectUrl(
+                        GetPresignedObjectUrlArgs.builder()
+                                .method(Method.GET)
+                                .bucket("uploads")
+                                .object(oldObjectName)
+                                .expiry(3600)
+                                .build()
+                );
+                logger.info("成功生成文件下载链接（旧路径）: fileMd5={}, fileName={}, objectName={}",
+                        fileMd5, fileUpload.getFileName(), oldObjectName);
+                return presignedUrl;
+            }
         } catch (Exception e) {
             logger.error("生成文件下载链接失败: fileMd5={}", fileMd5, e);
             return null;
@@ -216,47 +245,66 @@ public class DocumentService {
      */
     public String getFilePreviewContent(String fileMd5, String fileName) {
         logger.info("获取文件预览内容: fileMd5={}, fileName={}", fileMd5, fileName);
-        
+
         try {
-            // MinIO中的对象路径格式: merged/文件名
-            String objectName = "merged/" + fileName;
-            
-            // 判断文件类型
-            String fileExtension = getFileExtension(fileName).toLowerCase();
-            boolean isTextFile = isTextFile(fileExtension);
-            
-            if (isTextFile) {
-                // 对于文本文件，读取前10KB内容
-                try (InputStream inputStream = minioClient.getObject(
+            // 从数据库获取文件信息
+            FileUpload fileUpload = fileUploadRepository.findByFileMd5(fileMd5)
+                    .orElseThrow(() -> new RuntimeException("文件不存在: " + fileMd5));
+
+            // 优先使用新的MD5路径
+            String objectName = "merged/" + fileMd5;
+            InputStream inputStream = null;
+            boolean usedNewPath = false;
+
+            try {
+                // 尝试使用新路径（MD5）
+                inputStream = minioClient.getObject(
                         GetObjectArgs.builder()
                                 .bucket("uploads")
                                 .object(objectName)
-                                .build())) {
-                    
-                    BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, "UTF-8"));
+                                .build());
+                usedNewPath = true;
+                logger.info("使用新路径（MD5）获取文件流: fileMd5={}, objectName={}", fileMd5, objectName);
+            } catch (Exception e) {
+                logger.warn("使用新路径获取文件失败，尝试使用旧路径（文件名）: fileMd5={}, error={}", fileMd5, e.getMessage());
+                // 降级：尝试使用旧的文件名路径（兼容旧数据）
+                String oldObjectName = "merged/" + fileUpload.getFileName();
+                inputStream = minioClient.getObject(
+                        GetObjectArgs.builder()
+                                .bucket("uploads")
+                                .object(oldObjectName)
+                                .build());
+                logger.info("使用旧路径（文件名）获取文件流: fileMd5={}, objectName={}", fileMd5, oldObjectName);
+            }
+
+            // 判断文件类型
+            String fileExtension = getFileExtension(fileName).toLowerCase();
+            boolean isTextFile = isTextFile(fileExtension);
+
+            if (isTextFile) {
+                // 对于文本文件，读取前10KB内容
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, "UTF-8"))) {
                     StringBuilder content = new StringBuilder();
                     String line;
                     int bytesRead = 0;
                     int maxBytes = 10240; // 10KB
-                    
+
                     while ((line = reader.readLine()) != null && bytesRead < maxBytes) {
                         content.append(line).append("\n");
                         bytesRead += line.getBytes("UTF-8").length + 1;
                     }
-                    
+
                     String result = content.toString();
                     if (bytesRead >= maxBytes) {
                         result += "\n... (内容已截断，仅显示前10KB)";
                     }
-                    
-                    logger.info("成功获取文本文件预览内容: fileMd5={}, contentLength={}", fileMd5, result.length());
+
+                    logger.info("成功获取文本文件预览内容: fileMd5={}, 使用MD5路径={}, contentLength={}, 内容前50字符={}",
+                        fileMd5, usedNewPath, result.length(), result.substring(0, Math.min(50, result.length())));
                     return result;
                 }
             } else {
                 // 对于非文本文件，返回文件信息
-                FileUpload fileUpload = fileUploadRepository.findByFileMd5(fileMd5)
-                        .orElseThrow(() -> new RuntimeException("文件不存在: " + fileMd5));
-                
                 String fileInfo = String.format(
                     "文件名: %s\n" +
                     "文件大小: %s\n" +
@@ -268,11 +316,11 @@ public class DocumentService {
                     fileExtension.toUpperCase(),
                     fileUpload.getCreatedAt()
                 );
-                
+
                 logger.info("返回非文本文件信息: fileMd5={}", fileMd5);
                 return fileInfo;
             }
-            
+
         } catch (Exception e) {
             logger.error("获取文件预览内容失败: fileMd5={}, fileName={}", fileMd5, fileName, e);
             return "预览失败: " + e.getMessage();

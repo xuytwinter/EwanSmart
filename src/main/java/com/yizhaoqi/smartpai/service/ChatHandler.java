@@ -42,6 +42,8 @@ public class ChatHandler {
     private final Map<String, CompletableFuture<String>> responseFutures = new ConcurrentHashMap<>();
     // 停止标志 - 简单方案
     private final Map<String, Boolean> stopFlags = new ConcurrentHashMap<>();
+    // 用于存储每个会话的引用映射：sessionId -> {referenceNumber -> fileMd5}
+    private final Map<String, Map<Integer, String>> sessionReferenceMappings = new ConcurrentHashMap<>();
 
     public ChatHandler(RedisTemplate<String, String> redisTemplate,
                       HybridSearchService searchService,
@@ -74,7 +76,7 @@ public class ChatHandler {
             logger.debug("搜索结果数量: {}", searchResults.size());
             
             // 4. 构建上下文
-            String context = buildContext(searchResults);
+            String context = buildContext(searchResults, session.getId());
             
             // 5. 调用 DeepSeek API 并处理流式响应
             logger.info("调用DeepSeek API生成回复");
@@ -289,11 +291,14 @@ public class ChatHandler {
         }
     }
 
-    private String buildContext(List<SearchResult> searchResults) {
+    private String buildContext(List<SearchResult> searchResults, String sessionId) {
         if (searchResults == null || searchResults.isEmpty()) {
             // 返回空字符串，让 DeepSeekClient 按"无检索结果"逻辑处理
             return "";
         }
+
+        // 创建当前会话的引用映射
+        Map<Integer, String> referenceMapping = new HashMap<>();
 
         final int MAX_SNIPPET_LEN = 300; // 单段最长字符数，超出截断
         StringBuilder context = new StringBuilder();
@@ -304,8 +309,25 @@ public class ChatHandler {
                 snippet = snippet.substring(0, MAX_SNIPPET_LEN) + "…";
             }
             String fileLabel = result.getFileName() != null ? result.getFileName() : "unknown";
-            context.append(String.format("[%d] (%s) %s\n", i + 1, fileLabel, snippet));
+            String fileMd5 = result.getFileMd5();
+
+            // 格式：[1] (test1.txt | MD5:abc123def456) 文件内容...
+            // 这样AI和用户都能通过MD5区分同名文件
+            context.append(String.format("[%d] (%s | MD5:%s) %s\n", i + 1, fileLabel, fileMd5, snippet));
+
+            // 保存引用编号到MD5的映射
+            if (fileMd5 != null) {
+                referenceMapping.put(i + 1, fileMd5);
+                // 详细日志：记录每个引用编号的映射关系
+                logger.info("引用映射: sessionId={}, 引用编号#{}={}, 文件名={}, MD5={}",
+                    sessionId, i + 1, fileLabel, fileMd5);
+            }
         }
+
+        // 保存当前会话的引用映射
+        sessionReferenceMappings.put(sessionId, referenceMapping);
+        logger.info("保存会话 {} 的引用映射，共 {} 条: {}", sessionId, referenceMapping.size(), referenceMapping);
+
         return context.toString();
     }
 
@@ -360,20 +382,20 @@ public class ChatHandler {
     }
 
     /**
-     * 停止响应 
+     * 停止响应
      */
     public void stopResponse(String userId, WebSocketSession session) {
         String sessionId = session.getId();
         logger.info("收到停止请求，用户ID: {}, 会话ID: {}", userId, sessionId);
-        
+
         // 设置停止标志
         stopFlags.put(sessionId, true);
-        
+
         // 发送停止确认
         try {
             long currentTime = System.currentTimeMillis();
             Map<String, Object> response = Map.of(
-                "type", "stop", 
+                "type", "stop",
                 "message", "响应已停止",
                 "timestamp", currentTime,
                 "date", java.time.Instant.ofEpochMilli(currentTime).toString()
@@ -385,7 +407,7 @@ public class ChatHandler {
         } catch (Exception e) {
             logger.error("发送停止确认失败: {}", e.getMessage(), e);
         }
-        
+
         // 清理停止标志（延迟清理，避免影响当前响应）
         new Thread(() -> {
             try {
@@ -396,5 +418,45 @@ public class ChatHandler {
                 Thread.currentThread().interrupt();
             }
         }).start();
+    }
+
+    /**
+     * 根据会话ID和引用编号获取文件MD5
+     *
+     * @param sessionId WebSocket会话ID
+     * @param referenceNumber 引用编号
+     * @return 文件MD5，如果找不到则返回null
+     */
+    public String getReferenceMd5(String sessionId, int referenceNumber) {
+        logger.info("查询引用MD5: sessionId={}, referenceNumber=#{}", sessionId, referenceNumber);
+
+        Map<Integer, String> referenceMapping = sessionReferenceMappings.get(sessionId);
+        if (referenceMapping == null) {
+            logger.error("未找到会话 {} 的引用映射，当前所有会话: {}", sessionId, sessionReferenceMappings.keySet());
+            return null;
+        }
+
+        logger.info("会话 {} 的引用映射内容: {}", sessionId, referenceMapping);
+
+        String fileMd5 = referenceMapping.get(referenceNumber);
+        if (fileMd5 == null) {
+            logger.error("会话 {} 中未找到引用编号 #{}, 可用的引用编号: {}", sessionId, referenceNumber, referenceMapping.keySet());
+            return null;
+        }
+
+        logger.info("成功找到引用映射: sessionId={}, referenceNumber=#{}, fileMd5={}", sessionId, referenceNumber, fileMd5);
+        return fileMd5;
+    }
+
+    /**
+     * 清理会话的引用映射
+     *
+     * @param sessionId WebSocket会话ID
+     */
+    public void clearSessionReferenceMapping(String sessionId) {
+        Map<Integer, String> removed = sessionReferenceMappings.remove(sessionId);
+        if (removed != null) {
+            logger.info("清理会话 {} 的引用映射，共 {} 条", sessionId, removed.size());
+        }
     }
 }

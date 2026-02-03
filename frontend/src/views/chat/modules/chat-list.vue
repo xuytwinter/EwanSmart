@@ -8,7 +8,7 @@ defineOptions({
 });
 
 const chatStore = useChatStore();
-const { list } = storeToRefs(chatStore);
+const { list, sessionId } = storeToRefs(chatStore);
 
 const loading = ref(false);
 const scrollbarRef = ref<InstanceType<typeof NScrollbar>>();
@@ -68,7 +68,7 @@ onMounted(() => {
       </Teleport>
       <NSpin :show="loading">
         <VueMarkdownItProvider>
-          <ChatMessage v-for="(item, index) in list" :key="index" :msg="item" />
+          <ChatMessage v-for="(item, index) in list" :key="index" :msg="item" :session-id="sessionId" />
         </VueMarkdownItProvider>
       </NSpin>
     </NScrollbar>

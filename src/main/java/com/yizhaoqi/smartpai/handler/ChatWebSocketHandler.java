@@ -34,8 +34,22 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession session) {
         String userId = extractUserId(session);
         sessions.put(userId, session);
-        logger.info("WebSocket连接已建立，用户ID: {}，会话ID: {}，URI路径: {}", 
+        logger.info("WebSocket连接已建立，用户ID: {}，会话ID: {}，URI路径: {}",
                     userId, session.getId(), session.getUri().getPath());
+
+        // 发送会话ID到前端
+        try {
+            Map<String, String> connectionMessage = Map.of(
+                "type", "connection",
+                "sessionId", session.getId(),
+                "message", "WebSocket连接已建立"
+            );
+            String jsonMessage = objectMapper.writeValueAsString(connectionMessage);
+            session.sendMessage(new TextMessage(jsonMessage));
+            logger.info("已发送会话ID到前端: sessionId={}", session.getId());
+        } catch (Exception e) {
+            logger.error("发送会话ID失败: {}", e.getMessage(), e);
+        }
     }
 
     @Override
@@ -83,8 +97,11 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         String userId = extractUserId(session);
         sessions.remove(userId);
-        logger.info("WebSocket连接已关闭，用户ID: {}，会话ID: {}，状态: {}", 
+        logger.info("WebSocket连接已关闭，用户ID: {}，会话ID: {}，状态: {}",
                     userId, session.getId(), status);
+
+        // 清理会话的引用映射
+        chatHandler.clearSessionReferenceMapping(session.getId());
     }
 
     private String extractUserId(WebSocketSession session) {

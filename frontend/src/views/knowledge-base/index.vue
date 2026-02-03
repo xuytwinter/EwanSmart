@@ -14,6 +14,7 @@ const appStore = useAppStore();
 // 文件预览相关状态
 const previewVisible = ref(false);
 const previewFileName = ref('');
+const previewFileMd5 = ref('');
 
 function apiFn() {
   return fakePaginationRequest<Api.KnowledgeBase.List>({ url: '/documents/uploads' });
@@ -29,15 +30,24 @@ function renderIcon(fileName: string) {
 }
 
 // 处理文件预览
-function handleFilePreview(fileName: string) {
+function handleFilePreview(fileName: string, fileMd5: string) {
+  console.log('[知识库] 点击预览按钮:', {
+    fileName,
+    fileMd5,
+    '完整信息': { fileName, fileMd5 }
+  });
+
   previewFileName.value = fileName;
+  previewFileMd5.value = fileMd5;
   previewVisible.value = true;
 }
 
 // 关闭文件预览
 function closeFilePreview() {
+  console.log('[知识库] 关闭文件预览');
   previewVisible.value = false;
   previewFileName.value = '';
+  previewFileMd5.value = '';
 }
 
 const { columns, columnChecks, data, getData, loading } = useTable({
@@ -47,19 +57,38 @@ const { columns, columnChecks, data, getData, loading } = useTable({
     {
       key: 'fileName',
       title: '文件名',
-      minWidth: 400,
+      minWidth: 300,
       render: row => (
         <div class="flex items-center">
           {renderIcon(row.fileName)}
           <NEllipsis lineClamp={2} tooltip>
             <span
               class="cursor-pointer hover:text-primary transition-colors"
-              onClick={() => handleFilePreview(row.fileName)}
+              onClick={() => handleFilePreview(row.fileName, row.fileMd5)}
             >
               {row.fileName}
             </span>
           </NEllipsis>
         </div>
+      )
+    },
+    {
+      key: 'fileMd5',
+      title: 'MD5',
+      width: 120,
+      render: row => (
+        <NEllipsis tooltip>
+          <span
+            class="cursor-pointer hover:text-primary transition-colors font-mono text-3"
+            onClick={() => {
+              navigator.clipboard.writeText(row.fileMd5);
+              window.$message?.success('MD5已复制');
+            }}
+            title="点击复制MD5"
+          >
+            {row.fileMd5.substring(0, 8)}...
+          </span>
+        </NEllipsis>
       )
     },
     {
@@ -103,7 +132,7 @@ const { columns, columnChecks, data, getData, loading } = useTable({
             type="primary"
             ghost
             size="small"
-            onClick={() => handleFilePreview(row.fileName)}
+            onClick={() => handleFilePreview(row.fileName, row.fileMd5)}
           >
             预览
           </NButton>
@@ -300,6 +329,7 @@ async function onBeforeUpload(
     <NModal v-model:show="previewVisible" preset="card" title="文件预览" style="width: 80%; max-width: 1000px;">
       <FilePreview
         :file-name="previewFileName"
+        :file-md5="previewFileMd5"
         :visible="previewVisible"
         @close="closeFilePreview"
       />

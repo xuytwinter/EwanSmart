@@ -52,6 +52,7 @@ import { getFileExt } from '@/utils/common';
 
 interface Props {
   fileName: string;
+  fileMd5?: string;
   visible: boolean;
 }
 
@@ -94,29 +95,86 @@ watch(() => props.visible, async (visible) => {
 // 加载预览内容
 async function loadPreviewContent() {
   if (!props.fileName) return;
-  
+
+  console.log('[文件预览] 开始加载预览内容:', {
+    fileName: props.fileName,
+    fileMd5: props.fileMd5,
+    visible: props.visible
+  });
+
   loading.value = true;
   error.value = '';
   content.value = '';
-  
+
   try {
     const token = localStorage.getItem('token');
-    const { error: requestError, data } = await request<{
-      fileName: string;
-      content: string;
-      fileSize: number;
-    }>({
-      url: '/documents/preview',
-      params: {
+
+    // 优先使用 MD5 预览（如果存在）
+    if (props.fileMd5) {
+      console.log('[文件预览] 使用MD5模式预览，请求参数:', {
         fileName: props.fileName,
-        token: token || undefined
+        fileMd5: props.fileMd5,
+        hasToken: !!token
+      });
+
+      const { error: requestError, data } = await request<{
+        fileName: string;
+        content: string;
+        fileSize: number;
+      }>({
+        url: '/documents/preview',
+        params: {
+          fileName: props.fileName,
+          fileMd5: props.fileMd5,
+          token: token || undefined
+        }
+      });
+
+      console.log('[文件预览] MD5模式API响应:', {
+        hasError: !!requestError,
+        error: requestError,
+        hasData: !!data,
+        contentLength: data?.content?.length || 0,
+        contentPreview: data?.content?.substring(0, 100) || ''
+      });
+
+      if (requestError) {
+        error.value = '预览失败：' + (requestError.message || '未知错误');
+      } else if (data) {
+        content.value = data.content;
       }
-    });
-    
-    if (requestError) {
-      error.value = '预览失败：' + (requestError.message || '未知错误');
-    } else if (data) {
-      content.value = data.content;
+    } else {
+      // 降级：使用文件名预览（向后兼容）
+      console.log('[文件预览] 使用文件名模式预览（降级）, 请求参数:', {
+        fileName: props.fileName,
+        hasToken: !!token
+      });
+
+      const { error: requestError, data } = await request<{
+        fileName: string;
+        content: string;
+        fileSize: number;
+      }>({
+        url: '/documents/preview',
+        params: {
+          fileName: props.fileName,
+          token: token || undefined
+        }
+      });
+
+      console.log('[文件预览] 文件名模式API响应:', {
+        hasError: !!requestError,
+        error: requestError,
+        hasData: !!data,
+        contentLength: data?.content?.length || 0,
+        contentPreview: data?.content?.substring(0, 100) || ''
+      });
+
+      if (requestError) {
+        error.value = '预览失败：' + (requestError.message || '未知错误');
+      } else if (data) {
+        content.value = data.content;
+      }
     }
   } catch (err: any) {
     error.value = '预览失败：' + (err.message || '网络错误');
@@ -128,34 +186,65 @@ async function loadPreviewContent() {
 // 下载文件
 async function downloadFile() {
   if (!props.fileName) return;
-  
+
   downloading.value = true;
-  
+
   try {
     const token = localStorage.getItem('token');
-    const { error: requestError, data } = await request<{
-      fileName: string;
-      downloadUrl: string;
-      fileSize: number;
-    }>({
-      url: '/documents/download',
-      params: {
-        fileName: props.fileName,
-        token: token || undefined
+
+    // 优先使用 MD5 下载（如果存在）
+    if (props.fileMd5) {
+      const { error: requestError, data } = await request<{
+        fileName: string;
+        downloadUrl: string;
+        fileSize: number;
+        fileMd5?: string;
+      }>({
+        url: '/documents/download-by-md5',
+        params: {
+          fileMd5: props.fileMd5,
+          token: token || undefined
+        }
+      });
+
+      if (requestError) {
+        window.$message?.error('下载失败：' + (requestError.message || '未知错误'));
+      } else if (data) {
+        // 使用预签名URL下载文件
+        const link = document.createElement('a');
+        link.href = data.downloadUrl;
+        link.download = data.fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.$message?.success('开始下载文件');
       }
-    });
-    
-    if (requestError) {
-      window.$message?.error('下载失败：' + (requestError.message || '未知错误'));
-    } else if (data) {
-      // 使用预签名URL下载文件
-      const link = document.createElement('a');
-      link.href = data.downloadUrl;
-      link.download = data.fileName;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.$message?.success('开始下载文件');
+    } else {
+      // 降级：使用文件名下载（向后兼容）
+      const { error: requestError, data } = await request<{
+        fileName: string;
+        downloadUrl: string;
+        fileSize: number;
+      }>({
+        url: '/documents/download',
+        params: {
+          fileName: props.fileName,
+          token: token || undefined
+        }
+      });
+
+      if (requestError) {
+        window.$message?.error('下载失败：' + (requestError.message || '未知错误'));
+      } else if (data) {
+        // 使用预签名URL下载文件
+        const link = document.createElement('a');
+        link.href = data.downloadUrl;
+        link.download = data.fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.$message?.success('开始下载文件');
+      }
     }
   } catch (err: any) {
     window.$message?.error('下载失败：' + (err.message || '网络错误'));
