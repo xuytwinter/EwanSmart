@@ -4,6 +4,7 @@ import co.elastic.clients.transport.endpoints.BooleanResponse;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch.indices.CreateIndexRequest;
@@ -17,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.io.StringReader;
 
 @Component
+@ConditionalOnProperty(name = "elasticsearch.init.enabled", havingValue = "true", matchIfMissing = true)
 public class EsIndexInitializer implements CommandLineRunner {
 
     private static final Logger logger = LoggerFactory.getLogger(EsIndexInitializer.class);

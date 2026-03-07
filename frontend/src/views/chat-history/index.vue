@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { NScrollbar } from 'naive-ui';
-import { VueMarkdownItProvider } from 'vue-markdown-shiki';
+import { VueMarkdownItProvider } from '@/vendor/vue-markdown-shiki';
 import ChatMessage from '../chat/modules/chat-message.vue';
 
 defineOptions({

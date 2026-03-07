@@ -106,6 +106,39 @@ declare namespace Api {
     type List = Common.PaginatingQueryRecord<Item>;
   }
 
+  namespace InviteCode {
+    type SearchParams = CommonType.RecordNullable<
+      Common.CommonSearchParams & {
+        enabled: boolean;
+      }
+    >;
+
+    interface Creator {
+      id: number;
+      username: string;
+    }
+
+    interface Item {
+      id: number;
+      code: string;
+      maxUses: number;
+      usedCount: number;
+      expiresAt: string | null;
+      enabled: boolean;
+      createdBy?: Creator;
+      createdAt: string;
+      updatedAt: string;
+    }
+
+    interface ListPayload {
+      records: Item[];
+      total: number;
+      pages: number;
+      current: number;
+      size: number;
+    }
+  }
+
   namespace KnowledgeBase {
     interface SearchParams {
       userId: string;
@@ -140,6 +173,7 @@ declare namespace Api {
       chunkIndex: number;
       totalSize: number;
       fileName: string;
+      userId?: string;
       orgTag: string | null;
       orgTagName?: string | null;
       public: boolean;
@@ -201,9 +235,12 @@ declare namespace Api {
       fileMd5?: string;
     }
 
-    interface ReferenceMd5Response {
+    interface ReferenceDetailResponse {
       fileMd5: string;
+      fileName: string;
       referenceNumber: number;
+      pageNumber?: number | null;
+      anchorText?: string | null;
     }
   }
 }

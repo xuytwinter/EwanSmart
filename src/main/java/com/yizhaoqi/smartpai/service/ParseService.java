@@ -2,6 +2,8 @@ package com.yizhaoqi.smartpai.service;
 
 import com.yizhaoqi.smartpai.model.DocumentVector;
 import com.yizhaoqi.smartpai.repository.DocumentVectorRepository;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.tika.exception.TikaException;
 import org.apache.tika.metadata.Metadata;
 import org.apache.tika.parser.ParseContext;
@@ -15,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.xml.sax.SAXException;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import com.hankcs.hanlp.seg.common.Term;
@@ -64,6 +67,12 @@ public class ParseService {
         checkMemoryThreshold();
 
         try (BufferedInputStream bufferedStream = new BufferedInputStream(fileStream, bufferSize)) {
+            if (isPdfDocument(bufferedStream)) {
+                parsePdfAndSave(fileMd5, bufferedStream, userId, orgTag, isPublic);
+                logger.info("PDF 文件页级解析和入库完成，fileMd5: {}", fileMd5);
+                return;
+            }
+
             // 创建一个流式处理器，它会在内部处理父块的切分和子块的保存
             StreamingContentHandler handler = new StreamingContentHandler(fileMd5, userId, orgTag, isPublic);
             Metadata metadata = new Metadata();
@@ -159,7 +168,9 @@ public class ParseService {
             List<String> childChunks = ParseService.this.splitTextIntoChunksWithSemantics(parentChunkText, chunkSize);
 
             // 2. 将子切片批量保存到数据库
-            this.savedChunkCount = ParseService.this.saveChildChunks(fileMd5, childChunks, userId, orgTag, isPublic, this.savedChunkCount);
+            this.savedChunkCount = ParseService.this.saveChildChunks(
+                    fileMd5, childChunks, userId, orgTag, isPublic, this.savedChunkCount, null
+            );
 
             // 3. 清空缓冲区，为下一个父块做准备
             buffer.setLength(0);
@@ -178,7 +189,7 @@ public class ParseService {
      * @return 保存后总的分片数量
      */
     private int saveChildChunks(String fileMd5, List<String> chunks,
-            String userId, String orgTag, boolean isPublic, int startingChunkId) {
+            String userId, String orgTag, boolean isPublic, int startingChunkId, Integer pageNumber) {
         int currentChunkId = startingChunkId;
         for (String chunk : chunks) {
             currentChunkId++;
@@ -186,6 +197,8 @@ public class ParseService {
             vector.setFileMd5(fileMd5);
             vector.setChunkId(currentChunkId);
             vector.setTextContent(chunk);
+            vector.setPageNumber(pageNumber);
+            vector.setAnchorText(buildAnchorText(chunk));
             vector.setUserId(userId);
             vector.setOrgTag(orgTag);
             vector.setPublic(isPublic);
@@ -193,6 +206,45 @@ public class ParseService {
         }
         logger.info("成功保存 {} 个子切片到数据库", chunks.size());
         return currentChunkId;
+    }
+
+    private void parsePdfAndSave(String fileMd5, InputStream fileStream, String userId, String orgTag, boolean isPublic) throws IOException {
+        try (PDDocument document = PDDocument.load(fileStream)) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            int savedChunkCount = 0;
+
+            for (int pageNumber = 1; pageNumber <= document.getNumberOfPages(); pageNumber++) {
+                stripper.setStartPage(pageNumber);
+                stripper.setEndPage(pageNumber);
+                String pageText = stripper.getText(document);
+                if (pageText == null || pageText.isBlank()) {
+                    continue;
+                }
+
+                List<String> childChunks = splitTextIntoChunksWithSemantics(pageText, chunkSize);
+                savedChunkCount = saveChildChunks(fileMd5, childChunks, userId, orgTag, isPublic, savedChunkCount, pageNumber);
+            }
+        }
+    }
+
+    private boolean isPdfDocument(BufferedInputStream stream) throws IOException {
+        stream.mark(bufferSize);
+        byte[] header = stream.readNBytes(5);
+        stream.reset();
+        return header.length == 5 && "%PDF-".equals(new String(header, StandardCharsets.US_ASCII));
+    }
+
+    private String buildAnchorText(String chunk) {
+        if (chunk == null || chunk.isBlank()) {
+            return null;
+        }
+
+        String normalized = chunk.replaceAll("\\s+", " ").trim();
+        int maxLength = 120;
+        if (normalized.length() <= maxLength) {
+            return normalized;
+        }
+        return normalized.substring(0, maxLength) + "…";
     }
 
     /**

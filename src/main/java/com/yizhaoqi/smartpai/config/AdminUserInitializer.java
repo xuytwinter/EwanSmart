@@ -11,7 +11,9 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
+import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * 管理员账号初始化器
@@ -21,24 +23,37 @@ import java.util.Optional;
 @Order(1) // 设置优先级，确保在其他初始化器之前运行
 public class AdminUserInitializer implements CommandLineRunner {
     private static final Logger logger = LoggerFactory.getLogger(AdminUserInitializer.class);
+    private static final Set<String> WEAK_PASSWORDS = Set.of(
+            "admin123", "admin", "password", "123456", "12345678", "qwerty"
+    );
 
     @Autowired
     private UserRepository userRepository;
 
-    @Value("${admin.username:admin}")
+    @Value("${admin.bootstrap.enabled:false}")
+    private boolean bootstrapEnabled;
+
+    @Value("${admin.bootstrap.username:}")
     private String adminUsername;
 
-    @Value("${admin.password:admin123}")
+    @Value("${admin.bootstrap.password:}")
     private String adminPassword;
 
-    @Value("${admin.primary-org:default}")
+    @Value("${admin.bootstrap.primary-org:default}")
     private String adminPrimaryOrg;
 
-    @Value("${admin.org-tags:default,admin}")
+    @Value("${admin.bootstrap.org-tags:default,admin}")
     private String adminOrgTags;
 
     @Override
     public void run(String... args) throws Exception {
+        if (!bootstrapEnabled) {
+            logger.info("管理员引导创建已禁用（admin.bootstrap.enabled=false）");
+            return;
+        }
+
+        validateBootstrapConfig();
+
         logger.info("检查管理员账号是否存在: {}", adminUsername);
         Optional<User> existingAdmin = userRepository.findByUsername(adminUsername);
 
@@ -63,4 +78,19 @@ public class AdminUserInitializer implements CommandLineRunner {
             throw new RuntimeException("无法创建管理员账号", e);
         }
     }
-} 
+
+    private void validateBootstrapConfig() {
+        if (adminUsername == null || adminUsername.isBlank()) {
+            throw new IllegalStateException("admin.bootstrap.username 不能为空");
+        }
+        if (adminPassword == null || adminPassword.isBlank()) {
+            throw new IllegalStateException("admin.bootstrap.password 不能为空");
+        }
+        if (adminPassword.length() < 12) {
+            throw new IllegalStateException("admin.bootstrap.password 长度必须 >= 12");
+        }
+        if (WEAK_PASSWORDS.contains(adminPassword.toLowerCase(Locale.ROOT))) {
+            throw new IllegalStateException("admin.bootstrap.password 不能使用弱口令");
+        }
+    }
+}

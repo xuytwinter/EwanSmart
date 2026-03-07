@@ -32,10 +32,28 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
-        String userId = extractUserId(session);
+        String jwtToken;
+        try {
+            jwtToken = extractToken(session);
+            if (!jwtUtils.validateToken(jwtToken)) {
+                logger.debug("拒绝无效WebSocket连接，会话ID: {}", session.getId());
+                session.close(CloseStatus.POLICY_VIOLATION);
+                return;
+            }
+        } catch (Exception exception) {
+            logger.warn("拒绝非法WebSocket连接，会话ID: {}, 原因: {}", session.getId(), exception.getMessage());
+            try {
+                session.close(CloseStatus.POLICY_VIOLATION);
+            } catch (Exception closeException) {
+                logger.error("关闭无效WebSocket连接失败: {}", closeException.getMessage(), closeException);
+            }
+            return;
+        }
+
+        String userId = extractUserId(jwtToken);
         sessions.put(userId, session);
         logger.info("WebSocket连接已建立，用户ID: {}，会话ID: {}，URI路径: {}",
-                    userId, session.getId(), session.getUri().getPath());
+                userId, session.getId(), session.getUri().getPath());
 
         // 发送会话ID到前端
         try {
@@ -54,7 +72,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-        String userId = extractUserId(session);
+        String userId = extractUserId(extractToken(session));
         try {
             String payload = message.getPayload();
             logger.info("接收到消息，用户ID: {}，会话ID: {}，消息长度: {}", 
@@ -95,29 +113,43 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        String userId = extractUserId(session);
-        sessions.remove(userId);
-        logger.info("WebSocket连接已关闭，用户ID: {}，会话ID: {}，状态: {}",
+        String userId = "unknown";
+        try {
+            userId = extractUserId(extractToken(session));
+            sessions.remove(userId);
+        } catch (Exception e) {
+            logger.debug("关闭连接时无法解析用户信息，会话ID: {}", session.getId());
+        }
+
+        if (CloseStatus.POLICY_VIOLATION.equals(status)) {
+            logger.debug("WebSocket连接因策略校验失败被关闭，用户ID: {}，会话ID: {}，状态: {}",
                     userId, session.getId(), status);
+        } else {
+            logger.info("WebSocket连接已关闭，用户ID: {}，会话ID: {}，状态: {}",
+                    userId, session.getId(), status);
+        }
 
         // 清理会话的引用映射
         chatHandler.clearSessionReferenceMapping(session.getId());
     }
 
-    private String extractUserId(WebSocketSession session) {
-        String path = session.getUri().getPath();
-        String[] segments = path.split("/");
-        String jwtToken = segments[segments.length - 1];
-        
-        // 从JWT令牌中提取用户名
+    private String extractUserId(String jwtToken) {
         String username = jwtUtils.extractUsernameFromToken(jwtToken);
-        if (username == null) {
-            logger.warn("无法从JWT令牌中提取用户名，使用令牌作为用户ID: {}", jwtToken);
-            return jwtToken;
+        if (username == null || username.isBlank()) {
+            throw new IllegalArgumentException("无法从JWT令牌中提取用户名");
         }
-        
+
         logger.debug("从JWT令牌中提取的用户名: {}", username);
         return username;
+    }
+
+    private String extractToken(WebSocketSession session) {
+        if (session.getUri() == null || session.getUri().getPath() == null) {
+            throw new IllegalArgumentException("WebSocket URI is missing");
+        }
+        String path = session.getUri().getPath();
+        String[] segments = path.split("/");
+        return segments[segments.length - 1];
     }
 
     private void sendErrorMessage(WebSocketSession session, String errorMessage) {

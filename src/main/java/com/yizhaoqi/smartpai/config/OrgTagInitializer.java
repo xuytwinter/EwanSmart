@@ -12,8 +12,6 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
-import java.util.Optional;
-
 /**
  * 组织标签初始化器
  * 在应用启动时自动创建默认组织标签（如果不存在）
@@ -37,14 +35,16 @@ public class OrgTagInitializer implements CommandLineRunner {
     @Autowired
     private UserRepository userRepository;
 
-    @Value("${admin.username:admin}")
+    @Value("${admin.bootstrap.username:}")
     private String adminUsername;
 
     @Override
     public void run(String... args) throws Exception {
-        // 查找管理员用户
-        User adminUser = userRepository.findByUsername(adminUsername)
-                .orElseThrow(() -> new RuntimeException("管理员账号未找到，无法创建组织标签"));
+        User adminUser = findAdminCreator();
+        if (adminUser == null) {
+            logger.warn("未找到管理员账号，跳过组织标签初始化");
+            return;
+        }
 
         // 创建默认组织标签
         createOrganizationTagIfNotExists(DEFAULT_TAG, DEFAULT_NAME, DEFAULT_DESCRIPTION, adminUser);
@@ -53,6 +53,16 @@ public class OrgTagInitializer implements CommandLineRunner {
         createOrganizationTagIfNotExists(ADMIN_TAG, ADMIN_NAME, ADMIN_DESCRIPTION, adminUser);
         
         logger.info("组织标签初始化完成");
+    }
+
+    private User findAdminCreator() {
+        if (adminUsername != null && !adminUsername.isBlank()) {
+            return userRepository.findByUsername(adminUsername).orElse(null);
+        }
+        return userRepository.findAll().stream()
+                .filter(user -> User.Role.ADMIN.equals(user.getRole()))
+                .findFirst()
+                .orElse(null);
     }
     
     /**

@@ -1,6 +1,8 @@
 package com.yizhaoqi.smartpai.service;
 
+import com.yizhaoqi.smartpai.config.AppAuthProperties;
 import com.yizhaoqi.smartpai.exception.CustomException;
+import com.yizhaoqi.smartpai.model.RegistrationMode;
 import com.yizhaoqi.smartpai.model.OrganizationTag;
 import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.OrganizationTagRepository;
@@ -23,6 +25,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.HashMap;
@@ -43,6 +46,9 @@ public class UserService {
     private static final String PRIVATE_TAG_PREFIX = "PRIVATE_";
     private static final String PRIVATE_ORG_NAME_SUFFIX = "的私人空间";
     private static final String PRIVATE_ORG_DESCRIPTION = "用户的私人组织标签，仅用户本人可访问";
+    private static final Pattern PASSWORD_PATTERN = Pattern.compile(
+            "^(?=.*[A-Za-z])(?=.*\\d).{6,18}$"
+    );
 
     @Autowired
     private UserRepository userRepository;
@@ -53,6 +59,12 @@ public class UserService {
     @Autowired
     private OrgTagCacheService orgTagCacheService;
 
+    @Autowired
+    private AppAuthProperties appAuthProperties;
+
+    @Autowired
+    private InviteCodeService inviteCodeService;
+
     /**
      * 注册新用户。
      *
@@ -62,6 +74,14 @@ public class UserService {
      */
     @Transactional
     public void registerUser(String username, String password) {
+        registerUser(username, password, null);
+    }
+
+    @Transactional
+    public void registerUser(String username, String password, String inviteCode) {
+        validateRegistrationPolicy(username, inviteCode);
+        validatePassword(password);
+
         // 检查数据库中是否已存在该用户名
         if (userRepository.findByUsername(username).isPresent()) {
             // 若用户名已存在，抛出自定义异常，状态码为 400 Bad Request
@@ -99,6 +119,20 @@ public class UserService {
         
         logger.info("User registered successfully with private organization tag: {}", username);
     }
+
+    private void validateRegistrationPolicy(String username, String inviteCode) {
+        RegistrationMode mode = appAuthProperties.getRegistration().getMode();
+        boolean inviteRequired = appAuthProperties.getRegistration().isInviteRequired() || mode == RegistrationMode.INVITE_ONLY;
+
+        if (mode == RegistrationMode.CLOSED) {
+            logger.warn("Registration blocked because registration mode is CLOSED, username: {}", username);
+            throw new CustomException("REGISTRATION_CLOSED", HttpStatus.FORBIDDEN);
+        }
+
+        if (inviteRequired) {
+            inviteCodeService.consume(inviteCode, username);
+        }
+    }
     
     /**
      * 创建用户的私人组织标签
@@ -131,14 +165,9 @@ public class UserService {
             Optional<User> adminUser = userRepository.findAll().stream()
                     .filter(user -> User.Role.ADMIN.equals(user.getRole()))
                     .findFirst();
-            
-            User creator;
-            if (adminUser.isPresent()) {
-                creator = adminUser.get();
-            } else {
-                // 如果没有管理员用户，则创建一个系统用户作为创建者
-                creator = createSystemAdminIfNotExists();
-            }
+
+            User creator = adminUser.orElseThrow(
+                    () -> new CustomException("No admin user exists to initialize default organization tag", HttpStatus.INTERNAL_SERVER_ERROR));
             
             // 创建默认组织标签
             OrganizationTag defaultTag = new OrganizationTag();
@@ -150,41 +179,6 @@ public class UserService {
             organizationTagRepository.save(defaultTag);
             logger.info("Default organization tag created successfully");
         }
-    }
-    
-    /**
-     * 如果系统中没有管理员用户，则创建一个系统管理员
-     */
-    private User createSystemAdminIfNotExists() {
-        String systemAdminUsername = "system_admin";
-        
-        return userRepository.findByUsername(systemAdminUsername)
-                .orElseGet(() -> {
-                    logger.info("Creating system admin user");
-                    User systemAdmin = new User();
-                    systemAdmin.setUsername(systemAdminUsername);
-                    // 生成随机密码
-                    String randomPassword = generateRandomPassword();
-                    systemAdmin.setPassword(PasswordUtil.encode(randomPassword));
-                    systemAdmin.setRole(User.Role.ADMIN);
-                    
-                    logger.info("System admin created with password: {}", randomPassword);
-                    return userRepository.save(systemAdmin);
-                });
-    }
-    
-    /**
-     * 生成随机密码
-     */
-    private String generateRandomPassword() {
-        // 生成16位随机密码
-        String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()";
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 16; i++) {
-            int index = (int) (Math.random() * chars.length());
-            sb.append(chars.charAt(index));
-        }
-        return sb.toString();
     }
 
     /**
@@ -208,12 +202,20 @@ public class UserService {
         if (userRepository.findByUsername(username).isPresent()) {
             throw new CustomException("Username already exists", HttpStatus.BAD_REQUEST);
         }
+
+        validatePassword(password);
         
         User adminUser = new User();
         adminUser.setUsername(username);
         adminUser.setPassword(PasswordUtil.encode(password));
         adminUser.setRole(User.Role.ADMIN);
         userRepository.save(adminUser);
+    }
+
+    private void validatePassword(String password) {
+        if (password == null || !PASSWORD_PATTERN.matcher(password).matches()) {
+            throw new CustomException("密码格式不正确，6-18位字符，必须包含字母和数字", HttpStatus.BAD_REQUEST);
+        }
     }
 
     /**
@@ -803,4 +805,3 @@ public class UserService {
         return result;
     }
 }
-

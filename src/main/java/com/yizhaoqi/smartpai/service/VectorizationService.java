@@ -54,7 +54,7 @@ public class VectorizationService {
                     .toList();
 
             // 调用外部模型生成向量
-            List<float[]> vectors = embeddingClient.embed(texts);
+            List<float[]> vectors = embeddingClient.embed(texts, userId);
 
             // 构建 Elasticsearch 文档并存储
             List<EsDocument> esDocuments = IntStream.range(0, chunks.size())
@@ -63,6 +63,8 @@ public class VectorizationService {
                             fileMd5,
                             chunks.get(i).getChunkId(),
                             chunks.get(i).getContent(),
+                            chunks.get(i).getPageNumber(),
+                            chunks.get(i).getAnchorText(),
                             vectors.get(i),
                             "deepseek-embed", // 更新为 DeepSeek 的模型版本
                             userId,
@@ -95,7 +97,9 @@ public class VectorizationService {
         return vectors.stream()
                 .map(vector -> new TextChunk(
                         vector.getChunkId(),
-                        vector.getTextContent()
+                        vector.getTextContent(),
+                        vector.getPageNumber(),
+                        vector.getAnchorText()
                 ))
                 .toList();
     }

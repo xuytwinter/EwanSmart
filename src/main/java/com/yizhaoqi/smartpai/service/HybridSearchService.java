@@ -73,7 +73,7 @@ public class HybridSearchService {
             logger.debug("用户 {} 的数据库ID: {}", userId, userDbId);
 
             // 生成查询向量
-            final List<Float> queryVector = embedToVectorList(query);
+            final List<Float> queryVector = embedToVectorList(query, userId);
 
             // 如果向量生成失败，仅使用文本匹配
             if (queryVector == null) {
@@ -150,7 +150,10 @@ public class HybridSearchService {
                                 hit.score(),
                                 hit.source().getUserId(),
                                 hit.source().getOrgTag(),
-                                hit.source().isPublic()
+                                hit.source().isPublic(),
+                                null,
+                                hit.source().getPageNumber(),
+                                hit.source().getAnchorText()
                         );
                     })
                     .toList();
@@ -254,7 +257,10 @@ public class HybridSearchService {
                                 hit.score(),
                                 hit.source().getUserId(),
                                 hit.source().getOrgTag(),
-                                hit.source().isPublic()
+                                hit.source().isPublic(),
+                                null,
+                                hit.source().getPageNumber(),
+                                hit.source().getAnchorText()
                         );
                     })
                     .toList();
@@ -277,7 +283,7 @@ public class HybridSearchService {
             logger.warn("使用了没有权限过滤的搜索方法，建议使用 searchWithPermission 方法");
 
             // 生成查询向量
-            final List<Float> queryVector = embedToVectorList(query);
+            final List<Float> queryVector = embedToVectorList(query, "system");
             
             // 如果向量生成失败，仅使用文本匹配
             if (queryVector == null) {
@@ -322,7 +328,13 @@ public class HybridSearchService {
                                 hit.source().getFileMd5(),
                                 hit.source().getChunkId(),
                                 hit.source().getTextContent(),
-                                hit.score()
+                                hit.score(),
+                                null,
+                                null,
+                                false,
+                                null,
+                                hit.source().getPageNumber(),
+                                hit.source().getAnchorText()
                         );
                     })
                     .toList();
@@ -362,7 +374,13 @@ public class HybridSearchService {
                             hit.source().getFileMd5(),
                             hit.source().getChunkId(),
                             hit.source().getTextContent(),
-                            hit.score()
+                            hit.score(),
+                            null,
+                            null,
+                            false,
+                            null,
+                            hit.source().getPageNumber(),
+                            hit.source().getAnchorText()
                     );
                 })
                 .toList();
@@ -371,9 +389,9 @@ public class HybridSearchService {
     /**
      * 生成查询向量，返回 List<Float>，失败时返回 null
      */
-    private List<Float> embedToVectorList(String text) {
+    private List<Float> embedToVectorList(String text, String requesterId) {
         try {
-            List<float[]> vecs = embeddingClient.embed(List.of(text));
+            List<float[]> vecs = embeddingClient.embed(List.of(text), requesterId);
             if (vecs == null || vecs.isEmpty()) {
                 logger.warn("生成的向量为空");
                 return null;
@@ -462,7 +480,7 @@ public class HybridSearchService {
                     .collect(Collectors.toSet());
             List<FileUpload> uploads = fileUploadRepository.findByFileMd5In(new java.util.ArrayList<>(md5Set));
             Map<String, String> md5ToName = uploads.stream()
-                    .collect(Collectors.toMap(FileUpload::getFileMd5, FileUpload::getFileName));
+                    .collect(Collectors.toMap(FileUpload::getFileMd5, FileUpload::getFileName, (existing, replacement) -> existing));
             // 填充文件名
             results.forEach(r -> r.setFileName(md5ToName.get(r.getFileMd5())));
         } catch (Exception e) {

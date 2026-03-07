@@ -7,6 +7,13 @@
       "chunkId": {
         "type": "integer"
       },
+      "pageNumber": {
+        "type": "integer"
+      },
+      "anchorText": {
+        "type": "text",
+        "index": false
+      },
       "textContent": {
         "type": "text",
         "analyzer": "ik_max_word",

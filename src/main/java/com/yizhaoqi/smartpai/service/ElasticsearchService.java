@@ -3,6 +3,7 @@ package com.yizhaoqi.smartpai.service;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch.core.BulkRequest;
 import co.elastic.clients.elasticsearch.core.BulkResponse;
+import co.elastic.clients.elasticsearch.core.CountResponse;
 import co.elastic.clients.elasticsearch.core.DeleteByQueryRequest;
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
 import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
@@ -81,6 +82,18 @@ public class ElasticsearchService {
             esClient.deleteByQuery(request);
         } catch (Exception e) {
             throw new RuntimeException("删除文档失败", e);
+        }
+    }
+
+    public long countByFileMd5(String fileMd5) {
+        try {
+            CountResponse response = esClient.count(c -> c
+                    .index("knowledge_base")
+                    .query(q -> q.term(t -> t.field("fileMd5").value(fileMd5)))
+            );
+            return response.count();
+        } catch (Exception e) {
+            throw new RuntimeException("统计文档失败", e);
         }
     }
 }

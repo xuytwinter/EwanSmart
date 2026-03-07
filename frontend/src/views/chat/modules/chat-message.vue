@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { nextTick } from 'vue';
-import { VueMarkdownIt } from 'vue-markdown-shiki';
+import { VueMarkdownIt } from '@/vendor/vue-markdown-shiki';
+import FilePreview from '@/components/custom/file-preview.vue';
 import { formatDate } from '@/utils/common';
 defineOptions({ name: 'ChatMessage' });
 
@@ -11,6 +12,11 @@ const props = defineProps<{
 }>();
 
 const authStore = useAuthStore();
+const previewVisible = ref(false);
+const previewFileName = ref('');
+const previewFileMd5 = ref('');
+const previewPageNumber = ref<number | undefined>(undefined);
+const previewAnchorText = ref('');
 
 function handleCopy(content: string) {
   navigator.clipboard.writeText(content);
@@ -20,19 +26,43 @@ function handleCopy(content: string) {
 const chatStore = useChatStore();
 
 // 存储文件名和对应的事件处理
-const sourceFiles = ref<Array<{fileName: string, id: string, referenceNumber: number, fileMd5?: string}>>([]);
+const sourceFiles = ref<Array<{fileName: string, id: string, referenceNumber: number, fileMd5?: string, pageNumber?: number}>>([]);
 
 // 处理来源文件链接的函数
 function processSourceLinks(text: string): string {
   // 重置来源文件列表，避免重复
   sourceFiles.value = [];
 
-  // 新格式：匹配 (来源#数字: 文件名 | MD5:xxx) 的正则表达式，兼容全角括号
-  // 格式示例：(来源#1: test.txt | MD5:abc123) 或 (来源#1: test.txt|MD5:abc123)
-  const newSourcePattern = /([\(（])来源#(\d+):\s*([^|\n\r（）]+?)\s*\|\s*MD5:\s*([a-fA-F0-9]+)([\)）])/g;
+  // 新格式（带页码）：匹配 (来源#数字: 文件名 | 第X页) 的正则表达式，兼容全角括号
+  // 格式示例：(来源#1: test.pdf | 第5页) 或 (来源#1: test.pdf|第5页)
+  const pagePattern = /([\(（])来源#(\d+):\s*([^|\n\r（）]+?)\s*\|\s*第(\d+)页([\)）])/g;
 
-  // 先处理新格式（包含MD5）
-  let processedText = text.replace(newSourcePattern, (_match, leftParen, sourceNum, fileName, fileMd5, rightParen) => {
+  // 先处理带页码的新格式
+  let processedText = text.replace(pagePattern, (_match, leftParen, sourceNum, fileName, pageNum, rightParen) => {
+    const linkClass = 'source-file-link';
+    const trimmedFileName = fileName.trim();
+    const fileId = `source-file-${sourceFiles.value.length}`;
+    const referenceNumber = parseInt(sourceNum, 10);
+
+    // 存储文件信息
+    sourceFiles.value.push({
+      fileName: trimmedFileName,
+      id: fileId,
+      referenceNumber,
+      pageNumber: parseInt(pageNum, 10)
+    });
+
+    const lp = leftParen === '(' ? '(' : '（';
+    const rp = rightParen === ')' ? ')' : '）';
+
+    // 显示格式：来源#1: test.pdf (第5页)
+    return `${lp}来源#${sourceNum}: <span class="${linkClass}" data-file-id="${fileId}">${trimmedFileName} (第${pageNum}页)</span>${rp}`;
+  });
+
+  // 旧格式（带MD5）：匹配 (来源#数字: 文件名 | MD5:xxx) 的正则表达式，兼容全角括号
+  const md5Pattern = /([\(（])来源#(\d+):\s*([^|\n\r（）]+?)\s*\|\s*MD5:\s*([a-fA-F0-9]+)([\)）])/g;
+
+  processedText = processedText.replace(md5Pattern, (_match, leftParen, sourceNum, fileName, fileMd5, rightParen) => {
     const linkClass = 'source-file-link';
     const trimmedFileName = fileName.trim();
     const trimmedMd5 = fileMd5.trim();
@@ -50,21 +80,20 @@ function processSourceLinks(text: string): string {
     const lp = leftParen === '(' ? '(' : '（';
     const rp = rightParen === ')' ? ')' : '）';
 
-    // 显示格式：来源#1: test.txt | MD5:abc...
-    return `${lp}来源#${sourceNum}: <span class="${linkClass}" data-file-id="${fileId}">${trimmedFileName} | MD5:${trimmedMd5.substring(0, 8)}...</span>${rp}`;
+    // 显示格式：来源#1: test.txt（不显示MD5）
+    return `${lp}来源#${sourceNum}: <span class="${linkClass}" data-file-id="${fileId}">${trimmedFileName}</span>${rp}`;
   });
 
-  // 旧格式：匹配 (来源#数字: 文件名) 的正则表达式，兼容全角括号和无括号格式
-  // 用于向后兼容旧的引用格式
-  const oldSourcePattern = /([\(（])来源#(\d+):\s*([^\n\r（）]+?)([\)）])/g;
+  // 简单格式：匹配 (来源#数字: 文件名) 的正则表达式，兼容全角括号
+  const simplePattern = /([\(（])来源#(\d+):\s*([^\n\r（）|]+?)([\)）])/g;
 
-  processedText = processedText.replace(oldSourcePattern, (_match, leftParen, sourceNum, fileName, rightParen) => {
+  processedText = processedText.replace(simplePattern, (_match, leftParen, sourceNum, fileName, rightParen) => {
     const linkClass = 'source-file-link';
     const trimmedFileName = fileName.trim();
     const fileId = `source-file-${sourceFiles.value.length}`;
     const referenceNumber = parseInt(sourceNum, 10);
 
-    // 存储文件信息（旧格式，没有MD5）
+    // 存储文件信息
     sourceFiles.value.push({
       fileName: trimmedFileName,
       id: fileId,
@@ -118,24 +147,17 @@ async function handleSourceFileClick(fileInfo: { fileName: string, referenceNumb
   console.log('点击了来源文件:', fileName, '引用编号:', referenceNumber, '提取的MD5:', extractedMd5, '会话ID:', props.sessionId);
 
   try {
-    window.$message?.loading(`正在获取文件下载链接: ${fileName}`, {
+    window.$message?.loading(`正在定位引用内容: ${fileName}`, {
       duration: 0,
       closable: false
     });
 
-    let targetMd5 = null;
+    let detail: Api.Document.ReferenceDetailResponse | null = null;
 
-    // 方案1：优先使用从引用中直接提取的MD5
-    if (extractedMd5) {
-      console.log('使用从引用中提取的MD5:', extractedMd5);
-      targetMd5 = extractedMd5;
-    }
-    // 方案2：如果没有提取到MD5，则通过后端API查询
-    else if (props.sessionId) {
+    if (props.sessionId) {
       try {
-        console.log('步骤1: 通过API查询引用MD5', { sessionId: props.sessionId, referenceNumber });
-        const { error: md5Error, data: md5Data } = await request<Api.Document.ReferenceMd5Response>({
-          url: 'documents/reference-md5',
+        const { error: detailError, data: detailData } = await request<Api.Document.ReferenceDetailResponse>({
+          url: 'documents/reference-detail',
           params: {
             sessionId: props.sessionId,
             referenceNumber: referenceNumber.toString()
@@ -143,37 +165,23 @@ async function handleSourceFileClick(fileInfo: { fileName: string, referenceNumb
           baseURL: '/proxy-api'
         });
 
-        console.log('引用MD5查询结果:', { error: md5Error, data: md5Data });
-
-        if (!md5Error && md5Data?.fileMd5) {
-          targetMd5 = md5Data.fileMd5;
+        if (!detailError && detailData?.fileMd5) {
+          detail = detailData;
         }
-      } catch (md5Err) {
-        console.warn('通过API查询MD5失败:', md5Err);
+      } catch (detailErr) {
+        console.warn('通过API查询引用详情失败:', detailErr);
       }
     }
 
-    // 如果获取到了MD5，使用MD5精确下载
+    const targetMd5 = detail?.fileMd5 || extractedMd5 || null;
     if (targetMd5) {
-      console.log('步骤2: 使用MD5下载文件', targetMd5);
-      const { error: downloadError, data: downloadData } = await request<Api.Document.DownloadResponse>({
-        url: 'documents/download-by-md5',
-        params: {
-          fileMd5: targetMd5,
-          token: authStore.token
-        },
-        baseURL: '/proxy-api'
-      });
-
-      console.log('文件下载结果:', { error: downloadError, data: downloadData });
-
+      previewFileName.value = detail?.fileName || fileName;
+      previewFileMd5.value = targetMd5;
+      previewPageNumber.value = detail?.pageNumber || undefined;
+      previewAnchorText.value = detail?.anchorText || '';
+      previewVisible.value = true;
       window.$message?.destroyAll();
-
-      if (!downloadError && downloadData?.downloadUrl) {
-        window.open(downloadData.downloadUrl, '_blank');
-        window.$message?.success(`文件下载链接已打开: ${downloadData.fileName || fileName}`);
-        return;
-      }
+      return;
     }
 
     // 降级方案：使用文件名下载（向后兼容）
@@ -205,6 +213,14 @@ async function handleSourceFileClick(fileInfo: { fileName: string, referenceNumb
     console.error('文件下载失败:', err);
     window.$message?.error(`文件下载失败: ${fileName}`);
   }
+}
+
+function closePreview() {
+  previewVisible.value = false;
+  previewFileName.value = '';
+  previewFileMd5.value = '';
+  previewPageNumber.value = undefined;
+  previewAnchorText.value = '';
 }
 </script>
 
@@ -244,6 +260,16 @@ async function handleSourceFileClick(fileInfo: { fileName: string, referenceNumb
         </template>
       </NButton>
     </div>
+    <NModal v-model:show="previewVisible" preset="card" title="引用文档预览" style="width: 80%; max-width: 1000px;">
+      <FilePreview
+        :file-name="previewFileName"
+        :file-md5="previewFileMd5"
+        :page-number="previewPageNumber"
+        :anchor-text="previewAnchorText"
+        :visible="previewVisible"
+        @close="closePreview"
+      />
+    </NModal>
   </div>
 </template>
 

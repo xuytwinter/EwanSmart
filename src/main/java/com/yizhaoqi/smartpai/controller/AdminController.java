@@ -8,6 +8,7 @@ import com.yizhaoqi.smartpai.model.OrganizationTag;
 import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.OrganizationTagRepository;
 import com.yizhaoqi.smartpai.repository.UserRepository;
+import com.yizhaoqi.smartpai.service.InviteCodeService;
 import com.yizhaoqi.smartpai.service.UserService;
 import com.yizhaoqi.smartpai.utils.JwtUtils;
 import com.yizhaoqi.smartpai.utils.LogUtils;
@@ -19,6 +20,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -49,6 +51,9 @@ public class AdminController {
 
     @Autowired
     private MinioMigrationUtil migrationUtil;
+
+    @Autowired
+    private InviteCodeService inviteCodeService;
 
     /**
      * 获取所有用户列表
@@ -222,6 +227,66 @@ public class AdminController {
             LogUtils.logBusinessError("ADMIN_CREATE_ADMIN_USER", adminUsername, "创建管理员用户异常: %s", e, e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("code", 500, "message", "创建管理员用户失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 创建邀请码
+     */
+    @PostMapping("/invite-codes")
+    public ResponseEntity<?> createInviteCode(
+            @RequestHeader("Authorization") String token,
+            @RequestBody CreateInviteCodeRequest request) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            var created = inviteCodeService.createInviteCodes(
+                    adminUsername,
+                    request.code(),
+                    request.maxUses(),
+                    request.expiresAt(),
+                    request.count()
+            );
+            return ResponseEntity.ok(Map.of("code", 200, "message", "邀请码创建成功", "data", created));
+        } catch (CustomException e) {
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "创建邀请码失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 分页查询邀请码
+     */
+    @GetMapping("/invite-codes")
+    public ResponseEntity<?> listInviteCodes(
+            @RequestHeader("Authorization") String token,
+            @RequestParam(required = false) Boolean enabled,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+        return ResponseEntity.ok(Map.of("code", 200, "message", "获取邀请码成功", "data", inviteCodeService.list(enabled, page, size)));
+    }
+
+    /**
+     * 禁用邀请码
+     */
+    @PatchMapping("/invite-codes/{id}/disable")
+    public ResponseEntity<?> disableInviteCode(
+            @RequestHeader("Authorization") String token,
+            @PathVariable Long id) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            inviteCodeService.disable(id, adminUsername);
+            return ResponseEntity.ok(Map.of("code", 200, "message", "邀请码已禁用"));
+        } catch (CustomException e) {
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "禁用邀请码失败: " + e.getMessage()));
         }
     }
     
@@ -775,4 +840,6 @@ record OrgTagRequest(String tagId, String name, String description, String paren
 record AssignOrgTagsRequest(List<String> orgTags) {}
 
 // 添加组织标签更新请求记录类
-record OrgTagUpdateRequest(String name, String description, String parentTag) {} 
+record OrgTagUpdateRequest(String name, String description, String parentTag) {}
+
+record CreateInviteCodeRequest(String code, Integer maxUses, LocalDateTime expiresAt, Integer count) {}

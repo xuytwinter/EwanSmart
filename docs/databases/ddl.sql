@@ -50,6 +50,8 @@ CREATE TABLE document_vectors (
                                   file_md5 VARCHAR(32) NOT NULL COMMENT '关联的文件MD5值',
                                   chunk_id INT NOT NULL COMMENT '文本分块序号',
                                   text_content TEXT COMMENT '文本内容',
+                                  page_number INT COMMENT 'PDF页码，用于引用定位',
+                                  anchor_text VARCHAR(255) COMMENT '页内定位锚点文本',
                                   model_version VARCHAR(32) COMMENT '向量模型版本',
                                   user_id VARCHAR(64) NOT NULL COMMENT '上传用户ID',
                                   org_tag VARCHAR(50) COMMENT '文件所属组织标签',

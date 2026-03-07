@@ -1,11 +1,14 @@
 package com.yizhaoqi.smartpai.controller;
 
 import com.yizhaoqi.smartpai.exception.CustomException;
+import com.yizhaoqi.smartpai.exception.RateLimitExceededException;
 import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.UserRepository;
+import com.yizhaoqi.smartpai.service.RateLimitService;
 import com.yizhaoqi.smartpai.service.UserService;
 import com.yizhaoqi.smartpai.utils.JwtUtils;
 import com.yizhaoqi.smartpai.utils.LogUtils;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -30,12 +33,18 @@ public class UserController {
     @Autowired
     private UserRepository userRepository;
 
+    @Autowired
+    private RateLimitService rateLimitService;
+
     // 用户注册接口
     // 接收用户请求体中的用户名和密码，并调用用户服务进行注册
     @PostMapping("/register")
-    public ResponseEntity<?> register(@RequestBody UserRequest request) {
+    public ResponseEntity<?> register(@RequestBody UserRequest request, HttpServletRequest httpServletRequest) {
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("USER_REGISTER");
         try {
+            String clientIp = resolveClientIp(httpServletRequest);
+            rateLimitService.checkRegisterByIp(clientIp);
+
             if (request.username() == null || request.username().isEmpty() ||
                     request.password() == null || request.password().isEmpty()) {
                 LogUtils.logUserOperation("anonymous", "REGISTER", "validation", "FAILED_EMPTY_PARAMS");
@@ -43,11 +52,13 @@ public class UserController {
                 return ResponseEntity.badRequest().body(Map.of("code", 400, "message", "Username and password cannot be empty"));
             }
             
-            userService.registerUser(request.username(), request.password());
+            userService.registerUser(request.username(), request.password(), request.inviteCode());
             LogUtils.logUserOperation(request.username(), "REGISTER", "user_creation", "SUCCESS");
             monitor.end("注册成功");
             
             return ResponseEntity.ok(Map.of("code", 200, "message", "User registered successfully"));
+        } catch (RateLimitExceededException e) {
+            return buildRateLimitResponse(e);
         } catch (CustomException e) {
             LogUtils.logBusinessError("USER_REGISTER", request.username(), "用户注册失败: %s", e, e.getMessage());
             monitor.end("注册失败: " + e.getMessage());
@@ -62,9 +73,12 @@ public class UserController {
     // 用户登录接口
     // 验证用户身份并生成JWT令牌
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody UserRequest request) {
+    public ResponseEntity<?> login(@RequestBody UserRequest request, HttpServletRequest httpServletRequest) {
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("USER_LOGIN");
         try {
+            String clientIp = resolveClientIp(httpServletRequest);
+            rateLimitService.checkLoginByIp(clientIp);
+
             if (request.username() == null || request.username().isEmpty() ||
                     request.password() == null || request.password().isEmpty()) {
                 LogUtils.logUserOperation("anonymous", "LOGIN", "validation", "FAILED_EMPTY_PARAMS");
@@ -86,6 +100,8 @@ public class UserController {
                 "token", token,
                 "refreshToken", refreshToken
             )));
+        } catch (RateLimitExceededException e) {
+            return buildRateLimitResponse(e);
         } catch (CustomException e) {
             LogUtils.logBusinessError("USER_LOGIN", request.username(), "登录失败: %s", e, e.getMessage());
             monitor.end("登录失败: " + e.getMessage());
@@ -95,6 +111,22 @@ public class UserController {
             monitor.end("登录异常: " + e.getMessage());
             return ResponseEntity.status(500).body(Map.of("code", 500, "message", "Internal server error"));
         }
+    }
+
+    private ResponseEntity<Map<String, Object>> buildRateLimitResponse(RateLimitExceededException exception) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(Map.of(
+                "code", 429,
+                "message", exception.getMessage(),
+                "retryAfterSeconds", exception.getRetryAfterSeconds()
+        ));
+    }
+
+    private String resolveClientIp(HttpServletRequest request) {
+        String xff = request.getHeader("X-Forwarded-For");
+        if (xff != null && !xff.isBlank()) {
+            return xff.split(",")[0].trim();
+        }
+        return request.getRemoteAddr();
     }
 
     // 获取当前用户信息
@@ -326,7 +358,7 @@ public class UserController {
 }
 
 // 用户请求记录类
-record UserRequest(String username, String password) {}
+record UserRequest(String username, String password, String inviteCode) {}
 
 // 主组织标签请求记录类
 record PrimaryOrgRequest(String primaryOrg) {}

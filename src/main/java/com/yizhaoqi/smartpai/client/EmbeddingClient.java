@@ -2,6 +2,7 @@ package com.yizhaoqi.smartpai.client;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.yizhaoqi.smartpai.service.RateLimitService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -39,10 +40,12 @@ public class EmbeddingClient {
     private static final Logger logger = LoggerFactory.getLogger(EmbeddingClient.class);
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
+    private final RateLimitService rateLimitService;
 
-    public EmbeddingClient(WebClient embeddingWebClient, ObjectMapper objectMapper) {
+    public EmbeddingClient(WebClient embeddingWebClient, ObjectMapper objectMapper, RateLimitService rateLimitService) {
         this.webClient = embeddingWebClient;
         this.objectMapper = objectMapper;
+        this.rateLimitService = rateLimitService;
     }
 
     @PostConstruct
@@ -52,8 +55,7 @@ public class EmbeddingClient {
 
         // 验证API key格式
         if (apiKey == null || apiKey.trim().isEmpty() || apiKey.startsWith("sk-") == false) {
-            logger.warn("⚠️ API密钥格式可能无效，当前值前缀: {}",
-                    apiKey == null ? "null" : apiKey.substring(0, Math.min(10, apiKey.length())));
+            logger.warn("⚠️ API密钥格式可能无效，当前值预览: {}", maskSecret(apiKey));
         }
     }
 
@@ -63,7 +65,12 @@ public class EmbeddingClient {
      * @return 对应的向量列表
      */
     public List<float[]> embed(List<String> texts) {
+        return embed(texts, "system");
+    }
+
+    public List<float[]> embed(List<String> texts, String requesterId) {
         try {
+            rateLimitService.checkEmbeddingByUser(requesterId == null || requesterId.isBlank() ? "unknown" : requesterId);
             logger.info("开始生成向量，文本数量: {}", texts.size());
 
             List<float[]> all = new ArrayList<>(texts.size());
@@ -136,5 +143,15 @@ public class EmbeddingClient {
             }
         }
         return vectors;
+    }
+
+    private String maskSecret(String secret) {
+        if (secret == null || secret.isBlank()) {
+            return "empty";
+        }
+        if (secret.length() <= 8) {
+            return "****";
+        }
+        return secret.substring(0, 4) + "****" + secret.substring(secret.length() - 4);
     }
 }

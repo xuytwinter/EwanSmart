@@ -10,6 +10,7 @@ import UploadDialog from './modules/upload-dialog.vue';
 import SearchDialog from './modules/search-dialog.vue';
 
 const appStore = useAppStore();
+const authStore = useAuthStore();
 
 // 文件预览相关状态
 const previewVisible = ref(false);
@@ -17,7 +18,11 @@ const previewFileName = ref('');
 const previewFileMd5 = ref('');
 
 function apiFn() {
-  return fakePaginationRequest<Api.KnowledgeBase.List>({ url: '/documents/uploads' });
+  return fakePaginationRequest<Api.KnowledgeBase.List>({ url: '/documents/accessible' });
+}
+
+function canManageFile(row: Api.KnowledgeBase.UploadTask) {
+  return authStore.isAdmin || String(row.userId) === String(authStore.userInfo.id);
 }
 
 function renderIcon(fileName: string) {
@@ -127,7 +132,7 @@ const { columns, columnChecks, data, getData, loading } = useTable({
       width: 180,
       render: row => (
         <div class="flex gap-4">
-          {renderResumeUploadButton(row)}
+          {canManageFile(row) ? renderResumeUploadButton(row) : null}
           <NButton
             type="primary"
             ghost
@@ -136,16 +141,18 @@ const { columns, columnChecks, data, getData, loading } = useTable({
           >
             预览
           </NButton>
-          <NPopconfirm onPositiveClick={() => handleDelete(row.fileMd5)}>
-            {{
-              default: () => '确认删除当前文件吗？',
-              trigger: () => (
-                <NButton type="error" ghost size="small">
-                  删除
-                </NButton>
-              )
-            }}
-          </NPopconfirm>
+          {canManageFile(row) ? (
+            <NPopconfirm onPositiveClick={() => handleDelete(row.fileMd5)}>
+              {{
+                default: () => '确认删除当前文件吗？',
+                trigger: () => (
+                  <NButton type="error" ghost size="small">
+                    删除
+                  </NButton>
+                )
+              }}
+            </NPopconfirm>
+          ) : null}
         </div>
       )
     }

@@ -66,7 +66,7 @@ public class DocumentService {
         
         try {
             // 获取文件信息以获取文件名
-            FileUpload fileUpload = fileUploadRepository.findByFileMd5AndUserId(fileMd5, userId)
+            FileUpload fileUpload = fileUploadRepository.findFirstByFileMd5AndUserIdOrderByCreatedAtDesc(fileMd5, userId)
                     .orElseThrow(() -> new RuntimeException("文件不存在"));
             
             // 1. 删除Elasticsearch中的数据
@@ -138,9 +138,8 @@ public class DocumentService {
         logger.info("获取用户可访问文件列表: userId={}", userId);
         
         try {
-            // 获取用户有效的组织标签（包含层级关系）
-            User user = userRepository.findByUsername(userId)
-                .orElseThrow(() -> new RuntimeException("用户不存在: " + userId));
+            User user = resolveUser(userId);
+            String userDbId = String.valueOf(user.getId());
             
             List<String> userEffectiveTags = orgTagCacheService.getUserEffectiveOrgTags(user.getUsername());
             logger.debug("用户有效组织标签: {}", userEffectiveTags);
@@ -149,11 +148,11 @@ public class DocumentService {
             List<FileUpload> files;
             if (userEffectiveTags.isEmpty()) {
                 // 如果用户没有任何组织标签，只返回自己的文件和公开文件
-                files = fileUploadRepository.findByUserIdOrIsPublicTrue(userId);
+                files = fileUploadRepository.findByUserIdOrIsPublicTrue(userDbId);
                 logger.debug("用户无组织标签，仅返回个人和公开文件");
             } else {
                 // 查询用户可访问的所有文件（考虑层级标签）
-                files = fileUploadRepository.findAccessibleFilesWithTags(userId, userEffectiveTags);
+                files = fileUploadRepository.findAccessibleFilesWithTags(userDbId, userEffectiveTags);
                 logger.debug("使用有效组织标签查询文件");
             }
             
@@ -183,6 +182,17 @@ public class DocumentService {
             throw new RuntimeException("获取用户上传的文件列表失败: " + e.getMessage(), e);
         }
     }
+
+    private User resolveUser(String userId) {
+        try {
+            Long userIdLong = Long.parseLong(userId);
+            return userRepository.findById(userIdLong)
+                    .orElseThrow(() -> new RuntimeException("用户不存在: " + userId));
+        } catch (NumberFormatException ignored) {
+            return userRepository.findByUsername(userId)
+                    .orElseThrow(() -> new RuntimeException("用户不存在: " + userId));
+        }
+    }
     
     /**
      * 生成文件下载链接
@@ -195,7 +205,7 @@ public class DocumentService {
 
         try {
             // 从数据库获取文件信息
-            FileUpload fileUpload = fileUploadRepository.findByFileMd5(fileMd5)
+            FileUpload fileUpload = fileUploadRepository.findFirstByFileMd5OrderByCreatedAtDesc(fileMd5)
                     .orElseThrow(() -> new RuntimeException("文件不存在: " + fileMd5));
 
             // 优先使用新的MD5路径
@@ -248,7 +258,7 @@ public class DocumentService {
 
         try {
             // 从数据库获取文件信息
-            FileUpload fileUpload = fileUploadRepository.findByFileMd5(fileMd5)
+            FileUpload fileUpload = fileUploadRepository.findFirstByFileMd5OrderByCreatedAtDesc(fileMd5)
                     .orElseThrow(() -> new RuntimeException("文件不存在: " + fileMd5));
 
             // 优先使用新的MD5路径
@@ -343,8 +353,8 @@ public class DocumentService {
      */
     private boolean isTextFile(String extension) {
         String[] textExtensions = {
-            "txt", "md", "doc", "docx", "pdf", "html", "htm", "xml", "json", 
-            "csv", "log", "java", "js", "ts", "py", "cpp", "c", "h", "css", 
+            "txt", "md", "html", "htm", "xml", "json",
+            "csv", "log", "java", "js", "ts", "py", "cpp", "c", "h", "css",
             "scss", "less", "sql", "yml", "yaml", "properties", "conf", "config"
         };
         

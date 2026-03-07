@@ -26,6 +26,12 @@ public class DocumentVector {
     @Lob
     private String textContent;
 
+    @Column(name = "page_number")
+    private Integer pageNumber;
+
+    @Column(name = "anchor_text", length = 512)
+    private String anchorText;
+
     @Column(length = 32)
     private String modelVersion;
     
