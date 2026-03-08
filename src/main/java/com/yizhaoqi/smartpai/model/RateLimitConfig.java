@@ -26,13 +26,13 @@ public class RateLimitConfig {
     private Long singleWindowSeconds;
 
     @Column(name = "minute_max")
-    private Integer minuteMax;
+    private Long minuteMax;
 
     @Column(name = "minute_window_seconds")
     private Long minuteWindowSeconds;
 
     @Column(name = "day_max")
-    private Integer dayMax;
+    private Long dayMax;
 
     @Column(name = "day_window_seconds")
     private Long dayWindowSeconds;

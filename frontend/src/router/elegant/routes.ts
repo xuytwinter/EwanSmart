@@ -111,6 +111,18 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
+    name: 'model-provider',
+    path: '/model-provider',
+    component: 'layout.base$view.model-provider',
+    meta: {
+      title: 'model-provider',
+      i18nKey: 'route.model-provider',
+      icon: 'solar:tuning-square-line-duotone',
+      roles: ['ADMIN'],
+      order: 5
+    }
+  },
+  {
     name: 'org-tag',
     path: '/org-tag',
     component: 'layout.base$view.org-tag',
@@ -142,7 +154,7 @@ export const generatedRoutes: GeneratedRoute[] = [
       i18nKey: 'route.usage-monitor',
       icon: 'solar:chart-2-line-duotone',
       roles: ['ADMIN'],
-      order: 5
+      order: 6
     }
   },
   {

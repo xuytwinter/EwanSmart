@@ -208,6 +208,10 @@ public class DocumentController {
             dto.put("isPublic", file.isPublic());
             dto.put("createdAt", file.getCreatedAt());
             dto.put("mergedAt", file.getMergedAt());
+            dto.put("estimatedEmbeddingTokens", file.getEstimatedEmbeddingTokens());
+            dto.put("estimatedChunkCount", file.getEstimatedChunkCount());
+            dto.put("actualEmbeddingTokens", file.getActualEmbeddingTokens());
+            dto.put("actualChunkCount", file.getActualChunkCount());
             dto.put("orgTagName", getOrgTagName(file.getOrgTag()));
             return dto;
         }).collect(Collectors.toList());

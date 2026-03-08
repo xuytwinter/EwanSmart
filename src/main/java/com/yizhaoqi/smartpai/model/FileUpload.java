@@ -65,6 +65,18 @@ public class FileUpload {
     @Column(name = "is_public", nullable = false)
     private boolean isPublic = false;
 
+    @Column(name = "estimated_embedding_tokens")
+    private Long estimatedEmbeddingTokens;
+
+    @Column(name = "estimated_chunk_count")
+    private Integer estimatedChunkCount;
+
+    @Column(name = "actual_embedding_tokens")
+    private Long actualEmbeddingTokens;
+
+    @Column(name = "actual_chunk_count")
+    private Integer actualChunkCount;
+
     /**
      * 文件上传的创建时间
      * 自动记录文件上传开始的时间
@@ -79,4 +91,3 @@ public class FileUpload {
     @UpdateTimestamp
     private LocalDateTime mergedAt;
 }
-

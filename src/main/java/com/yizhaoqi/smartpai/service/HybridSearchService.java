@@ -391,7 +391,7 @@ public class HybridSearchService {
      */
     private List<Float> embedToVectorList(String text, String requesterId) {
         try {
-            List<float[]> vecs = embeddingClient.embed(List.of(text), requesterId);
+            List<float[]> vecs = embeddingClient.embed(List.of(text), requesterId, EmbeddingClient.UsageType.QUERY);
             if (vecs == null || vecs.isEmpty()) {
                 logger.warn("生成的向量为空");
                 return null;

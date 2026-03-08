@@ -41,19 +41,61 @@ public class RateLimitService {
         usageQuotaService.recordChatRequest(userId);
     }
 
-    public void checkLlmByUser(String userId) {
-        RateLimitConfigService.DualWindowLimitView limit = rateLimitConfigService.getCurrentSettings().llmRequest();
-        checkSingleWindow("llm:min:user:" + userId, limit.minuteMax(), limit.minuteWindowSeconds(), "LLM调用过于频繁");
-        checkSingleWindow("llm:day:user:" + userId, limit.dayMax(), limit.dayWindowSeconds(), "LLM当日调用次数已达上限");
+    public UsageQuotaService.TokenReservationBundle reserveLlmUsage(
+            String userId,
+            int estimatedPromptTokens,
+            int maxCompletionTokens
+    ) {
+        RateLimitConfigService.TokenBudgetView limit = rateLimitConfigService.getCurrentSettings().llmGlobalToken();
+        return usageQuotaService.reserveLlmTokensWithGlobalBudget(
+                userId,
+                estimatedPromptTokens,
+                maxCompletionTokens,
+                limit.minuteMax(),
+                limit.minuteWindowSeconds(),
+                limit.dayMax(),
+                limit.dayWindowSeconds()
+        );
     }
 
-    public void checkEmbeddingByUser(String userId) {
-        RateLimitConfigService.DualWindowLimitView limit = rateLimitConfigService.getCurrentSettings().embeddingBatch();
-        checkSingleWindow("emb:min:user:" + userId, limit.minuteMax(), limit.minuteWindowSeconds(), "向量化调用过于频繁");
-        checkSingleWindow("emb:day:user:" + userId, limit.dayMax(), limit.dayWindowSeconds(), "向量化当日调用次数已达上限");
+    public void checkEmbeddingQueryByUser(String userId) {
+        RateLimitConfigService.DualWindowLimitView limit = rateLimitConfigService.getCurrentSettings().embeddingQueryRequest();
+        checkSingleWindow("embedding:query:min:user:" + userId, limit.minuteMax(), limit.minuteWindowSeconds(), "Embedding查询过于频繁");
+        checkSingleWindow("embedding:query:day:user:" + userId, limit.dayMax(), limit.dayWindowSeconds(), "Embedding查询当日次数已达上限");
     }
 
-    private void checkSingleWindow(String key, int max, long windowSeconds, String message) {
+    public UsageQuotaService.TokenReservationBundle reserveEmbeddingUploadUsage(String userId, java.util.List<String> texts) {
+        RateLimitConfigService.TokenBudgetView limit = rateLimitConfigService.getCurrentSettings().embeddingUploadToken();
+        return usageQuotaService.reserveEmbeddingTokensWithGlobalBudget(
+                userId,
+                texts,
+                "embedding-upload",
+                "Embedding上传全网分钟Token预算已达上限",
+                "Embedding上传全网当日Token预算已达上限",
+                limit.minuteMax(),
+                limit.minuteWindowSeconds(),
+                limit.dayMax(),
+                limit.dayWindowSeconds()
+        );
+    }
+
+    public UsageQuotaService.TokenReservationBundle reserveEmbeddingQueryUsage(String userId, java.util.List<String> texts) {
+        checkEmbeddingQueryByUser(userId);
+        RateLimitConfigService.TokenBudgetView limit = rateLimitConfigService.getCurrentSettings().embeddingQueryGlobalToken();
+        return usageQuotaService.reserveEmbeddingTokensWithGlobalBudget(
+                userId,
+                texts,
+                "embedding-query",
+                "Embedding查询全网分钟Token预算已达上限",
+                "Embedding查询全网当日Token预算已达上限",
+                limit.minuteMax(),
+                limit.minuteWindowSeconds(),
+                limit.dayMax(),
+                limit.dayWindowSeconds()
+        );
+    }
+
+    private void checkSingleWindow(String key, long max, long windowSeconds, String message) {
         Long current = stringRedisTemplate.opsForValue().increment(key);
         if (current == null) {
             return;

@@ -31,6 +31,9 @@ public class ParseService {
     @Autowired
     private DocumentVectorRepository documentVectorRepository;
 
+    @Autowired
+    private UsageQuotaService usageQuotaService;
+
     @Value("${file.parsing.chunk-size}")
     private int chunkSize;
 
@@ -97,6 +100,27 @@ public class ParseService {
     public void parseAndSave(String fileMd5, InputStream fileStream) throws IOException, TikaException {
         // 使用默认值调用新方法
         parseAndSave(fileMd5, fileStream, "unknown", "DEFAULT", false);
+    }
+
+    public EmbeddingEstimate estimateEmbeddingUsage(InputStream fileStream) throws IOException, TikaException {
+        logger.info("开始估算文档 Embedding Token");
+        checkMemoryThreshold();
+
+        try (BufferedInputStream bufferedStream = new BufferedInputStream(fileStream, bufferSize)) {
+            if (isPdfDocument(bufferedStream)) {
+                return estimatePdfEmbeddingUsage(bufferedStream);
+            }
+
+            StreamingEstimateHandler handler = new StreamingEstimateHandler();
+            Metadata metadata = new Metadata();
+            ParseContext context = new ParseContext();
+            AutoDetectParser parser = new AutoDetectParser();
+            parser.parse(bufferedStream, handler, metadata, context);
+            return handler.snapshot();
+        } catch (SAXException e) {
+            logger.error("文档 Embedding Token 估算失败", e);
+            throw new RuntimeException("文档 Embedding Token 估算失败", e);
+        }
     }
 
     private void checkMemoryThreshold() {
@@ -177,6 +201,42 @@ public class ParseService {
         }
     }
 
+    private class StreamingEstimateHandler extends BodyContentHandler {
+        private final StringBuilder buffer = new StringBuilder();
+        private long estimatedTokens = 0L;
+        private int estimatedChunkCount = 0;
+
+        private StreamingEstimateHandler() {
+            super(-1);
+        }
+
+        @Override
+        public void characters(char[] ch, int start, int length) {
+            buffer.append(ch, start, length);
+            if (buffer.length() >= parentChunkSize) {
+                processParentChunk();
+            }
+        }
+
+        @Override
+        public void endDocument() {
+            if (buffer.length() > 0) {
+                processParentChunk();
+            }
+        }
+
+        private void processParentChunk() {
+            List<String> childChunks = ParseService.this.splitTextIntoChunksWithSemantics(buffer.toString(), chunkSize);
+            estimatedChunkCount += childChunks.size();
+            estimatedTokens += usageQuotaService.estimateEmbeddingTokens(childChunks);
+            buffer.setLength(0);
+        }
+
+        private EmbeddingEstimate snapshot() {
+            return new EmbeddingEstimate(estimatedTokens, estimatedChunkCount);
+        }
+    }
+
     /**
      * 将子切片列表保存到数据库。
      *
@@ -224,6 +284,29 @@ public class ParseService {
                 List<String> childChunks = splitTextIntoChunksWithSemantics(pageText, chunkSize);
                 savedChunkCount = saveChildChunks(fileMd5, childChunks, userId, orgTag, isPublic, savedChunkCount, pageNumber);
             }
+        }
+    }
+
+    private EmbeddingEstimate estimatePdfEmbeddingUsage(InputStream fileStream) throws IOException {
+        try (PDDocument document = PDDocument.load(fileStream)) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            long estimatedTokens = 0L;
+            int estimatedChunkCount = 0;
+
+            for (int pageNumber = 1; pageNumber <= document.getNumberOfPages(); pageNumber++) {
+                stripper.setStartPage(pageNumber);
+                stripper.setEndPage(pageNumber);
+                String pageText = stripper.getText(document);
+                if (pageText == null || pageText.isBlank()) {
+                    continue;
+                }
+
+                List<String> childChunks = splitTextIntoChunksWithSemantics(pageText, chunkSize);
+                estimatedChunkCount += childChunks.size();
+                estimatedTokens += usageQuotaService.estimateEmbeddingTokens(childChunks);
+            }
+
+            return new EmbeddingEstimate(estimatedTokens, estimatedChunkCount);
         }
     }
 
@@ -394,5 +477,8 @@ public class ParseService {
         }
 
         return chunks;
+    }
+
+    public record EmbeddingEstimate(long estimatedTokens, int estimatedChunkCount) {
     }
 }

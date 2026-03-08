@@ -10,8 +10,10 @@ public class RateLimitProperties {
     private final WindowLimit register = new WindowLimit(5, 3600);
     private final WindowLimit login = new WindowLimit(30, 60);
     private final WindowLimit chatMessage = new WindowLimit(30, 60);
-    private final DualWindowLimit llmRequest = new DualWindowLimit(20, 60, 500, 86400);
-    private final DualWindowLimit embeddingBatch = new DualWindowLimit(60, 60, 2000, 86400);
+    private final TokenBudgetLimit llmGlobalToken = new TokenBudgetLimit(120_000L, 60L, 8_000_000L, 86400L);
+    private final TokenBudgetLimit embeddingUploadToken = new TokenBudgetLimit(200_000L, 60L, 20_000_000L, 86400L);
+    private final DualWindowLimit embeddingQueryRequest = new DualWindowLimit(60L, 60L, 5000L, 86400L);
+    private final TokenBudgetLimit embeddingQueryGlobalToken = new TokenBudgetLimit(60_000L, 60L, 4_000_000L, 86400L);
 
     public WindowLimit getRegister() {
         return register;
@@ -25,12 +27,20 @@ public class RateLimitProperties {
         return chatMessage;
     }
 
-    public DualWindowLimit getLlmRequest() {
-        return llmRequest;
+    public TokenBudgetLimit getLlmGlobalToken() {
+        return llmGlobalToken;
     }
 
-    public DualWindowLimit getEmbeddingBatch() {
-        return embeddingBatch;
+    public TokenBudgetLimit getEmbeddingUploadToken() {
+        return embeddingUploadToken;
+    }
+
+    public DualWindowLimit getEmbeddingQueryRequest() {
+        return embeddingQueryRequest;
+    }
+
+    public TokenBudgetLimit getEmbeddingQueryGlobalToken() {
+        return embeddingQueryGlobalToken;
     }
 
     public static class WindowLimit {
@@ -63,26 +73,26 @@ public class RateLimitProperties {
     }
 
     public static class DualWindowLimit {
-        private int minuteMax;
+        private long minuteMax;
         private long minuteWindowSeconds;
-        private int dayMax;
+        private long dayMax;
         private long dayWindowSeconds;
 
         public DualWindowLimit() {
         }
 
-        public DualWindowLimit(int minuteMax, long minuteWindowSeconds, int dayMax, long dayWindowSeconds) {
+        public DualWindowLimit(long minuteMax, long minuteWindowSeconds, long dayMax, long dayWindowSeconds) {
             this.minuteMax = minuteMax;
             this.minuteWindowSeconds = minuteWindowSeconds;
             this.dayMax = dayMax;
             this.dayWindowSeconds = dayWindowSeconds;
         }
 
-        public int getMinuteMax() {
+        public long getMinuteMax() {
             return minuteMax;
         }
 
-        public void setMinuteMax(int minuteMax) {
+        public void setMinuteMax(long minuteMax) {
             this.minuteMax = minuteMax;
         }
 
@@ -94,11 +104,60 @@ public class RateLimitProperties {
             this.minuteWindowSeconds = minuteWindowSeconds;
         }
 
-        public int getDayMax() {
+        public long getDayMax() {
             return dayMax;
         }
 
-        public void setDayMax(int dayMax) {
+        public void setDayMax(long dayMax) {
+            this.dayMax = dayMax;
+        }
+
+        public long getDayWindowSeconds() {
+            return dayWindowSeconds;
+        }
+
+        public void setDayWindowSeconds(long dayWindowSeconds) {
+            this.dayWindowSeconds = dayWindowSeconds;
+        }
+    }
+
+    public static class TokenBudgetLimit {
+        private long minuteMax;
+        private long minuteWindowSeconds;
+        private long dayMax;
+        private long dayWindowSeconds;
+
+        public TokenBudgetLimit() {
+        }
+
+        public TokenBudgetLimit(long minuteMax, long minuteWindowSeconds, long dayMax, long dayWindowSeconds) {
+            this.minuteMax = minuteMax;
+            this.minuteWindowSeconds = minuteWindowSeconds;
+            this.dayMax = dayMax;
+            this.dayWindowSeconds = dayWindowSeconds;
+        }
+
+        public long getMinuteMax() {
+            return minuteMax;
+        }
+
+        public void setMinuteMax(long minuteMax) {
+            this.minuteMax = minuteMax;
+        }
+
+        public long getMinuteWindowSeconds() {
+            return minuteWindowSeconds;
+        }
+
+        public void setMinuteWindowSeconds(long minuteWindowSeconds) {
+            this.minuteWindowSeconds = minuteWindowSeconds;
+        }
+
+        public long getDayMax() {
+            return dayMax;
+        }
+
+        public void setDayMax(long dayMax) {
             this.dayMax = dayMax;
         }
 

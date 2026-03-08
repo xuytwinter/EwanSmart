@@ -5,6 +5,7 @@ import com.yizhaoqi.smartpai.model.FileProcessingTask;
 import com.yizhaoqi.smartpai.model.FileUpload;
 import com.yizhaoqi.smartpai.repository.FileUploadRepository;
 import com.yizhaoqi.smartpai.service.FileTypeValidationService;
+import com.yizhaoqi.smartpai.service.ParseService;
 import com.yizhaoqi.smartpai.service.UploadService;
 import com.yizhaoqi.smartpai.service.UserService;
 import com.yizhaoqi.smartpai.utils.LogUtils;
@@ -44,6 +45,9 @@ public class UploadController {
     
     @Autowired
     private FileTypeValidationService fileTypeValidationService;
+
+    @Autowired
+    private ParseService parseService;
 
     public UploadController(UploadService uploadService, KafkaTemplate<String, Object> kafkaTemplate) {
         this.uploadService = uploadService;
@@ -277,6 +281,31 @@ public class UploadController {
             String objectUrl = uploadService.mergeChunks(request.fileMd5(), request.fileName(), userId);
             LogUtils.logFileOperation(userId, "MERGE", request.fileName(), request.fileMd5(), "SUCCESS");
 
+            ParseService.EmbeddingEstimate embeddingEstimate = null;
+            try (io.minio.GetObjectResponse mergedFileStream = uploadService.getMergedFileStream(request.fileMd5())) {
+                embeddingEstimate = parseService.estimateEmbeddingUsage(mergedFileStream);
+                fileUpload.setEstimatedEmbeddingTokens(embeddingEstimate.estimatedTokens());
+                fileUpload.setEstimatedChunkCount(embeddingEstimate.estimatedChunkCount());
+                fileUploadRepository.save(fileUpload);
+                LogUtils.logBusiness(
+                        "MERGE_FILE",
+                        userId,
+                        "文档 Embedding 预估完成: fileMd5=%s, estimatedTokens=%d, estimatedChunkCount=%d",
+                        request.fileMd5(),
+                        embeddingEstimate.estimatedTokens(),
+                        embeddingEstimate.estimatedChunkCount()
+                );
+            } catch (Exception estimateException) {
+                LogUtils.logBusinessError(
+                        "MERGE_FILE",
+                        userId,
+                        "文档 Embedding 预估失败: fileMd5=%s, fileName=%s",
+                        estimateException,
+                        request.fileMd5(),
+                        request.fileName()
+                );
+            }
+
             // 发送任务到 Kafka，包含完整的权限信息
             LogUtils.logBusiness("MERGE_FILE", userId, "创建文件处理任务: fileMd5=%s, fileName=%s, fileType=%s, orgTag=%s, isPublic=%s", 
                     request.fileMd5(), request.fileName(), fileType, fileUpload.getOrgTag(), fileUpload.isPublic());
@@ -301,6 +330,10 @@ public class UploadController {
             // 构建数据对象
             Map<String, Object> data = new HashMap<>();
             data.put("object_url", objectUrl);
+            if (embeddingEstimate != null) {
+                data.put("estimatedEmbeddingTokens", embeddingEstimate.estimatedTokens());
+                data.put("estimatedChunkCount", embeddingEstimate.estimatedChunkCount());
+            }
             
             // 构建统一响应格式
             Map<String, Object> response = new HashMap<>();
@@ -481,4 +514,3 @@ public class UploadController {
         }
     }
 }
-

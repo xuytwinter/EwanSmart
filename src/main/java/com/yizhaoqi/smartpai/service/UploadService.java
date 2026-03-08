@@ -6,6 +6,7 @@ import com.yizhaoqi.smartpai.repository.ChunkInfoRepository;
 import com.yizhaoqi.smartpai.repository.FileUploadRepository;
 import io.minio.*;
 import io.minio.http.Method;
+import io.minio.GetObjectResponse;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -665,5 +666,14 @@ public class UploadService {
                       fileMd5, fileName, fileType, e.getClass().getName(), e.getMessage(), e);
             throw new RuntimeException("文件合并失败: " + e.getMessage(), e);
         }
+    }
+
+    public GetObjectResponse getMergedFileStream(String fileMd5) throws Exception {
+        return minioClient.getObject(
+                GetObjectArgs.builder()
+                        .bucket("uploads")
+                        .object("merged/" + fileMd5)
+                        .build()
+        );
     }
 }

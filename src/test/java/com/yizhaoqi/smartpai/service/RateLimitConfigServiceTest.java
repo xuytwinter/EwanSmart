@@ -39,8 +39,10 @@ class RateLimitConfigServiceTest {
     void shouldLoadPersistedOverrides() {
         when(rateLimitConfigRepository.findAll()).thenReturn(List.of(
                 createWindowConfig("chat-message", 45, 90L),
-                createDualConfig("llm-request", 25, 60L, 600, 86400L),
-                createDualConfig("embedding-batch", 80, 60L, 2400, 86400L)
+                createDualConfig("llm-global-token", 25000L, 60L, 600000L, 86400L),
+                createDualConfig("embedding-upload-token", 80000L, 60L, 2400000L, 86400L),
+                createDualConfig("embedding-query-request", 70L, 60L, 2200L, 86400L),
+                createDualConfig("embedding-query-global-token", 30000L, 60L, 1200000L, 86400L)
         ));
 
         rateLimitConfigService.loadPersistedConfigs();
@@ -48,10 +50,14 @@ class RateLimitConfigServiceTest {
         RateLimitConfigService.RateLimitSettingsView settings = rateLimitConfigService.getCurrentSettings();
         assertEquals(45, settings.chatMessage().max());
         assertEquals(90L, settings.chatMessage().windowSeconds());
-        assertEquals(25, settings.llmRequest().minuteMax());
-        assertEquals(600, settings.llmRequest().dayMax());
-        assertEquals(80, settings.embeddingBatch().minuteMax());
-        assertEquals(2400, settings.embeddingBatch().dayMax());
+        assertEquals(25000L, settings.llmGlobalToken().minuteMax());
+        assertEquals(600000L, settings.llmGlobalToken().dayMax());
+        assertEquals(80000L, settings.embeddingUploadToken().minuteMax());
+        assertEquals(2400000L, settings.embeddingUploadToken().dayMax());
+        assertEquals(70L, settings.embeddingQueryRequest().minuteMax());
+        assertEquals(2200L, settings.embeddingQueryRequest().dayMax());
+        assertEquals(30000L, settings.embeddingQueryGlobalToken().minuteMax());
+        assertEquals(1200000L, settings.embeddingQueryGlobalToken().dayMax());
     }
 
     @Test
@@ -61,24 +67,30 @@ class RateLimitConfigServiceTest {
 
         RateLimitConfigService.UpdateRateLimitRequest request = new RateLimitConfigService.UpdateRateLimitRequest(
                 new RateLimitConfigService.WindowLimitView(40, 60L),
-                new RateLimitConfigService.DualWindowLimitView(30, 60L, 700, 86400L),
-                new RateLimitConfigService.DualWindowLimitView(70, 60L, 2200, 86400L)
+                new RateLimitConfigService.TokenBudgetView(120000L, 60L, 9000000L, 86400L),
+                new RateLimitConfigService.TokenBudgetView(180000L, 60L, 22000000L, 86400L),
+                new RateLimitConfigService.DualWindowLimitView(70L, 60L, 2200L, 86400L),
+                new RateLimitConfigService.TokenBudgetView(50000L, 60L, 3500000L, 86400L)
         );
 
         RateLimitConfigService.RateLimitSettingsView updated = rateLimitConfigService.updateSettings(request, "admin");
 
         assertEquals(40, updated.chatMessage().max());
-        assertEquals(30, updated.llmRequest().minuteMax());
-        assertEquals(2200, updated.embeddingBatch().dayMax());
-        verify(rateLimitConfigRepository, times(3)).save(any(RateLimitConfig.class));
+        assertEquals(120000L, updated.llmGlobalToken().minuteMax());
+        assertEquals(22000000L, updated.embeddingUploadToken().dayMax());
+        assertEquals(2200L, updated.embeddingQueryRequest().dayMax());
+        assertEquals(3500000L, updated.embeddingQueryGlobalToken().dayMax());
+        verify(rateLimitConfigRepository, times(5)).save(any(RateLimitConfig.class));
     }
 
     @Test
     void shouldRejectInvalidDailyLimit() {
         RateLimitConfigService.UpdateRateLimitRequest request = new RateLimitConfigService.UpdateRateLimitRequest(
                 new RateLimitConfigService.WindowLimitView(30, 60L),
-                new RateLimitConfigService.DualWindowLimitView(50, 60L, 40, 86400L),
-                new RateLimitConfigService.DualWindowLimitView(60, 60L, 2000, 86400L)
+                new RateLimitConfigService.TokenBudgetView(50000L, 60L, 40000L, 86400L),
+                new RateLimitConfigService.TokenBudgetView(120000L, 60L, 20000000L, 86400L),
+                new RateLimitConfigService.DualWindowLimitView(60L, 60L, 2000L, 86400L),
+                new RateLimitConfigService.TokenBudgetView(30000L, 60L, 1000000L, 86400L)
         );
 
         assertThrows(CustomException.class, () -> rateLimitConfigService.updateSettings(request, "admin"));
@@ -93,7 +105,7 @@ class RateLimitConfigServiceTest {
         return config;
     }
 
-    private RateLimitConfig createDualConfig(String key, int minuteMax, long minuteWindowSeconds, int dayMax, long dayWindowSeconds) {
+    private RateLimitConfig createDualConfig(String key, long minuteMax, long minuteWindowSeconds, long dayMax, long dayWindowSeconds) {
         RateLimitConfig config = new RateLimitConfig();
         config.setConfigKey(key);
         config.setMinuteMax(minuteMax);

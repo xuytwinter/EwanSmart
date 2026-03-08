@@ -9,6 +9,7 @@ import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.OrganizationTagRepository;
 import com.yizhaoqi.smartpai.repository.UserRepository;
 import com.yizhaoqi.smartpai.service.InviteCodeService;
+import com.yizhaoqi.smartpai.service.ModelProviderConfigService;
 import com.yizhaoqi.smartpai.service.RateLimitConfigService;
 import com.yizhaoqi.smartpai.service.UsageDashboardService;
 import com.yizhaoqi.smartpai.service.UserService;
@@ -62,6 +63,9 @@ public class AdminController {
 
     @Autowired
     private RateLimitConfigService rateLimitConfigService;
+
+    @Autowired
+    private ModelProviderConfigService modelProviderConfigService;
 
     /**
      * 获取所有用户列表
@@ -272,6 +276,70 @@ public class AdminController {
             LogUtils.logBusinessError("ADMIN_UPDATE_RATE_LIMITS", adminUsername, "更新限流配置异常: %s", e, e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("code", 500, "message", "更新限流配置失败: " + e.getMessage()));
+        }
+    }
+
+    @GetMapping("/model-providers")
+    public ResponseEntity<?> getModelProviders(@RequestHeader("Authorization") String token) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "获取模型配置成功",
+                    "data", modelProviderConfigService.getCurrentSettings()
+            ));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_GET_MODEL_PROVIDERS", adminUsername, "获取模型配置失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "获取模型配置失败: " + e.getMessage()));
+        }
+    }
+
+    @PutMapping("/model-providers/{scope}")
+    public ResponseEntity<?> updateModelProviders(
+            @RequestHeader("Authorization") String token,
+            @PathVariable String scope,
+            @RequestBody ModelProviderConfigService.UpdateScopeRequest request) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "模型配置更新成功",
+                    "data", modelProviderConfigService.updateScope(scope, request, adminUsername)
+            ));
+        } catch (CustomException e) {
+            LogUtils.logBusinessError("ADMIN_UPDATE_MODEL_PROVIDERS", adminUsername, "更新模型配置失败: %s", e, e.getMessage());
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_UPDATE_MODEL_PROVIDERS", adminUsername, "更新模型配置异常: %s", e, e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "更新模型配置失败: " + e.getMessage()));
+        }
+    }
+
+    @PostMapping("/model-providers/{scope}/test")
+    public ResponseEntity<?> testModelProviderConnection(
+            @RequestHeader("Authorization") String token,
+            @PathVariable String scope,
+            @RequestBody ModelProviderConfigService.ProviderConnectionTestRequest request) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "模型连接测试完成",
+                    "data", modelProviderConfigService.testConnection(scope, request)
+            ));
+        } catch (CustomException e) {
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "模型连接测试失败: " + e.getMessage()));
         }
     }
     

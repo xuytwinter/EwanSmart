@@ -58,6 +58,83 @@ public class UsageQuotaService {
                 properties.getEmbedding().getDayMaxTokens(), "Embedding当日Token额度已达上限");
     }
 
+    public TokenReservationBundle reserveLlmTokensWithGlobalBudget(
+            String userId,
+            int estimatedPromptTokens,
+            int maxCompletionTokens,
+            long minuteLimit,
+            long minuteWindowSeconds,
+            long dayLimit,
+            long dayWindowSeconds
+    ) {
+        int reserveTokens = Math.max(estimatedPromptTokens, 0) + Math.max(maxCompletionTokens, 0);
+        reserveTokens = Math.max(reserveTokens, 1);
+
+        List<TokenReservation> reservations = new java.util.ArrayList<>(3);
+        try {
+            addIfActive(reservations, reserveLlmTokens(userId, estimatedPromptTokens, maxCompletionTokens));
+            addIfActive(reservations, reserveGlobalRollingTokens(
+                    "llm",
+                    "minute",
+                    reserveTokens,
+                    minuteLimit,
+                    minuteWindowSeconds,
+                    "LLM全网分钟Token预算已达上限"
+            ));
+            addIfActive(reservations, reserveGlobalRollingTokens(
+                    "llm",
+                    "day",
+                    reserveTokens,
+                    dayLimit,
+                    dayWindowSeconds,
+                    "LLM全网当日Token预算已达上限"
+            ));
+        } catch (RuntimeException exception) {
+            abortReservedTokens(reservations);
+            throw exception;
+        }
+        return TokenReservationBundle.of("llm", userId, reservations);
+    }
+
+    public TokenReservationBundle reserveEmbeddingTokensWithGlobalBudget(
+            String userId,
+            List<String> texts,
+            String budgetScope,
+            String minuteExceededMessage,
+            String dayExceededMessage,
+            long minuteLimit,
+            long minuteWindowSeconds,
+            long dayLimit,
+            long dayWindowSeconds
+    ) {
+        int reserveTokens = Math.max(estimateEmbeddingTokens(texts), 1);
+
+        List<TokenReservation> reservations = new java.util.ArrayList<>(3);
+        try {
+            addIfActive(reservations, reserveEmbeddingTokens(userId, texts));
+            addIfActive(reservations, reserveGlobalRollingTokens(
+                    budgetScope,
+                    "minute",
+                    reserveTokens,
+                    minuteLimit,
+                    minuteWindowSeconds,
+                    minuteExceededMessage
+            ));
+            addIfActive(reservations, reserveGlobalRollingTokens(
+                    budgetScope,
+                    "day",
+                    reserveTokens,
+                    dayLimit,
+                    dayWindowSeconds,
+                    dayExceededMessage
+            ));
+        } catch (RuntimeException exception) {
+            abortReservedTokens(reservations);
+            throw exception;
+        }
+        return TokenReservationBundle.of(budgetScope, userId, reservations);
+    }
+
     public void recordChatRequest(String userId) {
         if (!isQuotaManaged(userId)) {
             return;
@@ -73,16 +150,23 @@ public class UsageQuotaService {
 
         long delta = (long) actualTokens - reservation.reservedTokens();
         if (delta == 0) {
-            incrementMetricKey(reservation.metricKey(), 1, reservation.expiresInSeconds());
+            incrementMetricIfPresent(reservation);
+            return;
+        }
+
+        if (!reservation.retainHistory() && !Boolean.TRUE.equals(stringRedisTemplate.hasKey(reservation.quotaKey()))) {
+            incrementMetricIfPresent(reservation);
             return;
         }
 
         Long total = stringRedisTemplate.opsForValue().increment(reservation.quotaKey(), delta);
-        ensureExpiry(reservation.quotaKey(), retentionTtlSeconds());
-        incrementMetricKey(reservation.metricKey(), 1, reservation.expiresInSeconds());
+        if (reservation.retainHistory()) {
+            ensureExpiry(reservation.quotaKey(), retentionTtlSeconds());
+        }
+        incrementMetricIfPresent(reservation);
 
         if (total != null && total > reservation.limit()) {
-            logger.warn("用户 {} 的 {} token 实际用量超过当日额度: total={}, limit={}",
+            logger.warn("用户 {} 的 {} token 实际用量超过额度: total={}, limit={}",
                     reservation.userId(), reservation.scope(), total, reservation.limit());
         }
     }
@@ -92,8 +176,34 @@ public class UsageQuotaService {
             return;
         }
 
+        if (!reservation.retainHistory() && !Boolean.TRUE.equals(stringRedisTemplate.hasKey(reservation.quotaKey()))) {
+            return;
+        }
+
         stringRedisTemplate.opsForValue().increment(reservation.quotaKey(), -reservation.reservedTokens());
-        ensureExpiry(reservation.quotaKey(), retentionTtlSeconds());
+        if (reservation.retainHistory()) {
+            ensureExpiry(reservation.quotaKey(), retentionTtlSeconds());
+        }
+    }
+
+    public void settleReservation(TokenReservationBundle reservationBundle, int actualTokens) {
+        if (reservationBundle == null || reservationBundle.noop()) {
+            return;
+        }
+
+        for (TokenReservation reservation : reservationBundle.reservations()) {
+            settleReservation(reservation, actualTokens);
+        }
+    }
+
+    public void abortReservation(TokenReservationBundle reservationBundle) {
+        if (reservationBundle == null || reservationBundle.noop()) {
+            return;
+        }
+
+        for (TokenReservation reservation : reservationBundle.reservations()) {
+            abortReservation(reservation);
+        }
     }
 
     public UserUsageSnapshot getSnapshot(String userId) {
@@ -201,7 +311,57 @@ public class UsageQuotaService {
             throw new RateLimitExceededException(message, expiresInSeconds);
         }
 
-        return new TokenReservation(scope, userId, quotaKey, buildMetricKey(scope, userId), reserveTokens, dailyLimit, expiresInSeconds, false);
+        return new TokenReservation(scope, userId, quotaKey, buildMetricKey(scope, userId), reserveTokens, dailyLimit, expiresInSeconds, false, true);
+    }
+
+    private TokenReservation reserveGlobalRollingTokens(
+            String scope,
+            String windowLabel,
+            int reserveTokens,
+            long limit,
+            long windowSeconds,
+            String message
+    ) {
+        if (limit <= 0 || windowSeconds <= 0) {
+            return TokenReservation.noop(scope, "global");
+        }
+
+        String quotaKey = buildGlobalBudgetKey(scope, windowLabel);
+        Long total = stringRedisTemplate.opsForValue().increment(quotaKey, reserveTokens);
+        if (total != null && total == reserveTokens) {
+            stringRedisTemplate.expire(quotaKey, windowSeconds, TimeUnit.SECONDS);
+        }
+
+        Long ttl = stringRedisTemplate.getExpire(quotaKey, TimeUnit.SECONDS);
+        long expiresInSeconds = ttl == null || ttl < 0 ? windowSeconds : ttl;
+        if (total != null && total > limit) {
+            stringRedisTemplate.opsForValue().increment(quotaKey, -reserveTokens);
+            throw new RateLimitExceededException(message, expiresInSeconds);
+        }
+
+        return new TokenReservation(scope + "-global-" + windowLabel, "global", quotaKey, "", reserveTokens, limit, expiresInSeconds, false, false);
+    }
+
+    private void addIfActive(List<TokenReservation> reservations, TokenReservation reservation) {
+        if (reservation != null && !reservation.noop()) {
+            reservations.add(reservation);
+        }
+    }
+
+    private void abortReservedTokens(List<TokenReservation> reservations) {
+        if (reservations == null || reservations.isEmpty()) {
+            return;
+        }
+
+        for (int index = reservations.size() - 1; index >= 0; index--) {
+            abortReservation(reservations.get(index));
+        }
+    }
+
+    private void incrementMetricIfPresent(TokenReservation reservation) {
+        if (reservation.metricKey() != null && !reservation.metricKey().isBlank()) {
+            incrementMetricKey(reservation.metricKey(), 1, reservation.expiresInSeconds());
+        }
     }
 
     private void incrementMetricKey(String metricKey, long increment, long expiresInSeconds) {
@@ -257,6 +417,10 @@ public class UsageQuotaService {
         return "quota:" + scope + ":requests:" + day + ":user:" + userId;
     }
 
+    private String buildGlobalBudgetKey(String scope, String windowLabel) {
+        return "budget:" + scope + ":global:" + windowLabel;
+    }
+
     private String currentDay() {
         return ZonedDateTime.now(ZoneId.systemDefault()).format(DAY_FORMATTER);
     }
@@ -294,10 +458,27 @@ public class UsageQuotaService {
             long reservedTokens,
             long limit,
             long expiresInSeconds,
-            boolean noop
+            boolean noop,
+            boolean retainHistory
     ) {
         public static TokenReservation noop(String scope, String userId) {
-            return new TokenReservation(scope, userId, "", "", 0, 0, 0, true);
+            return new TokenReservation(scope, userId, "", "", 0, 0, 0, true, false);
+        }
+    }
+
+    public record TokenReservationBundle(
+            String scope,
+            String userId,
+            List<TokenReservation> reservations,
+            boolean noop
+    ) {
+        public static TokenReservationBundle of(String scope, String userId, List<TokenReservation> reservations) {
+            List<TokenReservation> normalized = reservations == null ? List.of() : List.copyOf(reservations);
+            return new TokenReservationBundle(scope, userId, normalized, normalized.isEmpty());
+        }
+
+        public static TokenReservationBundle noop(String scope, String userId) {
+            return new TokenReservationBundle(scope, userId, List.of(), true);
         }
     }
 

@@ -169,10 +169,50 @@ declare namespace Api {
       dayWindowSeconds: number;
     }
 
+    interface TokenBudgetLimit {
+      minuteMax: number;
+      minuteWindowSeconds: number;
+      dayMax: number;
+      dayWindowSeconds: number;
+    }
+
     interface RateLimitSettings {
       chatMessage: WindowLimit;
-      llmRequest: DualWindowLimit;
-      embeddingBatch: DualWindowLimit;
+      llmGlobalToken: TokenBudgetLimit;
+      embeddingUploadToken: TokenBudgetLimit;
+      embeddingQueryRequest: DualWindowLimit;
+      embeddingQueryGlobalToken: TokenBudgetLimit;
+    }
+
+    interface ModelProviderItem {
+      provider: string;
+      displayName: string;
+      apiStyle: string;
+      apiBaseUrl: string;
+      model: string;
+      dimension: number | null;
+      enabled: boolean;
+      active: boolean;
+      hasApiKey: boolean;
+      maskedApiKey: string;
+      apiKeyInput?: string;
+    }
+
+    interface ModelProviderScopeSettings {
+      scope: 'llm' | 'embedding';
+      activeProvider: string;
+      providers: ModelProviderItem[];
+    }
+
+    interface ModelProviderSettings {
+      llm: ModelProviderScopeSettings;
+      embedding: ModelProviderScopeSettings;
+    }
+
+    interface ConnectivityTestResult {
+      success: boolean;
+      message: string;
+      latencyMs: number;
     }
 
     interface UsageTrendPoint {
@@ -259,6 +299,10 @@ declare namespace Api {
       uploadedChunks: number[];
       progress: number;
       status: UploadStatus;
+      estimatedEmbeddingTokens?: number;
+      estimatedChunkCount?: number;
+      actualEmbeddingTokens?: number;
+      actualChunkCount?: number;
       createdAt?: string;
       mergedAt?: string;
       requestIds?: string[]; // 请求ID，用于取消上传
@@ -273,9 +317,10 @@ declare namespace Api {
       totalChunks: number;
     }
 
-    interface Result {
+    interface MergeResult {
       objectUrl: string;
-      fileSize: number;
+      estimatedEmbeddingTokens?: number;
+      estimatedChunkCount?: number;
     }
   }
 

@@ -3,7 +3,6 @@ package com.yizhaoqi.smartpai.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.yizhaoqi.smartpai.client.DeepSeekClient;
 import com.yizhaoqi.smartpai.entity.SearchResult;
 import com.yizhaoqi.smartpai.exception.RateLimitExceededException;
 import org.slf4j.Logger;
@@ -37,7 +36,7 @@ public class ChatHandler {
     private static final Logger logger = LoggerFactory.getLogger(ChatHandler.class);
     private final RedisTemplate<String, String> redisTemplate;
     private final HybridSearchService searchService;
-    private final DeepSeekClient deepSeekClient;
+    private final LlmProviderRouter llmProviderRouter;
     private final RateLimitService rateLimitService;
     private final ThreadPoolTaskExecutor chatMonitorExecutor;
     private final ObjectMapper objectMapper;
@@ -53,12 +52,12 @@ public class ChatHandler {
 
     public ChatHandler(RedisTemplate<String, String> redisTemplate,
                       HybridSearchService searchService,
-                      DeepSeekClient deepSeekClient,
+                      LlmProviderRouter llmProviderRouter,
                       RateLimitService rateLimitService,
                       @Qualifier("chatMonitorExecutor") ThreadPoolTaskExecutor chatMonitorExecutor) {
         this.redisTemplate = redisTemplate;
         this.searchService = searchService;
-        this.deepSeekClient = deepSeekClient;
+        this.llmProviderRouter = llmProviderRouter;
         this.rateLimitService = rateLimitService;
         this.chatMonitorExecutor = chatMonitorExecutor;
         this.objectMapper = new ObjectMapper();
@@ -68,7 +67,6 @@ public class ChatHandler {
         logger.info("开始处理消息，用户ID: {}, 会话ID: {}", userId, session.getId());
         try {
             rateLimitService.checkChatByUser(userId);
-            rateLimitService.checkLlmByUser(userId);
 
             // 1. 获取或创建会话 ID
             String conversationId = getOrCreateConversationId(userId);
@@ -91,9 +89,9 @@ public class ChatHandler {
             // 4. 构建上下文
             String context = buildContext(searchResults, session.getId());
             
-            // 5. 调用 DeepSeek API 并处理流式响应
-            logger.info("调用DeepSeek API生成回复");
-            deepSeekClient.streamResponse(userId, userMessage, context, history, 
+            // 5. 调用活动 LLM Provider 并处理流式响应
+            logger.info("调用活动 LLM Provider 生成回复");
+            llmProviderRouter.streamResponse(userId, userMessage, context, history,
                 chunk -> {
                     // 累积响应内容
                     StringBuilder responseBuilder = responseBuilders.get(session.getId());
@@ -297,7 +295,7 @@ public class ChatHandler {
 
     private String buildContext(List<SearchResult> searchResults, String sessionId) {
         if (searchResults == null || searchResults.isEmpty()) {
-            // 返回空字符串，让 DeepSeekClient 按"无检索结果"逻辑处理
+            // 返回空字符串，让 LLM provider 按"无检索结果"逻辑处理
             return "";
         }
 
