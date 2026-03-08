@@ -5,6 +5,7 @@ import com.yizhaoqi.smartpai.exception.RateLimitExceededException;
 import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.UserRepository;
 import com.yizhaoqi.smartpai.service.RateLimitService;
+import com.yizhaoqi.smartpai.service.UsageQuotaService;
 import com.yizhaoqi.smartpai.service.UserService;
 import com.yizhaoqi.smartpai.utils.JwtUtils;
 import com.yizhaoqi.smartpai.utils.LogUtils;
@@ -35,6 +36,9 @@ public class UserController {
 
     @Autowired
     private RateLimitService rateLimitService;
+
+    @Autowired
+    private UsageQuotaService usageQuotaService;
 
     // 用户注册接口
     // 接收用户请求体中的用户名和密码，并调用用户服务进行注册
@@ -248,6 +252,31 @@ public class UserController {
             LogUtils.logBusinessError("SET_PRIMARY_ORG", username, "设置主组织异常: %s", e, e.getMessage());
             monitor.end("设置主组织异常: " + e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "Internal server error"));
+        }
+    }
+
+    @GetMapping("/usage")
+    public ResponseEntity<?> getCurrentUserUsage(@RequestHeader("Authorization") String token) {
+        String username = null;
+        try {
+            username = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+            if (username == null || username.isEmpty()) {
+                throw new CustomException("Invalid token", HttpStatus.UNAUTHORIZED);
+            }
+
+            User user = userRepository.findByUsername(username)
+                    .orElseThrow(() -> new CustomException("User not found", HttpStatus.NOT_FOUND));
+
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "Get user usage successful",
+                    "data", usageQuotaService.getSnapshot(String.valueOf(user.getId()))
+            ));
+        } catch (CustomException e) {
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "Failed to get usage: " + e.getMessage()));
         }
     }
 

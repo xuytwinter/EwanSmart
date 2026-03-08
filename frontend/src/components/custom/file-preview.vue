@@ -42,6 +42,7 @@
               :file-name="fileName"
               :page-number="pageNumber"
               :anchor-text="anchorText"
+              :visible="visible"
             />
           </template>
           <template v-else-if="previewType === 'image' && resolvedPreviewUrl">
@@ -310,26 +311,28 @@ function closePreview() {
 
 <style scoped lang="scss">
 .file-preview-container {
-  @apply h-full flex flex-col bg-white;
+  @apply flex h-full min-h-0 flex-col bg-white;
+  height: min(80vh, calc(100vh - 96px));
+  min-height: min(560px, calc(100vh - 48px));
   
   .preview-header {
     @apply flex items-center justify-between border-b border-stone-200 bg-stone-50 px-5 py-4;
   }
   
   .preview-content {
-    @apply flex-1 overflow-hidden bg-stone-100;
+    @apply min-h-0 flex-1 overflow-hidden bg-stone-100;
     
     .content-wrapper {
-      @apply h-full overflow-auto p-5;
+      @apply h-full min-h-0 overflow-hidden p-5;
     }
     
     .preview-text {
-      @apply m-0 rounded-xl border border-stone-200 bg-white p-5 text-sm whitespace-pre-wrap break-words shadow-sm;
+      @apply m-0 h-full overflow-auto rounded-xl border border-stone-200 bg-white p-5 text-sm whitespace-pre-wrap break-words shadow-sm;
       font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
       line-height: 1.5;
     }
     .image-preview-shell {
-      @apply flex min-h-full items-center justify-center rounded-2xl border border-stone-200 bg-white p-6 shadow-sm;
+      @apply flex h-full min-h-0 overflow-auto items-center justify-center rounded-2xl border border-stone-200 bg-white p-6 shadow-sm;
     }
 
     .preview-image {

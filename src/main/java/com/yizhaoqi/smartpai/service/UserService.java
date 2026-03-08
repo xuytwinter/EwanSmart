@@ -65,6 +65,9 @@ public class UserService {
     @Autowired
     private InviteCodeService inviteCodeService;
 
+    @Autowired
+    private UsageQuotaService usageQuotaService;
+
     /**
      * 注册新用户。
      *
@@ -763,6 +766,12 @@ public class UserService {
         }
         
         // 转换为前端需要的格式
+        Map<String, UsageQuotaService.UserUsageSnapshot> usageSnapshots = usageQuotaService.getSnapshots(
+                userPage.getContent().stream()
+                        .map(user -> String.valueOf(user.getId()))
+                        .toList()
+        );
+
         List<Map<String, Object>> userList = userPage.getContent().stream()
                 .map(user -> {
                     Map<String, Object> userMap = new HashMap<>();
@@ -789,6 +798,10 @@ public class UserService {
                     userMap.put("primaryOrg", user.getPrimaryOrg());
                     userMap.put("status", user.getRole() == User.Role.USER ? 1 : 0);
                     userMap.put("createdAt", user.getCreatedAt());
+                    userMap.put("usage", usageSnapshots.getOrDefault(
+                            String.valueOf(user.getId()),
+                            usageQuotaService.getSnapshot(String.valueOf(user.getId()))
+                    ));
                     
                     return userMap;
                 })

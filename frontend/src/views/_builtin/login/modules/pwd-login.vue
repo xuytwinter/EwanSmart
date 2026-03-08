@@ -4,6 +4,7 @@ import { loginModuleRecord } from '@/constants/app';
 import { useAuthStore } from '@/store/modules/auth';
 import { useRouterPush } from '@/hooks/common/router';
 import { useFormRules, useNaiveForm } from '@/hooks/common/form';
+import { localStg } from '@/utils/storage';
 import { $t } from '@/locales';
 
 defineOptions({
@@ -17,14 +18,20 @@ const { formRef, validate } = useNaiveForm();
 interface FormModel {
   userName: string;
   password: string;
+  rememberMe: boolean;
 }
 
+type FormRuleModel = Pick<FormModel, 'userName' | 'password'>;
+
+const rememberedLogin = localStg.get('rememberedLogin');
+
 const model: FormModel = reactive({
-  userName: '',
-  password: ''
+  userName: rememberedLogin?.userName || '',
+  password: rememberedLogin?.password || '',
+  rememberMe: Boolean(rememberedLogin)
 });
 
-const rules = computed<Record<keyof FormModel, App.Global.FormRule[]>>(() => {
+const rules = computed<Record<keyof FormRuleModel, App.Global.FormRule[]>>(() => {
   // inside computed to make locale reactive, if not apply i18n, you can define it without computed
   const { formRules } = useFormRules();
 
@@ -36,7 +43,21 @@ const rules = computed<Record<keyof FormModel, App.Global.FormRule[]>>(() => {
 
 async function handleSubmit() {
   await validate();
-  await authStore.login(model.userName, model.password);
+
+  const success = await authStore.login(model.userName, model.password);
+
+  if (!success) {
+    return;
+  }
+
+  if (model.rememberMe) {
+    localStg.set('rememberedLogin', {
+      userName: model.userName,
+      password: model.password
+    });
+  } else {
+    localStg.remove('rememberedLogin');
+  }
 }
 
 </script>
@@ -62,6 +83,11 @@ async function handleSubmit() {
         </template>
       </NInput>
     </NFormItem>
+    <div class="mb-6 flex-y-center justify-between">
+      <NCheckbox v-model:checked="model.rememberMe">
+        {{ $t('page.login.pwdLogin.rememberMe') }}
+      </NCheckbox>
+    </div>
     <div class="flex-col gap-6">
       <NButton type="primary" size="large" round block :loading="authStore.loginLoading" @click="handleSubmit">
         {{ $t('page.login.common.login') }}

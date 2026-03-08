@@ -183,7 +183,7 @@ public class BootstrapKnowledgeInitializer implements CommandLineRunner {
         }
 
         try {
-            vectorizationService.vectorize(fileMd5, ownerUserId, bootstrapOrgTag, bootstrapPublic);
+            vectorizationService.vectorize(fileMd5, ownerUserId, bootstrapOrgTag, bootstrapPublic, bootstrapUserId);
 
             FileUpload fileUpload = new FileUpload();
             fileUpload.setFileMd5(fileMd5);

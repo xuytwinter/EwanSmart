@@ -17,6 +17,8 @@ import java.util.Map;
 public class ChatWebSocketHandler extends TextWebSocketHandler {
     
     private static final Logger logger = LoggerFactory.getLogger(ChatWebSocketHandler.class);
+    private static final String HEARTBEAT_PING = "__chat_ping__";
+    private static final String HEARTBEAT_PONG = "__chat_pong__";
     private final ChatHandler chatHandler;
     private final ConcurrentHashMap<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -75,6 +77,13 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         String userId = extractUserId(extractToken(session));
         try {
             String payload = message.getPayload();
+
+            // 心跳消息只用于保活连接，不进入聊天处理链路。
+            if (HEARTBEAT_PING.equals(payload)) {
+                session.sendMessage(new TextMessage(HEARTBEAT_PONG));
+                return;
+            }
+
             logger.info("接收到消息，用户ID: {}，会话ID: {}，消息长度: {}", 
                        userId, session.getId(), payload.length());
             
@@ -134,13 +143,13 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     }
 
     private String extractUserId(String jwtToken) {
-        String username = jwtUtils.extractUsernameFromToken(jwtToken);
-        if (username == null || username.isBlank()) {
-            throw new IllegalArgumentException("无法从JWT令牌中提取用户名");
+        String userId = jwtUtils.extractUserIdFromToken(jwtToken);
+        if (userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("无法从JWT令牌中提取用户ID");
         }
 
-        logger.debug("从JWT令牌中提取的用户名: {}", username);
-        return username;
+        logger.debug("从JWT令牌中提取的用户ID: {}", userId);
+        return userId;
     }
 
     private String extractToken(WebSocketSession session) {

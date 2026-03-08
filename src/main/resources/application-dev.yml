@@ -119,8 +119,8 @@ elasticsearch:
   insecure-trust-all-certificates: ${ELASTICSEARCH_INSECURE_TRUST_ALL_CERTIFICATES:true}
 
 security:
-  # 前端调试域名白名单
-  allowed-origins: ${SECURITY_ALLOWED_ORIGINS:http://localhost:8080}
+  # 前端调试域名白名单，支持 Origin pattern
+  allowed-origins: ${SECURITY_ALLOWED_ORIGINS:http://localhost:*,http://127.0.0.1:*}
 
 logging:
   level:

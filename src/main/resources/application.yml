@@ -111,6 +111,16 @@ rate-limit:
     day-max: ${RATE_LIMIT_EMBEDDING_DAY_MAX:2000}
     day-window-seconds: ${RATE_LIMIT_EMBEDDING_DAY_WINDOW_SECONDS:86400}
 
+usage-quota:
+  # 每日 Token 配额，按自然日统计；系统初始化任务默认豁免
+  retention-days: ${USAGE_QUOTA_RETENTION_DAYS:35}
+  llm:
+    enabled: ${USAGE_QUOTA_LLM_ENABLED:true}
+    day-max-tokens: ${USAGE_QUOTA_LLM_DAY_MAX_TOKENS:300000}
+  embedding:
+    enabled: ${USAGE_QUOTA_EMBEDDING_ENABLED:true}
+    day-max-tokens: ${USAGE_QUOTA_EMBEDDING_DAY_MAX_TOKENS:1000000}
+
 file:
   parsing:
     chunk-size: 512
@@ -136,8 +146,8 @@ elasticsearch:
   insecure-trust-all-certificates: ${ELASTICSEARCH_INSECURE_TRUST_ALL_CERTIFICATES:true}
 
 security:
-  # WebSocket 与浏览器跨域白名单，多个来源用逗号分隔
-  allowed-origins: ${SECURITY_ALLOWED_ORIGINS:http://localhost:8080}
+  # WebSocket 与浏览器跨域白名单，支持 Origin pattern，多个来源用逗号分隔
+  allowed-origins: ${SECURITY_ALLOWED_ORIGINS:http://localhost:*,http://127.0.0.1:*}
 
 logging:
   level:

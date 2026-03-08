@@ -9,6 +9,8 @@ import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.OrganizationTagRepository;
 import com.yizhaoqi.smartpai.repository.UserRepository;
 import com.yizhaoqi.smartpai.service.InviteCodeService;
+import com.yizhaoqi.smartpai.service.RateLimitConfigService;
+import com.yizhaoqi.smartpai.service.UsageDashboardService;
 import com.yizhaoqi.smartpai.service.UserService;
 import com.yizhaoqi.smartpai.utils.JwtUtils;
 import com.yizhaoqi.smartpai.utils.LogUtils;
@@ -54,6 +56,12 @@ public class AdminController {
 
     @Autowired
     private InviteCodeService inviteCodeService;
+
+    @Autowired
+    private UsageDashboardService usageDashboardService;
+
+    @Autowired
+    private RateLimitConfigService rateLimitConfigService;
 
     /**
      * 获取所有用户列表
@@ -203,6 +211,67 @@ public class AdminController {
             LogUtils.logBusinessError("ADMIN_GET_USER_ACTIVITIES", adminUsername, "获取用户活动失败", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "获取用户活动失败: " + e.getMessage()));
+        }
+    }
+
+    @GetMapping("/usage/overview")
+    public ResponseEntity<?> getUsageOverview(
+            @RequestHeader("Authorization") String token,
+            @RequestParam(defaultValue = "7") int days) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "获取用量总览成功",
+                    "data", usageDashboardService.buildOverview(days)
+            ));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_GET_USAGE_OVERVIEW", adminUsername, "获取用量总览失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "获取用量总览失败: " + e.getMessage()));
+        }
+    }
+
+    @GetMapping("/rate-limits")
+    public ResponseEntity<?> getRateLimits(@RequestHeader("Authorization") String token) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "获取限流配置成功",
+                    "data", rateLimitConfigService.getCurrentSettings()
+            ));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_GET_RATE_LIMITS", adminUsername, "获取限流配置失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "获取限流配置失败: " + e.getMessage()));
+        }
+    }
+
+    @PutMapping("/rate-limits")
+    public ResponseEntity<?> updateRateLimits(
+            @RequestHeader("Authorization") String token,
+            @RequestBody RateLimitConfigService.UpdateRateLimitRequest request) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "限流配置更新成功",
+                    "data", rateLimitConfigService.updateSettings(request, adminUsername)
+            ));
+        } catch (CustomException e) {
+            LogUtils.logBusinessError("ADMIN_UPDATE_RATE_LIMITS", adminUsername, "更新限流配置失败: %s", e, e.getMessage());
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_UPDATE_RATE_LIMITS", adminUsername, "更新限流配置异常: %s", e, e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "更新限流配置失败: " + e.getMessage()));
         }
     }
     
@@ -544,7 +613,7 @@ public class AdminController {
                         String json = redisTemplate.opsForValue().get(conversationKey);
                         if (json != null) {
                             String displayUsername = targetUsername != null ? targetUsername : redisUserId;
-                            processRedisConversation(json, allConversations, displayUsername, start_date, end_date);
+                            processRedisConversation(json, allConversations, displayUsername, conversationId, start_date, end_date);
                         }
                     }
                 }
@@ -575,9 +644,10 @@ public class AdminController {
     /**
      * 处理Redis中的对话数据
      */
-    private void processRedisConversation(String json, List<Map<String, Object>> targetList, String username, String startDate, String endDate) throws JsonProcessingException {
-        List<Map<String, String>> history = objectMapper.readValue(json, 
-                new TypeReference<List<Map<String, String>>>() {});
+    private void processRedisConversation(String json, List<Map<String, Object>> targetList, String username,
+                                          String conversationId, String startDate, String endDate) throws JsonProcessingException {
+        List<Map<String, Object>> history = objectMapper.readValue(json,
+                new TypeReference<List<Map<String, Object>>>() {});
         
         // 解析时间范围
         java.time.LocalDateTime startDateTime = null;
@@ -600,8 +670,8 @@ public class AdminController {
         }
         
         // 将对话转换为前端需要的格式，使用存储的时间戳并添加用户名
-        for (Map<String, String> message : history) {
-            String messageTimestamp = message.getOrDefault("timestamp", "未知时间");
+        for (Map<String, Object> message : history) {
+            String messageTimestamp = String.valueOf(message.getOrDefault("timestamp", "未知时间"));
             
             // 时间过滤
             if (startDateTime != null || endDateTime != null) {
@@ -633,6 +703,10 @@ public class AdminController {
             messageWithMetadata.put("content", message.get("content"));
             messageWithMetadata.put("timestamp", messageTimestamp);
             messageWithMetadata.put("username", username);
+            messageWithMetadata.put("conversationId", conversationId);
+            if (message.get("referenceMappings") != null) {
+                messageWithMetadata.put("referenceMappings", message.get("referenceMappings"));
+            }
             targetList.add(messageWithMetadata);
         }
     }

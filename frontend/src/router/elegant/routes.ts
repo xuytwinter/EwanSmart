@@ -134,15 +134,26 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
+    name: 'usage-monitor',
+    path: '/usage-monitor',
+    component: 'layout.base$view.usage-monitor',
+    meta: {
+      title: 'usage-monitor',
+      i18nKey: 'route.usage-monitor',
+      icon: 'solar:chart-2-line-duotone',
+      roles: ['ADMIN'],
+      order: 5
+    }
+  },
+  {
     name: 'user',
     path: '/user',
     component: 'layout.base$view.user',
     meta: {
       title: 'user',
       i18nKey: 'route.user',
-      icon: 'solar:user-line-duotone',
-      roles: ['ADMIN'],
-      order: 5
+      icon: 'solar:users-group-two-rounded-line-duotone',
+      roles: ['ADMIN']
     }
   }
 ];

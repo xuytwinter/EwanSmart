@@ -76,6 +76,19 @@
 
           <div ref="pageShellRef" class="pdf-page-shell">
             <canvas ref="canvasRef" class="pdf-canvas" />
+            <div v-if="highlightRects.length" class="pdf-highlight-overlay">
+              <div
+                v-for="(rect, index) in highlightRects"
+                :key="`${index}-${rect.left}-${rect.top}`"
+                class="pdf-highlight-rect"
+                :style="{
+                  left: `${rect.left}px`,
+                  top: `${rect.top}px`,
+                  width: `${rect.width}px`,
+                  height: `${rect.height}px`
+                }"
+              />
+            </div>
             <div ref="textLayerRef" class="pdf-text-layer textLayer" />
             <div v-if="pageRendering" class="page-loading-mask">
               <NSpin size="small" />
@@ -104,11 +117,25 @@ interface Props {
   fileName?: string;
   pageNumber?: number;
   anchorText?: string;
+  visible?: boolean;
 }
 
 interface PageSummary {
   pageNumber: number;
   summary: string;
+}
+
+interface HighlightRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+interface HighlightFragment {
+  div: HTMLElement;
+  startRatio: number;
+  endRatio: number;
 }
 
 const props = defineProps<Props>();
@@ -124,6 +151,7 @@ const totalPages = ref(0);
 const currentPage = ref(1);
 const zoom = ref(1);
 const highlightCount = ref(0);
+const highlightRects = ref<HighlightRect[]>([]);
 const pageSummaries = ref<PageSummary[]>([]);
 
 const stageRef = ref<HTMLDivElement | null>(null);
@@ -138,6 +166,13 @@ let loadingTask: PDFDocumentLoadingTask | null = null;
 let renderTask: RenderTask | null = null;
 let textLayerTask: TextLayer | null = null;
 let lifecycleToken = 0;
+let renderTimer: number | null = null;
+let queuedRenderVersion = 0;
+let activeRenderVersion = 0;
+let activeRenderPromise: Promise<void> | null = null;
+let rerenderAfterCurrent = false;
+let lastObservedStageWidth = 0;
+let lastSuccessfulRenderSignature = '';
 
 watch(
   () => props.url,
@@ -150,10 +185,9 @@ watch(
 
 watch(
   () => props.pageNumber,
-  async pageNumber => {
+  pageNumber => {
     if (!pageNumber || !totalPages.value) return;
     currentPage.value = clampPage(pageNumber, totalPages.value);
-    await renderCurrentPage();
   }
 );
 
@@ -164,19 +198,34 @@ watch(
   }
 );
 
-watch(currentPage, async () => {
+watch(
+  () => props.visible,
+  async visible => {
+    if (!visible || !pdfDocument.value) return;
+    await nextTick();
+    void scheduleRender({ immediate: true });
+  }
+);
+
+watch(currentPage, () => {
   if (!pdfDocument.value) return;
-  await renderCurrentPage();
+  void scheduleRender({ immediate: true });
 });
 
-watch(zoom, async () => {
+watch(zoom, () => {
   if (!pdfDocument.value) return;
-  await renderCurrentPage();
+  void scheduleRender({ immediate: true });
 });
 
-useResizeObserver(stageRef, () => {
-  if (!pdfDocument.value || documentLoading.value) return;
-  void renderCurrentPage();
+useResizeObserver(stageRef, entries => {
+  if (!pdfDocument.value || documentLoading.value || props.visible === false) return;
+
+  const observedWidth = Math.round(entries[0]?.contentRect.width || stageRef.value?.clientWidth || 0);
+  if (observedWidth <= 0) return;
+  if (Math.abs(observedWidth - lastObservedStageWidth) < 2) return;
+
+  lastObservedStageWidth = observedWidth;
+  void scheduleRender({ delay: 120 });
 });
 
 onBeforeUnmount(() => {
@@ -230,7 +279,10 @@ async function loadDocument(url: string) {
   totalPages.value = 0;
   currentPage.value = 1;
   highlightCount.value = 0;
+  highlightRects.value = [];
   pageSummaries.value = [];
+  lastObservedStageWidth = 0;
+  lastSuccessfulRenderSignature = '';
 
   await cleanupPdfState();
 
@@ -257,7 +309,12 @@ async function loadDocument(url: string) {
     void loadPageSummaries(documentProxy, currentToken);
 
     await nextTick();
-    await renderCurrentPage(currentToken);
+    await waitForStageReady(currentToken);
+    if (currentToken === lifecycleToken) {
+      documentLoading.value = false;
+    }
+    await nextTick();
+    await forceRender(currentToken);
   } catch (error) {
     if (currentToken !== lifecycleToken) return;
     console.error('[PDF 预览] 加载失败:', error);
@@ -295,17 +352,80 @@ async function loadPageSummaries(documentProxy: PDFDocumentProxy, token: number)
   }
 }
 
-async function renderCurrentPage(expectedToken = lifecycleToken) {
+async function scheduleRender(options?: { immediate?: boolean; delay?: number }) {
+  if (!pdfDocument.value || documentLoading.value || props.visible === false) return;
+
+  queuedRenderVersion += 1;
+  const renderVersion = queuedRenderVersion;
+  const delay = options?.immediate ? 0 : options?.delay ?? 0;
+
+  if (renderTimer) {
+    window.clearTimeout(renderTimer);
+  }
+
+  renderTimer = window.setTimeout(() => {
+    renderTimer = null;
+    void flushRenderQueue(renderVersion);
+  }, delay);
+}
+
+async function forceRender(expectedToken = lifecycleToken) {
+  queuedRenderVersion += 1;
+  await flushRenderQueue(queuedRenderVersion, expectedToken);
+}
+
+async function flushRenderQueue(renderVersion: number, expectedToken = lifecycleToken) {
+  if (!pdfDocument.value || documentLoading.value || props.visible === false) return;
+  if (expectedToken !== lifecycleToken) return;
+
+  if (activeRenderPromise) {
+    rerenderAfterCurrent = true;
+    renderTask?.cancel();
+    textLayerTask?.cancel();
+    return;
+  }
+
+  activeRenderVersion = renderVersion;
+  pageRendering.value = true;
+  renderError.value = '';
+
+  const renderPromise = renderCurrentPage(expectedToken, renderVersion);
+  activeRenderPromise = renderPromise;
+
+  try {
+    await renderPromise;
+  } finally {
+    if (activeRenderPromise === renderPromise) {
+      activeRenderPromise = null;
+    }
+
+    const shouldRenderAgain =
+      rerenderAfterCurrent || (queuedRenderVersion > activeRenderVersion && expectedToken === lifecycleToken);
+
+    rerenderAfterCurrent = false;
+
+    if (shouldRenderAgain && pdfDocument.value && !documentLoading.value) {
+      await waitForAnimationFrame();
+      await flushRenderQueue(queuedRenderVersion, lifecycleToken);
+      return;
+    }
+
+    if (expectedToken === lifecycleToken) {
+      pageRendering.value = false;
+    }
+  }
+}
+
+async function renderCurrentPage(expectedToken = lifecycleToken, renderVersion = queuedRenderVersion) {
   const documentProxy = pdfDocument.value;
   const canvas = canvasRef.value;
   const textLayer = textLayerRef.value;
-  const stage = stageRef.value;
+  let stage = stageRef.value;
 
   if (!documentProxy || !canvas || !textLayer || !stage) return;
 
-  pageRendering.value = true;
-  renderError.value = '';
   highlightCount.value = 0;
+  highlightRects.value = [];
 
   try {
     renderTask?.cancel();
@@ -316,8 +436,19 @@ async function renderCurrentPage(expectedToken = lifecycleToken) {
     const page = await documentProxy.getPage(currentPage.value);
     if (expectedToken !== lifecycleToken) return;
 
+    await waitForStageReady(expectedToken);
+    stage = stageRef.value;
+    if (!stage || expectedToken !== lifecycleToken) return;
+
     const baseViewport = page.getViewport({ scale: 1 });
     const availableWidth = Math.max(stage.clientWidth - 72, 320);
+    const renderSignature = `${expectedToken}:${currentPage.value}:${zoom.value}:${Math.round(availableWidth)}`;
+
+    if (lastSuccessfulRenderSignature === renderSignature && canvas.width > 0 && canvas.height > 0) {
+      highlightCount.value = applyHighlight();
+      return;
+    }
+
     const fitScale = availableWidth / baseViewport.width;
     const renderScale = fitScale * zoom.value;
     const viewport = page.getViewport({ scale: renderScale });
@@ -349,7 +480,7 @@ async function renderCurrentPage(expectedToken = lifecycleToken) {
     });
 
     await renderTask.promise;
-    if (expectedToken !== lifecycleToken) return;
+    if (expectedToken !== lifecycleToken || renderVersion !== activeRenderVersion) return;
 
     const textContent = await page.getTextContent({
       includeMarkedContent: true
@@ -362,25 +493,26 @@ async function renderCurrentPage(expectedToken = lifecycleToken) {
     });
 
     await textLayerTask.render();
+    await nextTick();
+    if (expectedToken !== lifecycleToken || renderVersion !== activeRenderVersion) return;
+    lastSuccessfulRenderSignature = renderSignature;
     highlightCount.value = applyHighlight();
   } catch (error: any) {
-    if (error?.name === 'RenderingCancelledException') {
+    if (isBenignRenderError(error) || expectedToken !== lifecycleToken || renderVersion !== activeRenderVersion) {
       return;
     }
     console.error('[PDF 预览] 页面渲染失败:', error);
     renderError.value = 'PDF 页面渲染失败，请稍后重试。';
-  } finally {
-    if (expectedToken === lifecycleToken) {
-      pageRendering.value = false;
-    }
   }
 }
 
 function applyHighlight() {
-  if (!textLayerTask) return 0;
+  const textLayer = textLayerRef.value;
+  if (!textLayerTask || !textLayer) return 0;
 
   const textDivs = textLayerTask.textDivs;
   textDivs.forEach(div => div.classList.remove('matched-text'));
+  highlightRects.value = [];
 
   const anchor = normalizedAnchor.value;
   if (!anchor) return 0;
@@ -410,16 +542,31 @@ function applyHighlight() {
 
   const [matchStart, matchEnd] = matchRange;
   let firstMatch: HTMLElement | undefined;
-  let matches = 0;
+  const matchedFragments: HighlightFragment[] = [];
 
   itemRanges.forEach(({ index, start, end }) => {
     if (end <= matchStart || start >= matchEnd) return;
     const div = textDivs[index];
     if (!div) return;
+
+    const itemLength = end - start;
+    if (itemLength <= 0) return;
+
+    const overlapStart = Math.max(start, matchStart);
+    const overlapEnd = Math.min(end, matchEnd);
+    const startRatio = (overlapStart - start) / itemLength;
+    const endRatio = (overlapEnd - start) / itemLength;
+
     div.classList.add('matched-text');
     firstMatch ??= div;
-    matches += 1;
+    matchedFragments.push({
+      div,
+      startRatio,
+      endRatio
+    });
   });
+
+  highlightRects.value = buildHighlightRects(textLayer, matchedFragments);
 
   if (firstMatch) {
     firstMatch.scrollIntoView({
@@ -428,7 +575,7 @@ function applyHighlight() {
     });
   }
 
-  return matches;
+  return highlightRects.value.length;
 }
 
 function resolveMatchRange(target: string, anchor: string): [number, number] | null {
@@ -450,7 +597,128 @@ function resolveMatchRange(target: string, anchor: string): [number, number] | n
   return null;
 }
 
+async function waitForStageReady(expectedToken = lifecycleToken) {
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    if (expectedToken !== lifecycleToken) return;
+
+    const stage = stageRef.value;
+    const shell = pageShellRef.value;
+    const hasStableStage =
+      Boolean(stage) &&
+      Boolean(shell) &&
+      stage!.clientWidth > 240 &&
+      stage!.clientHeight > 120 &&
+      stage!.getClientRects().length > 0;
+
+    if (hasStableStage) {
+      return;
+    }
+
+    await waitForAnimationFrame();
+  }
+}
+
+function waitForAnimationFrame() {
+  return new Promise<void>(resolve => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+function isBenignRenderError(error: unknown) {
+  if (!error || typeof error !== 'object') return false;
+
+  const errorName = 'name' in error ? String(error.name) : '';
+  const errorMessage = 'message' in error ? String(error.message) : '';
+  const benignNames = new Set(['RenderingCancelledException', 'AbortException', 'InvalidStateError']);
+
+  if (benignNames.has(errorName)) {
+    return true;
+  }
+
+  return /cancelled|canceled|abort/i.test(errorMessage);
+}
+
+function buildHighlightRects(container: HTMLElement, matchedFragments: HighlightFragment[]) {
+  if (!matchedFragments.length) return [];
+
+  const containerRect = container.getBoundingClientRect();
+  const rects = matchedFragments
+    .map(({ div, startRatio, endRatio }) => {
+      const rect = div.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2) return null;
+
+      const insetY = Math.max(1, rect.height * 0.2);
+      const safeStartRatio = Math.min(Math.max(startRatio, 0), 1);
+      const safeEndRatio = Math.min(Math.max(endRatio, safeStartRatio), 1);
+      const segmentLeft = rect.left + rect.width * safeStartRatio;
+      const segmentWidth = rect.width * (safeEndRatio - safeStartRatio);
+      if (segmentWidth < 2) return null;
+
+      const insetX = Math.min(1.5, segmentWidth * 0.06);
+
+      return {
+        left: Math.max(0, segmentLeft - containerRect.left - insetX),
+        top: Math.max(0, rect.top - containerRect.top + insetY),
+        width: segmentWidth + insetX * 2,
+        height: Math.max(6, rect.height - insetY * 1.35)
+      };
+    })
+    .filter((rect): rect is HighlightRect => Boolean(rect));
+
+  return mergeHighlightRects(rects);
+}
+
+function mergeHighlightRects(rects: HighlightRect[]) {
+  if (rects.length <= 1) return rects;
+
+  const sortedRects = [...rects].sort((a, b) => {
+    if (Math.abs(a.top - b.top) > 2) {
+      return a.top - b.top;
+    }
+    return a.left - b.left;
+  });
+
+  const merged: HighlightRect[] = [];
+
+  sortedRects.forEach(rect => {
+    const previousRect = merged.at(-1);
+    if (!previousRect) {
+      merged.push({ ...rect });
+      return;
+    }
+
+    const topDelta = Math.abs(previousRect.top - rect.top);
+    const heightDelta = Math.abs(previousRect.height - rect.height);
+    const gap = rect.left - (previousRect.left + previousRect.width);
+    const lineTolerance = Math.max(3, Math.min(previousRect.height, rect.height) * 0.35);
+
+    if (topDelta <= lineTolerance && heightDelta <= lineTolerance && gap <= 12) {
+      const right = Math.max(previousRect.left + previousRect.width, rect.left + rect.width);
+      previousRect.top = Math.min(previousRect.top, rect.top);
+      previousRect.height = Math.max(previousRect.height, rect.height);
+      previousRect.width = right - previousRect.left;
+      return;
+    }
+
+    merged.push({ ...rect });
+  });
+
+  return merged;
+}
+
 async function cleanupPdfState() {
+  if (renderTimer) {
+    window.clearTimeout(renderTimer);
+    renderTimer = null;
+  }
+
+  queuedRenderVersion = 0;
+  activeRenderVersion = 0;
+  activeRenderPromise = null;
+  rerenderAfterCurrent = false;
+  lastObservedStageWidth = 0;
+  lastSuccessfulRenderSignature = '';
+
   renderTask?.cancel();
   renderTask = null;
 
@@ -475,6 +743,8 @@ async function cleanupPdfState() {
   if (textLayerRef.value) {
     textLayerRef.value.innerHTML = '';
   }
+
+  highlightRects.value = [];
 }
 </script>
 
@@ -512,7 +782,7 @@ async function cleanupPdfState() {
 }
 
 .pdf-viewer-body {
-  @apply grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)];
+  @apply grid min-h-0 flex-1 overflow-hidden grid-cols-[220px_minmax(0,1fr)];
 }
 
 .page-sidebar {
@@ -571,6 +841,25 @@ async function cleanupPdfState() {
   @apply relative z-0 block rounded-2xl;
 }
 
+.pdf-highlight-overlay {
+  @apply pointer-events-none absolute inset-6 z-[5] overflow-hidden rounded-2xl;
+}
+
+.pdf-highlight-rect {
+  @apply absolute;
+  border-radius: 6px;
+  background: linear-gradient(
+    180deg,
+    rgba(254, 240, 138, 0.14) 0%,
+    rgba(250, 204, 21, 0.5) 22%,
+    rgba(250, 204, 21, 0.7) 55%,
+    rgba(245, 158, 11, 0.44) 100%
+  );
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.08);
+  mix-blend-mode: multiply;
+  opacity: 0.96;
+}
+
 .pdf-text-layer {
   @apply absolute inset-6 z-10 overflow-hidden;
 }
@@ -582,12 +871,14 @@ async function cleanupPdfState() {
   transform-origin: 0 0;
   white-space: pre;
   cursor: text;
+  line-height: 1;
+  margin: 0;
+  padding: 0;
 }
 
 .pdf-text-layer :deep(span.matched-text) {
-  border-radius: 4px;
-  background: rgba(250, 204, 21, 0.4);
-  color: rgba(41, 37, 36, 0.92);
+  background: transparent;
+  color: transparent;
 }
 
 .pdf-text-layer :deep(.endOfContent) {

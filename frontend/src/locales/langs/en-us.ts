@@ -167,6 +167,7 @@ const local: App.I18n.Schema = {
     'invite-code': 'Invite Codes',
     'knowledge-base': 'Knowledge Base',
     'org-tag': 'Organization Tag',
+    'usage-monitor': 'Usage Monitor',
     user: 'User Management',
     'personal-center': 'Personal Center'
   },
@@ -191,7 +192,7 @@ const local: App.I18n.Schema = {
       },
       pwdLogin: {
         title: 'Password Login',
-        rememberMe: 'Remember me',
+        rememberMe: 'Remember username and password',
         forgetPassword: 'Forget password?',
         register: 'Register',
         otherAccountLogin: 'Other Account Login',

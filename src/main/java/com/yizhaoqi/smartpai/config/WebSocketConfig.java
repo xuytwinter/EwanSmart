@@ -28,6 +28,6 @@ public class WebSocketConfig implements WebSocketConfigurer {
                 .filter(s -> !s.isEmpty())
                 .toArray(String[]::new);
         registry.addHandler(chatWebSocketHandler, "/chat/{token}")
-                .setAllowedOrigins(origins);
+                .setAllowedOriginPatterns(origins);
     }
 }

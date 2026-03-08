@@ -94,7 +94,7 @@ class BootstrapKnowledgeInitializerTest {
         initializer.run();
 
         verify(parseService, never()).parseAndSave(anyString(), any(), anyString(), anyString(), anyBoolean());
-        verify(vectorizationService, never()).vectorize(anyString(), anyString(), anyString(), anyBoolean());
+        verify(vectorizationService, never()).vectorize(anyString(), anyString(), anyString(), anyBoolean(), anyString());
         verify(fileUploadRepository, never()).save(any(FileUpload.class));
         verify(minioClient, never()).putObject(any(PutObjectArgs.class));
     }
@@ -114,14 +114,14 @@ class BootstrapKnowledgeInitializerTest {
         when(documentVectorRepository.countByFileMd5(fileMd5)).thenReturn(0L);
         when(documentVectorRepository.countByFileMd5AndPageNumberIsNotNull(fileMd5)).thenReturn(0L);
         when(elasticsearchService.countByFileMd5(fileMd5)).thenReturn(0L);
-        doNothing().when(vectorizationService).vectorize(fileMd5, "1", "default", true);
+        doNothing().when(vectorizationService).vectorize(fileMd5, "1", "default", true, "system-bootstrap");
         when(minioClient.putObject(any(PutObjectArgs.class))).thenReturn(null);
 
         initializer.run();
 
         verify(minioClient).putObject(any(PutObjectArgs.class));
         verify(parseService).parseAndSave(anyString(), any(), anyString(), anyString(), anyBoolean());
-        verify(vectorizationService).vectorize(fileMd5, "1", "default", true);
+        verify(vectorizationService).vectorize(fileMd5, "1", "default", true, "system-bootstrap");
 
         ArgumentCaptor<FileUpload> captor = ArgumentCaptor.forClass(FileUpload.class);
         verify(fileUploadRepository).save(captor.capture());
@@ -172,7 +172,7 @@ class BootstrapKnowledgeInitializerTest {
 
         verify(fileUploadRepository).deleteAll(List.of(duplicate));
         verify(parseService, never()).parseAndSave(anyString(), any(), anyString(), anyString(), anyBoolean());
-        verify(vectorizationService, never()).vectorize(anyString(), anyString(), anyString(), anyBoolean());
+        verify(vectorizationService, never()).vectorize(anyString(), anyString(), anyString(), anyBoolean(), anyString());
     }
 
     private void configureInitializer(Path pdfPath) {

@@ -167,6 +167,7 @@ const local: App.I18n.Schema = {
     'invite-code': '邀请码管理',
     'knowledge-base': '知识库',
     'org-tag': '组织标签',
+    'usage-monitor': '用量监控',
     user: '用户管理',
     'personal-center': '个人中心'
   },
@@ -191,7 +192,7 @@ const local: App.I18n.Schema = {
       },
       pwdLogin: {
         title: '密码登录',
-        rememberMe: '记住我',
+        rememberMe: '记住用户名和密码',
         forgetPassword: '忘记密码？',
         register: '注册账号',
         otherAccountLogin: '其他账号登录',

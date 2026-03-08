@@ -7,20 +7,59 @@ const tags = ref<Api.OrgTag.Mine>({
   orgTagDetails: []
 });
 
+const usage = ref<Api.User.UsageSnapshot>({
+  day: '',
+  chatRequestCount: 0,
+  llm: {
+    enabled: false,
+    usedTokens: 0,
+    limitTokens: 0,
+    remainingTokens: 0,
+    requestCount: 0
+  },
+  embedding: {
+    enabled: false,
+    usedTokens: 0,
+    limitTokens: 0,
+    remainingTokens: 0,
+    requestCount: 0
+  }
+});
+
 const loading = ref(false);
-const getOrgTags = async () => {
+const getPersonalData = async () => {
   loading.value = true;
+  const [{ error: orgError, data: orgData }, { error: usageError, data: usageData }] = await Promise.all([
+    request<Api.OrgTag.Mine>({
+      url: '/users/org-tags'
+    }),
+    request<Api.User.UsageSnapshot>({
+      url: '/users/usage'
+    })
+  ]);
+
+  if (!orgError) {
+    tags.value = orgData;
+  }
+
+  if (!usageError) {
+    usage.value = usageData;
+  }
+
+  loading.value = false;
+};
+
+const getOrgTags = async () => {
   const { error, data } = await request<Api.OrgTag.Mine>({
     url: '/users/org-tags'
   });
   if (!error) {
     tags.value = data;
   }
-  loading.value = false;
 };
 
 onMounted(() => {
-  getOrgTags();
+  getPersonalData();
 });
 
 const visible = ref(false);
@@ -55,11 +94,36 @@ const setPrimaryOrg = async () => {
             <NAvatar size="large">
               <icon-solar:user-circle-linear class="text-icon-large" />
             </NAvatar>
-            <div>{{ userInfo.username }}</div>
+            <div class="flex flex-col gap-1">
+              <div>{{ userInfo.username }}</div>
+              <span class="text-xs text-stone-400">今日额度 · {{ usage.day || '未统计' }}</span>
+            </div>
           </div>
         </template>
         <NScrollbar class="max-h-60vh">
-          <div class="flex flex-wrap gap-4 p-4">
+          <div class="flex flex-col gap-4 p-4">
+            <div class="grid gap-4 md:grid-cols-2">
+              <NCard size="small" embedded class="quota-card">
+                <div class="text-sm font-semibold text-stone-700">LLM Token</div>
+                <div v-if="usage.llm.enabled" class="mt-3 flex flex-col gap-2 text-sm text-stone-500">
+                  <div>已用 {{ usage.llm.usedTokens.toLocaleString() }} / {{ usage.llm.limitTokens.toLocaleString() }}</div>
+                  <div>剩余 {{ usage.llm.remainingTokens.toLocaleString() }}</div>
+                  <div>请求 {{ usage.llm.requestCount.toLocaleString() }} 次</div>
+                </div>
+                <div v-else class="mt-3 text-sm text-stone-400">当前未启用配额</div>
+              </NCard>
+              <NCard size="small" embedded class="quota-card">
+                <div class="text-sm font-semibold text-stone-700">Embedding Token</div>
+                <div v-if="usage.embedding.enabled" class="mt-3 flex flex-col gap-2 text-sm text-stone-500">
+                  <div>已用 {{ usage.embedding.usedTokens.toLocaleString() }} / {{ usage.embedding.limitTokens.toLocaleString() }}</div>
+                  <div>剩余 {{ usage.embedding.remainingTokens.toLocaleString() }}</div>
+                  <div>请求 {{ usage.embedding.requestCount.toLocaleString() }} 次</div>
+                </div>
+                <div v-else class="mt-3 text-sm text-stone-400">当前未启用配额</div>
+              </NCard>
+            </div>
+
+            <div class="flex flex-wrap gap-4">
             <NCard
               v-for="tag in tags.orgTagDetails"
               :key="tag.tagId"
@@ -83,6 +147,7 @@ const setPrimaryOrg = async () => {
                 <NEllipsis :line-clamp="3">{{ tag.description }}</NEllipsis>
               </template>
             </NCard>
+            </div>
           </div>
         </NScrollbar>
       </NCard>
@@ -106,5 +171,9 @@ const setPrimaryOrg = async () => {
 :deep(.n-card__content) {
   flex: none m !important;
   height: fit-content;
+}
+
+.quota-card {
+  border-radius: 16px;
 }
 </style>

@@ -124,12 +124,16 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
           content: $t('page.login.common.welcomeBack', { userName: userInfo.username }),
           duration: 4500
         });
+
+        endLoading();
+        return true;
       }
     } else {
       resetStore();
     }
 
     endLoading();
+    return false;
   }
 
   async function loginByToken(loginToken: Api.Auth.LoginToken) {

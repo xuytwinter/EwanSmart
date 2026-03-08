@@ -37,6 +37,10 @@ public class VectorizationService {
      * @param isPublic 是否公开
      */
     public void vectorize(String fileMd5, String userId, String orgTag, boolean isPublic) {
+        vectorize(fileMd5, userId, orgTag, isPublic, userId);
+    }
+
+    public void vectorize(String fileMd5, String userId, String orgTag, boolean isPublic, String requesterId) {
         try {
             logger.info("开始向量化文件，fileMd5: {}, userId: {}, orgTag: {}, isPublic: {}", 
                        fileMd5, userId, orgTag, isPublic);
@@ -54,7 +58,7 @@ public class VectorizationService {
                     .toList();
 
             // 调用外部模型生成向量
-            List<float[]> vectors = embeddingClient.embed(texts, userId);
+            List<float[]> vectors = embeddingClient.embed(texts, requesterId);
 
             // 构建 Elasticsearch 文档并存储
             List<EsDocument> esDocuments = IntStream.range(0, chunks.size())

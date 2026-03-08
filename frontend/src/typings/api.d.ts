@@ -84,6 +84,21 @@ declare namespace Api {
   }
 
   namespace User {
+    interface UsageQuota {
+      enabled: boolean;
+      usedTokens: number;
+      limitTokens: number;
+      remainingTokens: number;
+      requestCount: number;
+    }
+
+    interface UsageSnapshot {
+      day: string;
+      chatRequestCount: number;
+      llm: UsageQuota;
+      embedding: UsageQuota;
+    }
+
     type SearchParams = CommonType.RecordNullable<
       Common.CommonSearchParams & {
         keyword: string;
@@ -95,12 +110,14 @@ declare namespace Api {
     type Item = {
       userId: string;
       username: string;
-      email: string;
       status: number;
       orgTags: Pick<OrgTag.Item, 'tagId' | 'name'>[];
       primaryOrg: string;
-      createTime: string;
-      lastLoginTime: string;
+      createdAt: string;
+      usage: UsageSnapshot;
+      chatUsage?: string;
+      llmUsage?: string;
+      embeddingUsage?: string;
     };
 
     type List = Common.PaginatingQueryRecord<Item>;
@@ -136,6 +153,67 @@ declare namespace Api {
       pages: number;
       current: number;
       size: number;
+    }
+  }
+
+  namespace Admin {
+    interface WindowLimit {
+      max: number;
+      windowSeconds: number;
+    }
+
+    interface DualWindowLimit {
+      minuteMax: number;
+      minuteWindowSeconds: number;
+      dayMax: number;
+      dayWindowSeconds: number;
+    }
+
+    interface RateLimitSettings {
+      chatMessage: WindowLimit;
+      llmRequest: DualWindowLimit;
+      embeddingBatch: DualWindowLimit;
+    }
+
+    interface UsageTrendPoint {
+      day: string;
+      chatRequestCount: number;
+      llmUsedTokens: number;
+      llmRequestCount: number;
+      embeddingUsedTokens: number;
+      embeddingRequestCount: number;
+    }
+
+    interface UsageRankingItem {
+      userId: string;
+      username: string;
+      scope: 'llm' | 'embedding';
+      usedTokens: number;
+      limitTokens: number;
+      remainingTokens: number;
+      requestCount: number;
+    }
+
+    interface UsageAlert {
+      level: 'critical' | 'warning';
+      userId: string;
+      username: string;
+      scope: 'llm' | 'embedding';
+      usedTokens: number;
+      limitTokens: number;
+      remainingTokens: number;
+      requestCount: number;
+      usageRatio: number;
+      message: string;
+    }
+
+    interface UsageOverview {
+      days: number;
+      today: UsageTrendPoint;
+      trends: UsageTrendPoint[];
+      llmRankings: UsageRankingItem[];
+      embeddingRankings: UsageRankingItem[];
+      alerts: UsageAlert[];
     }
   }
 
@@ -220,6 +298,13 @@ declare namespace Api {
       content: string;
       status?: 'pending' | 'loading' | 'finished' | 'error';
       timestamp?: string;
+      conversationId?: string;
+      referenceMappings?: Record<string, {
+        fileMd5: string;
+        fileName: string;
+        pageNumber?: number | null;
+        anchorText?: string | null;
+      }>;
     }
 
     interface Token {

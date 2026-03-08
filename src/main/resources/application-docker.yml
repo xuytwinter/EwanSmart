@@ -121,8 +121,8 @@ elasticsearch:
   insecure-trust-all-certificates: ${ELASTICSEARCH_INSECURE_TRUST_ALL_CERTIFICATES:true}
 
 security:
-  # 容器部署时请显式填写前端实际访问域名
-  allowed-origins: ${SECURITY_ALLOWED_ORIGINS:http://localhost:8080}
+  # 容器部署时请显式填写前端实际访问域名，支持 Origin pattern
+  allowed-origins: ${SECURITY_ALLOWED_ORIGINS:http://localhost:*,http://127.0.0.1:*}
 
 logging:
   level:

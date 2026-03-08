@@ -57,3 +57,16 @@ CREATE TABLE document_vectors (
                                   org_tag VARCHAR(50) COMMENT '文件所属组织标签',
                                   is_public BOOLEAN NOT NULL DEFAULT FALSE COMMENT '文件是否公开'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档向量存储表';
+
+CREATE TABLE rate_limit_configs (
+                                    config_key VARCHAR(64) PRIMARY KEY COMMENT '限流配置键',
+                                    single_max INT DEFAULT NULL COMMENT '单窗口最大次数',
+                                    single_window_seconds BIGINT DEFAULT NULL COMMENT '单窗口秒数',
+                                    minute_max INT DEFAULT NULL COMMENT '分钟窗口最大次数',
+                                    minute_window_seconds BIGINT DEFAULT NULL COMMENT '分钟窗口秒数',
+                                    day_max INT DEFAULT NULL COMMENT '日窗口最大次数',
+                                    day_window_seconds BIGINT DEFAULT NULL COMMENT '日窗口秒数',
+                                    updated_by VARCHAR(255) NOT NULL COMMENT '最后更新人',
+                                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='运行时限流配置表';

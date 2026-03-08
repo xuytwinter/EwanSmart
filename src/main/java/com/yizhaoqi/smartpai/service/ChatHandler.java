@@ -93,7 +93,7 @@ public class ChatHandler {
             
             // 5. 调用 DeepSeek API 并处理流式响应
             logger.info("调用DeepSeek API生成回复");
-            deepSeekClient.streamResponse(userMessage, context, history, 
+            deepSeekClient.streamResponse(userId, userMessage, context, history, 
                 chunk -> {
                     // 累积响应内容
                     StringBuilder responseBuilder = responseBuilders.get(session.getId());
@@ -179,7 +179,7 @@ public class ChatHandler {
         String completeResponse = responseBuilder.toString();
         responseFuture.complete(completeResponse);
         sendCompletionNotification(session);
-        updateConversationHistory(conversationId, userMessage, completeResponse);
+        updateConversationHistory(conversationId, userMessage, completeResponse, sessionReferenceMappings.get(session.getId()));
         logger.info("对话存储信息 - Redis键: {}, 值: {}", "user:" + userId + ":current_conversation", conversationId);
         cleanupSessionState(session.getId(), null);
         logger.info("消息处理完成，用户ID: {}", userId);
@@ -209,6 +209,22 @@ public class ChatHandler {
     }
 
     private List<Map<String, String>> getConversationHistory(String conversationId) {
+        List<Map<String, Object>> records = getConversationHistoryRecords(conversationId);
+        List<Map<String, String>> history = new ArrayList<>();
+        for (Map<String, Object> message : records) {
+            Map<String, String> normalized = new HashMap<>();
+            normalized.put("role", String.valueOf(message.getOrDefault("role", "")));
+            normalized.put("content", String.valueOf(message.getOrDefault("content", "")));
+            Object timestamp = message.get("timestamp");
+            if (timestamp != null) {
+                normalized.put("timestamp", String.valueOf(timestamp));
+            }
+            history.add(normalized);
+        }
+        return history;
+    }
+
+    private List<Map<String, Object>> getConversationHistoryRecords(String conversationId) {
         String key = "conversation:" + conversationId;
         String json = redisTemplate.opsForValue().get(key);
         try {
@@ -216,8 +232,8 @@ public class ChatHandler {
                 logger.debug("会话 {} 没有历史记录", conversationId);
                 return new ArrayList<>();
             }
-            
-            List<Map<String, String>> history = objectMapper.readValue(json, new TypeReference<List<Map<String, String>>>() {});
+
+            List<Map<String, Object>> history = objectMapper.readValue(json, new TypeReference<List<Map<String, Object>>>() {});
             logger.debug("读取到会话 {} 的 {} 条历史记录", conversationId, history.size());
             return history;
         } catch (JsonProcessingException e) {
@@ -226,25 +242,29 @@ public class ChatHandler {
         }
     }
 
-    private void updateConversationHistory(String conversationId, String userMessage, String response) {
+    private void updateConversationHistory(String conversationId, String userMessage, String response,
+                                           Map<Integer, ReferenceInfo> referenceMapping) {
         String key = "conversation:" + conversationId;
-        List<Map<String, String>> history = getConversationHistory(conversationId);
+        List<Map<String, Object>> history = getConversationHistoryRecords(conversationId);
         
         // 获取当前时间戳
         String currentTimestamp = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
         
         // 添加用户消息（带时间戳）
-        Map<String, String> userMsgMap = new HashMap<>();
+        Map<String, Object> userMsgMap = new HashMap<>();
         userMsgMap.put("role", "user");
         userMsgMap.put("content", userMessage);
         userMsgMap.put("timestamp", currentTimestamp);
         history.add(userMsgMap);
-        
+
         // 添加助手回复（带时间戳）
-        Map<String, String> assistantMsgMap = new HashMap<>();
+        Map<String, Object> assistantMsgMap = new HashMap<>();
         assistantMsgMap.put("role", "assistant");
         assistantMsgMap.put("content", response);
         assistantMsgMap.put("timestamp", currentTimestamp);
+        if (referenceMapping != null && !referenceMapping.isEmpty()) {
+            assistantMsgMap.put("referenceMappings", toSerializableReferenceMappings(referenceMapping));
+        }
         history.add(assistantMsgMap);
         
         // 限制历史记录长度，保留最近的20条消息
@@ -259,6 +279,20 @@ public class ChatHandler {
         } catch (JsonProcessingException e) {
             logger.error("序列化对话历史出错: {}, 会话ID: {}", e.getMessage(), conversationId, e);
         }
+    }
+
+    private Map<String, Map<String, Object>> toSerializableReferenceMappings(Map<Integer, ReferenceInfo> referenceMapping) {
+        Map<String, Map<String, Object>> serialized = new HashMap<>();
+        for (Map.Entry<Integer, ReferenceInfo> entry : referenceMapping.entrySet()) {
+            ReferenceInfo detail = entry.getValue();
+            Map<String, Object> item = new HashMap<>();
+            item.put("fileMd5", detail.fileMd5());
+            item.put("fileName", detail.fileName());
+            item.put("pageNumber", detail.pageNumber());
+            item.put("anchorText", detail.anchorText());
+            serialized.put(String.valueOf(entry.getKey()), item);
+        }
+        return serialized;
     }
 
     private String buildContext(List<SearchResult> searchResults, String sessionId) {

@@ -3,6 +3,7 @@ package com.yizhaoqi.smartpai.client;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yizhaoqi.smartpai.service.RateLimitService;
+import com.yizhaoqi.smartpai.service.UsageQuotaService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -41,11 +42,16 @@ public class EmbeddingClient {
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
     private final RateLimitService rateLimitService;
+    private final UsageQuotaService usageQuotaService;
 
-    public EmbeddingClient(WebClient embeddingWebClient, ObjectMapper objectMapper, RateLimitService rateLimitService) {
+    public EmbeddingClient(WebClient embeddingWebClient,
+                           ObjectMapper objectMapper,
+                           RateLimitService rateLimitService,
+                           UsageQuotaService usageQuotaService) {
         this.webClient = embeddingWebClient;
         this.objectMapper = objectMapper;
         this.rateLimitService = rateLimitService;
+        this.usageQuotaService = usageQuotaService;
     }
 
     @PostConstruct
@@ -77,9 +83,17 @@ public class EmbeddingClient {
             for (int start = 0; start < texts.size(); start += batchSize) {
                 int end = Math.min(start + batchSize, texts.size());
                 List<String> sub = texts.subList(start, end);
+                UsageQuotaService.TokenReservation reservation = usageQuotaService.reserveEmbeddingTokens(requesterId, sub);
                 logger.debug("调用向量 API, 批次: {}-{} (size={})", start, end - 1, sub.size());
-                String response = callApiOnce(sub);
-                all.addAll(parseVectors(response));
+                try {
+                    String response = callApiOnce(sub);
+                    EmbeddingApiResponse parsedResponse = parseEmbeddingResponse(response, sub);
+                    usageQuotaService.settleReservation(reservation, parsedResponse.totalTokens());
+                    all.addAll(parsedResponse.vectors());
+                } catch (Exception e) {
+                    usageQuotaService.abortReservation(reservation);
+                    throw e;
+                }
             }
             logger.info("成功生成向量，总数量: {}", all.size());
             return all;
@@ -124,7 +138,7 @@ public class EmbeddingClient {
                 .block(Duration.ofSeconds(30));
     }
 
-    private List<float[]> parseVectors(String response) throws Exception {
+    private EmbeddingApiResponse parseEmbeddingResponse(String response, List<String> inputTexts) throws Exception {
         JsonNode jsonNode = objectMapper.readTree(response);
         JsonNode data = jsonNode.get("data");  // 兼容模式下使用data字段
         if (data == null || !data.isArray()) {
@@ -142,7 +156,10 @@ public class EmbeddingClient {
                 vectors.add(vector);
             }
         }
-        return vectors;
+
+        JsonNode usage = jsonNode.path("usage");
+        int totalTokens = usage.path("total_tokens").asInt(usage.path("input_tokens").asInt(0));
+        return new EmbeddingApiResponse(vectors, totalTokens > 0 ? totalTokens : usageQuotaService.estimateEmbeddingTokens(inputTexts));
     }
 
     private String maskSecret(String secret) {
@@ -153,5 +170,8 @@ public class EmbeddingClient {
             return "****";
         }
         return secret.substring(0, 4) + "****" + secret.substring(secret.length() - 4);
+    }
+
+    private record EmbeddingApiResponse(List<float[]> vectors, int totalTokens) {
     }
 }

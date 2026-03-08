@@ -28,82 +28,63 @@ const chatStore = useChatStore();
 // 存储文件名和对应的事件处理
 const sourceFiles = ref<Array<{fileName: string, id: string, referenceNumber: number, fileMd5?: string, pageNumber?: number}>>([]);
 
+function createSourceLink(
+  sourceNum: string,
+  fileName: string,
+  extras?: { fileMd5?: string; pageNumber?: number; displayName?: string }
+): string {
+  const linkClass = 'source-file-link';
+  const trimmedFileName = fileName.trim();
+  const fileId = `source-file-${sourceFiles.value.length}`;
+  const referenceNumber = parseInt(sourceNum, 10);
+
+  sourceFiles.value.push({
+    fileName: trimmedFileName,
+    id: fileId,
+    referenceNumber,
+    fileMd5: extras?.fileMd5,
+    pageNumber: extras?.pageNumber
+  });
+
+  return `来源#${sourceNum}: <span class="${linkClass}" data-file-id="${fileId}">${extras?.displayName || trimmedFileName}</span>`;
+}
+
 // 处理来源文件链接的函数
 function processSourceLinks(text: string): string {
   // 重置来源文件列表，避免重复
   sourceFiles.value = [];
 
-  // 新格式（带页码）：匹配 (来源#数字: 文件名 | 第X页) 的正则表达式，兼容全角括号
-  // 格式示例：(来源#1: test.pdf | 第5页) 或 (来源#1: test.pdf|第5页)
-  const pagePattern = /([\(（])来源#(\d+):\s*([^|\n\r（）]+?)\s*\|\s*第(\d+)页([\)）])/g;
+  // 支持单个来源，也支持一个括号里包含多个来源：
+  // (来源#1: test.pdf | 第5页; 来源#2: other.pdf | 第8页)
+  const entryBoundary = '(?=\\s*(?:[;；,，、。！？!?\\)）]|$))';
+  const pagePattern = new RegExp(
+    `来源#(\\d+):\\s*([^|;；,，、。！？!?\\n\\r（）()]+?)\\s*\\|\\s*第(\\d+)页${entryBoundary}`,
+    'g'
+  );
+  const md5Pattern = new RegExp(
+    `来源#(\\d+):\\s*([^|;；,，、。！？!?\\n\\r（）()]+?)\\s*\\|\\s*MD5:\\s*([a-fA-F0-9]+)${entryBoundary}`,
+    'g'
+  );
+  const simplePattern = new RegExp(
+    `来源#(\\d+):\\s*([^<>\\n\\r（）()|;；,，、。！？!?]+?)${entryBoundary}`,
+    'g'
+  );
 
-  // 先处理带页码的新格式
-  let processedText = text.replace(pagePattern, (_match, leftParen, sourceNum, fileName, pageNum, rightParen) => {
-    const linkClass = 'source-file-link';
-    const trimmedFileName = fileName.trim();
-    const fileId = `source-file-${sourceFiles.value.length}`;
-    const referenceNumber = parseInt(sourceNum, 10);
-
-    // 存储文件信息
-    sourceFiles.value.push({
-      fileName: trimmedFileName,
-      id: fileId,
-      referenceNumber,
-      pageNumber: parseInt(pageNum, 10)
+  let processedText = text.replace(pagePattern, (_match, sourceNum, fileName, pageNum) => {
+    return createSourceLink(sourceNum, fileName, {
+      pageNumber: parseInt(pageNum, 10),
+      displayName: `${fileName.trim()} (第${pageNum}页)`
     });
-
-    const lp = leftParen === '(' ? '(' : '（';
-    const rp = rightParen === ')' ? ')' : '）';
-
-    // 显示格式：来源#1: test.pdf (第5页)
-    return `${lp}来源#${sourceNum}: <span class="${linkClass}" data-file-id="${fileId}">${trimmedFileName} (第${pageNum}页)</span>${rp}`;
   });
 
-  // 旧格式（带MD5）：匹配 (来源#数字: 文件名 | MD5:xxx) 的正则表达式，兼容全角括号
-  const md5Pattern = /([\(（])来源#(\d+):\s*([^|\n\r（）]+?)\s*\|\s*MD5:\s*([a-fA-F0-9]+)([\)）])/g;
-
-  processedText = processedText.replace(md5Pattern, (_match, leftParen, sourceNum, fileName, fileMd5, rightParen) => {
-    const linkClass = 'source-file-link';
-    const trimmedFileName = fileName.trim();
-    const trimmedMd5 = fileMd5.trim();
-    const fileId = `source-file-${sourceFiles.value.length}`;
-    const referenceNumber = parseInt(sourceNum, 10);
-
-    // 存储文件信息（包含文件名和MD5）
-    sourceFiles.value.push({
-      fileName: trimmedFileName,
-      id: fileId,
-      referenceNumber,
-      fileMd5: trimmedMd5
+  processedText = processedText.replace(md5Pattern, (_match, sourceNum, fileName, fileMd5) => {
+    return createSourceLink(sourceNum, fileName, {
+      fileMd5: fileMd5.trim()
     });
-
-    const lp = leftParen === '(' ? '(' : '（';
-    const rp = rightParen === ')' ? ')' : '）';
-
-    // 显示格式：来源#1: test.txt（不显示MD5）
-    return `${lp}来源#${sourceNum}: <span class="${linkClass}" data-file-id="${fileId}">${trimmedFileName}</span>${rp}`;
   });
 
-  // 简单格式：匹配 (来源#数字: 文件名) 的正则表达式，兼容全角括号
-  const simplePattern = /([\(（])来源#(\d+):\s*([^\n\r（）|]+?)([\)）])/g;
-
-  processedText = processedText.replace(simplePattern, (_match, leftParen, sourceNum, fileName, rightParen) => {
-    const linkClass = 'source-file-link';
-    const trimmedFileName = fileName.trim();
-    const fileId = `source-file-${sourceFiles.value.length}`;
-    const referenceNumber = parseInt(sourceNum, 10);
-
-    // 存储文件信息
-    sourceFiles.value.push({
-      fileName: trimmedFileName,
-      id: fileId,
-      referenceNumber
-    });
-
-    const lp = leftParen || '';
-    const rp = rightParen || '';
-
-    return `${lp}来源#${sourceNum}: <span class="${linkClass}" data-file-id="${fileId}">${trimmedFileName}</span>${rp}`;
+  processedText = processedText.replace(simplePattern, (_match, sourceNum, fileName) => {
+    return createSourceLink(sourceNum, fileName);
   });
 
   return processedText;
@@ -144,22 +125,28 @@ function handleContentClick(event: MouseEvent) {
 // 处理来源文件点击事件
 async function handleSourceFileClick(fileInfo: { fileName: string, referenceNumber: number, fileMd5?: string }) {
   const { fileName, referenceNumber, fileMd5: extractedMd5 } = fileInfo;
-  console.log('点击了来源文件:', fileName, '引用编号:', referenceNumber, '提取的MD5:', extractedMd5, '会话ID:', props.sessionId);
+  const persistedDetail = props.msg.referenceMappings?.[String(referenceNumber)] || props.msg.referenceMappings?.[referenceNumber];
+  const referenceSessionId = props.msg.conversationId || props.sessionId;
+  console.log('点击了来源文件:', fileName, '引用编号:', referenceNumber, '提取的MD5:', extractedMd5, '会话ID:', referenceSessionId);
 
   try {
-    window.$message?.loading(`正在定位引用内容: ${fileName}`, {
-      duration: 0,
-      closable: false
-    });
-
     let detail: Api.Document.ReferenceDetailResponse | null = null;
 
-    if (props.sessionId) {
+    if (persistedDetail?.fileMd5) {
+      previewFileName.value = persistedDetail.fileName || fileName;
+      previewFileMd5.value = persistedDetail.fileMd5;
+      previewPageNumber.value = persistedDetail.pageNumber || undefined;
+      previewAnchorText.value = persistedDetail.anchorText || '';
+      previewVisible.value = true;
+      return;
+    }
+
+    if (referenceSessionId) {
       try {
         const { error: detailError, data: detailData } = await request<Api.Document.ReferenceDetailResponse>({
           url: 'documents/reference-detail',
           params: {
-            sessionId: props.sessionId,
+            sessionId: referenceSessionId,
             referenceNumber: referenceNumber.toString()
           },
           baseURL: '/proxy-api'
@@ -180,7 +167,6 @@ async function handleSourceFileClick(fileInfo: { fileName: string, referenceNumb
       previewPageNumber.value = detail?.pageNumber || undefined;
       previewAnchorText.value = detail?.anchorText || '';
       previewVisible.value = true;
-      window.$message?.destroyAll();
       return;
     }
 
@@ -195,8 +181,6 @@ async function handleSourceFileClick(fileInfo: { fileName: string, referenceNumb
       baseURL: '/proxy-api'
     });
 
-    window.$message?.destroyAll();
-
     if (error) {
       window.$message?.error(`文件下载失败: ${error.response?.data?.message || '未知错误'}`);
       return;
@@ -209,7 +193,6 @@ async function handleSourceFileClick(fileInfo: { fileName: string, referenceNumb
       window.$message?.error('未能获取到下载链接');
     }
   } catch (err) {
-    window.$message?.destroyAll();
     console.error('文件下载失败:', err);
     window.$message?.error(`文件下载失败: ${fileName}`);
   }
@@ -247,7 +230,9 @@ function closePreview() {
     <NText v-if="msg.status === 'pending'">
       <icon-eos-icons:three-dots-loading class="ml-12 mt-2 text-8" />
     </NText>
-    <NText v-else-if="msg.status === 'error'" class="ml-12 mt-2 italic">服务器繁忙，请稍后再试</NText>
+    <NText v-else-if="msg.status === 'error'" class="ml-12 mt-2 italic color-#d03050">
+      {{ msg.content || '服务器繁忙，请稍后再试' }}
+    </NText>
     <div v-else-if="msg.role === 'assistant'" class="mt-2 pl-12" @click="handleContentClick">
       <VueMarkdownIt :content="content" />
     </div>

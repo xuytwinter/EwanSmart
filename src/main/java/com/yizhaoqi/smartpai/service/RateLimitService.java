@@ -12,10 +12,19 @@ public class RateLimitService {
 
     private final StringRedisTemplate stringRedisTemplate;
     private final RateLimitProperties properties;
+    private final RateLimitConfigService rateLimitConfigService;
+    private final UsageQuotaService usageQuotaService;
 
-    public RateLimitService(StringRedisTemplate stringRedisTemplate, RateLimitProperties properties) {
+    public RateLimitService(
+            StringRedisTemplate stringRedisTemplate,
+            RateLimitProperties properties,
+            RateLimitConfigService rateLimitConfigService,
+            UsageQuotaService usageQuotaService
+    ) {
         this.stringRedisTemplate = stringRedisTemplate;
         this.properties = properties;
+        this.rateLimitConfigService = rateLimitConfigService;
+        this.usageQuotaService = usageQuotaService;
     }
 
     public void checkRegisterByIp(String ip) {
@@ -27,19 +36,21 @@ public class RateLimitService {
     }
 
     public void checkChatByUser(String userId) {
-        checkSingleWindow("chat:user:" + userId, properties.getChatMessage().getMax(), properties.getChatMessage().getWindowSeconds(), "聊天请求过于频繁");
+        RateLimitConfigService.WindowLimitView limit = rateLimitConfigService.getCurrentSettings().chatMessage();
+        checkSingleWindow("chat:user:" + userId, limit.max(), limit.windowSeconds(), "聊天请求过于频繁");
+        usageQuotaService.recordChatRequest(userId);
     }
 
     public void checkLlmByUser(String userId) {
-        RateLimitProperties.DualWindowLimit limit = properties.getLlmRequest();
-        checkSingleWindow("llm:min:user:" + userId, limit.getMinuteMax(), limit.getMinuteWindowSeconds(), "LLM调用过于频繁");
-        checkSingleWindow("llm:day:user:" + userId, limit.getDayMax(), limit.getDayWindowSeconds(), "LLM当日调用次数已达上限");
+        RateLimitConfigService.DualWindowLimitView limit = rateLimitConfigService.getCurrentSettings().llmRequest();
+        checkSingleWindow("llm:min:user:" + userId, limit.minuteMax(), limit.minuteWindowSeconds(), "LLM调用过于频繁");
+        checkSingleWindow("llm:day:user:" + userId, limit.dayMax(), limit.dayWindowSeconds(), "LLM当日调用次数已达上限");
     }
 
     public void checkEmbeddingByUser(String userId) {
-        RateLimitProperties.DualWindowLimit limit = properties.getEmbeddingBatch();
-        checkSingleWindow("emb:min:user:" + userId, limit.getMinuteMax(), limit.getMinuteWindowSeconds(), "向量化调用过于频繁");
-        checkSingleWindow("emb:day:user:" + userId, limit.getDayMax(), limit.getDayWindowSeconds(), "向量化当日调用次数已达上限");
+        RateLimitConfigService.DualWindowLimitView limit = rateLimitConfigService.getCurrentSettings().embeddingBatch();
+        checkSingleWindow("emb:min:user:" + userId, limit.minuteMax(), limit.minuteWindowSeconds(), "向量化调用过于频繁");
+        checkSingleWindow("emb:day:user:" + userId, limit.dayMax(), limit.dayWindowSeconds(), "向量化当日调用次数已达上限");
     }
 
     private void checkSingleWindow(String key, int max, long windowSeconds, String message) {
