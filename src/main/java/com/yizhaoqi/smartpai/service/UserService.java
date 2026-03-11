@@ -11,6 +11,7 @@ import com.yizhaoqi.smartpai.utils.PasswordUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -19,9 +20,11 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.unit.DataSize;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Locale;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,6 +34,7 @@ import java.util.stream.Collectors;
 import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.UUID;
 
 /**
  * UserService 类用于处理用户注册和认证相关的业务逻辑。
@@ -46,6 +50,10 @@ public class UserService {
     private static final String PRIVATE_TAG_PREFIX = "PRIVATE_";
     private static final String PRIVATE_ORG_NAME_SUFFIX = "的私人空间";
     private static final String PRIVATE_ORG_DESCRIPTION = "用户的私人组织标签，仅用户本人可访问";
+    private static final long BYTES_PER_MB = 1024L * 1024L;
+    private static final int MAX_TAG_ID_LENGTH = 255;
+    private static final Pattern NON_ALNUM_PATTERN = Pattern.compile("[^a-z0-9]+");
+    private static final Pattern TRIM_DASH_PATTERN = Pattern.compile("(^-+|-+$)");
     private static final Pattern PASSWORD_PATTERN = Pattern.compile(
             "^(?=.*[A-Za-z])(?=.*\\d).{6,18}$"
     );
@@ -67,6 +75,9 @@ public class UserService {
 
     @Autowired
     private UsageQuotaService usageQuotaService;
+
+    @Value("${spring.servlet.multipart.max-file-size:50MB}")
+    private String globalUploadMaxFileSize;
 
     /**
      * 注册新用户。
@@ -252,7 +263,7 @@ public class UserService {
      */
     @Transactional
     public OrganizationTag createOrganizationTag(String tagId, String name, String description, 
-                                                String parentTag, String creatorUsername) {
+                                                String parentTag, Long uploadMaxSizeMb, String creatorUsername) {
         // 验证创建者是否为管理员
         User creator = userRepository.findByUsername(creatorUsername)
                 .orElseThrow(() -> new CustomException("Creator not found", HttpStatus.NOT_FOUND));
@@ -261,10 +272,7 @@ public class UserService {
             throw new CustomException("Only administrators can create organization tags", HttpStatus.FORBIDDEN);
         }
         
-        // 检查标签ID是否已存在
-        if (organizationTagRepository.existsByTagId(tagId)) {
-            throw new CustomException("Tag ID already exists", HttpStatus.BAD_REQUEST);
-        }
+        String resolvedTagId = resolveOrGenerateTagId(tagId, name);
         
         // 如果指定了父标签，检查父标签是否存在
         if (parentTag != null && !parentTag.isEmpty()) {
@@ -273,10 +281,11 @@ public class UserService {
         }
         
         OrganizationTag tag = new OrganizationTag();
-        tag.setTagId(tagId);
+        tag.setTagId(resolvedTagId);
         tag.setName(name);
         tag.setDescription(description);
         tag.setParentTag(parentTag);
+        tag.setUploadMaxSizeBytes(normalizeUploadMaxSizeBytes(uploadMaxSizeMb));
         tag.setCreatedBy(creator);
         
         OrganizationTag savedTag = organizationTagRepository.save(tag);
@@ -385,15 +394,17 @@ public class UserService {
         }
         
         // 获取组织标签的详细信息
-        List<Map<String, String>> orgTagDetails = new ArrayList<>();
+        List<Map<String, Object>> orgTagDetails = new ArrayList<>();
         for (String tagId : orgTags) {
             OrganizationTag tag = organizationTagRepository.findByTagId(tagId)
                     .orElse(null);
             if (tag != null) {
-                Map<String, String> tagInfo = new HashMap<>();
+                Map<String, Object> tagInfo = new HashMap<>();
                 tagInfo.put("tagId", tag.getTagId());
                 tagInfo.put("name", tag.getName());
                 tagInfo.put("description", tag.getDescription());
+                tagInfo.put("uploadMaxSizeBytes", tag.getUploadMaxSizeBytes());
+                tagInfo.put("uploadMaxSizeMb", toUploadMaxSizeMb(tag.getUploadMaxSizeBytes()));
                 orgTagDetails.add(tagInfo);
             }
         }
@@ -437,16 +448,7 @@ public class UserService {
      */
     public String getUserPrimaryOrg(String userId) {
         // 先通过userId查找用户，然后获取username
-        User user;
-        try {
-            Long userIdLong = Long.parseLong(userId);
-            user = userRepository.findById(userIdLong)
-                .orElseThrow(() -> new CustomException("User not found with ID: " + userId, HttpStatus.NOT_FOUND));
-        } catch (NumberFormatException e) {
-            // 如果userId不是数字格式，则假设它就是username
-            user = userRepository.findByUsername(userId)
-                .orElseThrow(() -> new CustomException("User not found: " + userId, HttpStatus.NOT_FOUND));
-        }
+        User user = resolveUser(userId);
         
         String username = user.getUsername();
         
@@ -506,6 +508,8 @@ public class UserService {
             node.put("name", tag.getName());
             node.put("description", tag.getDescription());
             node.put("parentTag", tag.getParentTag()); // 添加父标签字段
+            node.put("uploadMaxSizeBytes", tag.getUploadMaxSizeBytes());
+            node.put("uploadMaxSizeMb", toUploadMaxSizeMb(tag.getUploadMaxSizeBytes()));
             
             // 获取子标签
             List<OrganizationTag> children = organizationTagRepository.findByParentTag(tag.getTagId());
@@ -532,7 +536,7 @@ public class UserService {
      */
     @Transactional
     public OrganizationTag updateOrganizationTag(String tagId, String name, String description, 
-                                                String parentTag, String adminUsername) {
+                                                String parentTag, Long uploadMaxSizeMb, String adminUsername) {
         // 验证操作者是否为管理员
         User admin = userRepository.findByUsername(adminUsername)
                 .orElseThrow(() -> new CustomException("Admin not found", HttpStatus.NOT_FOUND));
@@ -572,6 +576,7 @@ public class UserService {
         }
         
         tag.setParentTag(parentTag);
+        tag.setUploadMaxSizeBytes(normalizeUploadMaxSizeBytes(uploadMaxSizeMb));
         
         OrganizationTag updatedTag = organizationTagRepository.save(tag);
         
@@ -579,6 +584,15 @@ public class UserService {
         orgTagCacheService.invalidateAllEffectiveTagsCache();
         
         return updatedTag;
+    }
+
+    public boolean isAdminUser(String userId) {
+        return resolveUser(userId).getRole() == User.Role.ADMIN;
+    }
+
+    public OrganizationTag getOrganizationTag(String tagId) {
+        return organizationTagRepository.findByTagId(tagId)
+                .orElseThrow(() -> new CustomException("Organization tag not found", HttpStatus.NOT_FOUND));
     }
     
     /**
@@ -816,5 +830,100 @@ public class UserService {
         result.put("number", userPage.getNumber() + 1); // 转换为从1开始的页码
         
         return result;
+    }
+
+    private String resolveOrGenerateTagId(String tagId, String name) {
+        String normalizedTagId = tagId == null ? "" : tagId.trim();
+        if (!normalizedTagId.isEmpty()) {
+            if (normalizedTagId.startsWith(PRIVATE_TAG_PREFIX)) {
+                throw new CustomException("Tag ID cannot start with PRIVATE_", HttpStatus.BAD_REQUEST);
+            }
+            if (organizationTagRepository.existsByTagId(normalizedTagId)) {
+                throw new CustomException("Tag ID already exists", HttpStatus.BAD_REQUEST);
+            }
+            return normalizedTagId;
+        }
+        return generateUniqueTagId(name);
+    }
+
+    private String generateUniqueTagId(String name) {
+        String slug = buildTagSlug(name);
+        String baseId = truncateTagId("ORG_" + slug);
+
+        if (!organizationTagRepository.existsByTagId(baseId)) {
+            return baseId;
+        }
+
+        for (int i = 2; i <= 9999; i++) {
+            String candidate = appendSuffix(baseId, "_" + i);
+            if (!organizationTagRepository.existsByTagId(candidate)) {
+                return candidate;
+            }
+        }
+
+        while (true) {
+            String uuidSuffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+            String candidate = appendSuffix(baseId, "_" + uuidSuffix);
+            if (!organizationTagRepository.existsByTagId(candidate)) {
+                return candidate;
+            }
+        }
+    }
+
+    private String buildTagSlug(String name) {
+        String raw = name == null ? "" : name.trim().toLowerCase(Locale.ROOT);
+        String slug = NON_ALNUM_PATTERN.matcher(raw).replaceAll("-");
+        slug = TRIM_DASH_PATTERN.matcher(slug).replaceAll("");
+        return slug.isEmpty() ? "tag" : slug;
+    }
+
+    private String appendSuffix(String base, String suffix) {
+        if (base.length() + suffix.length() <= MAX_TAG_ID_LENGTH) {
+            return base + suffix;
+        }
+        return base.substring(0, MAX_TAG_ID_LENGTH - suffix.length()) + suffix;
+    }
+
+    private String truncateTagId(String tagId) {
+        if (tagId.length() <= MAX_TAG_ID_LENGTH) {
+            return tagId;
+        }
+        return tagId.substring(0, MAX_TAG_ID_LENGTH);
+    }
+
+    private User resolveUser(String userId) {
+        try {
+            Long userIdLong = Long.parseLong(userId);
+            return userRepository.findById(userIdLong)
+                    .orElseThrow(() -> new CustomException("User not found with ID: " + userId, HttpStatus.NOT_FOUND));
+        } catch (NumberFormatException e) {
+            return userRepository.findByUsername(userId)
+                    .orElseThrow(() -> new CustomException("User not found: " + userId, HttpStatus.NOT_FOUND));
+        }
+    }
+
+    private Long normalizeUploadMaxSizeBytes(Long uploadMaxSizeMb) {
+        if (uploadMaxSizeMb == null) {
+            return null;
+        }
+        if (uploadMaxSizeMb <= 0) {
+            throw new CustomException("上传大小上限必须大于 0 MB", HttpStatus.BAD_REQUEST);
+        }
+        long uploadMaxSizeBytes = uploadMaxSizeMb * BYTES_PER_MB;
+        long globalUploadMaxBytes = DataSize.parse(globalUploadMaxFileSize).toBytes();
+        if (uploadMaxSizeBytes > globalUploadMaxBytes) {
+            throw new CustomException(
+                    "上传大小上限不能超过系统全局限制 " + (globalUploadMaxBytes / BYTES_PER_MB) + " MB",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+        return uploadMaxSizeBytes;
+    }
+
+    private Long toUploadMaxSizeMb(Long uploadMaxSizeBytes) {
+        if (uploadMaxSizeBytes == null || uploadMaxSizeBytes <= 0) {
+            return null;
+        }
+        return uploadMaxSizeBytes / BYTES_PER_MB;
     }
 }

@@ -444,6 +444,7 @@ public class AdminController {
                 request.name(), 
                 request.description(), 
                 request.parentTag(), 
+                request.uploadMaxSizeMb(),
                 adminUsername
             );
             return ResponseEntity.ok(Map.of("code", 200, "message", "组织标签创建成功", "data", tag));
@@ -540,6 +541,7 @@ public class AdminController {
                 request.name(), 
                 request.description(), 
                 request.parentTag(), 
+                request.uploadMaxSizeMb(),
                 adminUsername
             );
             return ResponseEntity.ok(Map.of(
@@ -974,7 +976,7 @@ record AdminUserRequest(String username, String password) {}
 /**
  * 组织标签请求体
  */
-record OrgTagRequest(String tagId, String name, String description, String parentTag) {}
+record OrgTagRequest(String tagId, String name, String description, String parentTag, Long uploadMaxSizeMb) {}
 
 /**
  * 分配组织标签请求体
@@ -982,6 +984,6 @@ record OrgTagRequest(String tagId, String name, String description, String paren
 record AssignOrgTagsRequest(List<String> orgTags) {}
 
 // 添加组织标签更新请求记录类
-record OrgTagUpdateRequest(String name, String description, String parentTag) {}
+record OrgTagUpdateRequest(String name, String description, String parentTag, Long uploadMaxSizeMb) {}
 
 record CreateInviteCodeRequest(String code, Integer maxUses, LocalDateTime expiresAt, Integer count) {}

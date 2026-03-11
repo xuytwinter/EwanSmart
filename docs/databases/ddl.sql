@@ -14,6 +14,7 @@ CREATE TABLE organization_tags (
                                    name VARCHAR(100) NOT NULL COMMENT '标签名称',
                                    description TEXT COMMENT '描述',
                                    parent_tag VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT '父标签ID',
+                                   upload_max_size_bytes BIGINT DEFAULT NULL COMMENT '非管理员上传文件大小上限，单位字节',
                                    created_by BIGINT NOT NULL COMMENT '创建者ID',
                                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',

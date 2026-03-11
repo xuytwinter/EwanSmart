@@ -70,6 +70,8 @@ declare namespace Api {
       name: string;
       description: string;
       parentTag: string | null;
+      uploadMaxSizeBytes: number | null;
+      uploadMaxSizeMb: number | null;
       children?: Item[];
     }
 
@@ -280,6 +282,8 @@ declare namespace Api {
     interface Form {
       orgTag: string | null;
       orgTagName: string | null;
+      uploadMaxSizeBytes?: number | null;
+      uploadMaxSizeMb?: number | null;
       isPublic: boolean;
       fileList: import('naive-ui').UploadFileInfo[];
     }
@@ -344,12 +348,15 @@ declare namespace Api {
       status?: 'pending' | 'loading' | 'finished' | 'error';
       timestamp?: string;
       conversationId?: string;
-      referenceMappings?: Record<string, {
-        fileMd5: string;
-        fileName: string;
-        pageNumber?: number | null;
-        anchorText?: string | null;
-      }>;
+      referenceMappings?: Record<
+        string,
+        {
+          fileMd5: string;
+          fileName: string;
+          pageNumber?: number | null;
+          anchorText?: string | null;
+        }
+      >;
     }
 
     interface Token {

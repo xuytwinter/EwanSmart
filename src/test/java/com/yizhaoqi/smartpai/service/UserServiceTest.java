@@ -2,6 +2,7 @@ package com.yizhaoqi.smartpai.service;
 
 import com.yizhaoqi.smartpai.config.AppAuthProperties;
 import com.yizhaoqi.smartpai.exception.CustomException;
+import com.yizhaoqi.smartpai.model.OrganizationTag;
 import com.yizhaoqi.smartpai.model.RegistrationMode;
 import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.OrganizationTagRepository;
@@ -13,11 +14,13 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.*;
 
@@ -47,6 +50,7 @@ class UserServiceTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
+        ReflectionTestUtils.setField(userService, "globalUploadMaxFileSize", "50MB");
         when(appAuthProperties.getRegistration()).thenReturn(registration);
         when(registration.getMode()).thenReturn(RegistrationMode.OPEN);
         when(registration.isInviteRequired()).thenReturn(false);
@@ -137,5 +141,76 @@ class UserServiceTest {
                 () -> userService.registerUser("testuser", "password123", null));
 
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, exception.getStatus());
+    }
+
+    @Test
+    void testCreateOrganizationTagStoresUploadLimit() {
+        User admin = new User();
+        admin.setUsername("admin");
+        admin.setRole(User.Role.ADMIN);
+
+        OrganizationTag parentTag = new OrganizationTag();
+        parentTag.setTagId("ROOT");
+
+        when(userRepository.findByUsername("admin")).thenReturn(Optional.of(admin));
+        when(organizationTagRepository.existsByTagId("TEAM_A")).thenReturn(false);
+        when(organizationTagRepository.findByTagId("ROOT")).thenReturn(Optional.of(parentTag));
+        when(organizationTagRepository.save(any(OrganizationTag.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        OrganizationTag saved = userService.createOrganizationTag("TEAM_A", "Team A", "desc", "ROOT", 20L, "admin");
+
+        assertEquals(20L * 1024 * 1024, saved.getUploadMaxSizeBytes());
+        verify(orgTagCacheService).invalidateAllEffectiveTagsCache();
+    }
+
+    @Test
+    void testCreateOrganizationTagAllowsUnlimitedUploadSize() {
+        User admin = new User();
+        admin.setUsername("admin");
+        admin.setRole(User.Role.ADMIN);
+
+        when(userRepository.findByUsername("admin")).thenReturn(Optional.of(admin));
+        when(organizationTagRepository.existsByTagId("TEAM_A")).thenReturn(false);
+        when(organizationTagRepository.save(any(OrganizationTag.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        OrganizationTag saved = userService.createOrganizationTag("TEAM_A", "Team A", "desc", null, null, "admin");
+
+        assertNull(saved.getUploadMaxSizeBytes());
+    }
+
+    @Test
+    void testCreateOrganizationTagRejectsInvalidUploadLimit() {
+        User admin = new User();
+        admin.setUsername("admin");
+        admin.setRole(User.Role.ADMIN);
+
+        when(userRepository.findByUsername("admin")).thenReturn(Optional.of(admin));
+        when(organizationTagRepository.existsByTagId("TEAM_A")).thenReturn(false);
+
+        CustomException exception = assertThrows(
+                CustomException.class,
+                () -> userService.createOrganizationTag("TEAM_A", "Team A", "desc", null, 0L, "admin")
+        );
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        assertEquals("上传大小上限必须大于 0 MB", exception.getMessage());
+    }
+
+    @Test
+    void testCreateOrganizationTagRejectsLimitOverGlobalMax() {
+        User admin = new User();
+        admin.setUsername("admin");
+        admin.setRole(User.Role.ADMIN);
+
+        when(userRepository.findByUsername("admin")).thenReturn(Optional.of(admin));
+        when(organizationTagRepository.existsByTagId("TEAM_A")).thenReturn(false);
+
+        CustomException exception = assertThrows(
+                CustomException.class,
+                () -> userService.createOrganizationTag("TEAM_A", "Team A", "desc", null, 60L, "admin")
+        );
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        assertEquals("上传大小上限不能超过系统全局限制 50 MB", exception.getMessage());
     }
 }
