@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -685,7 +686,7 @@ public class UploadService {
      * @return
      */
     public String transToPublicUrl(String minioUrl) {
-        if (StringUtils.isBlank(minioUrl)) {
+        if (StringUtils.isBlank(minioUrl) || Objects.equals(minioConfig.getEndpoint(), minioConfig.getPublicUrl())) {
             return minioUrl;
         }
         return minioUrl.replaceFirst(minioConfig.getEndpoint(), minioConfig.getPublicUrl());
