@@ -148,7 +148,9 @@ public class EmbeddingClient {
     private WebClient buildClient(ModelProviderConfigService.ActiveProviderView provider) {
         WebClient.Builder builder = WebClient.builder()
                 .baseUrl(provider.apiBaseUrl())
-                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
+                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                // WebClient 的默认缓冲区大小限制（256KB）, 这里调高到 16MB
+                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024));
         if (provider.apiKey() != null && !provider.apiKey().isBlank()) {
             builder.defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + provider.apiKey());
         }
