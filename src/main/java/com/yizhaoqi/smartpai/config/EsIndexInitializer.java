@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch.indices.CreateIndexRequest;
@@ -17,6 +18,8 @@ import java.nio.file.Files;
 import java.nio.charset.StandardCharsets;
 import java.io.StringReader;
 
+// 确保在 BootstrapKnowledgeInitializer 之前进行初始化
+@Order(2)
 @Component
 @ConditionalOnProperty(name = "elasticsearch.init.enabled", havingValue = "true", matchIfMissing = true)
 public class EsIndexInitializer implements CommandLineRunner {
@@ -32,6 +35,7 @@ public class EsIndexInitializer implements CommandLineRunner {
     @Override
     public void run(String... args) throws Exception {
         try {
+            logger.info("正在初始化索引 'knowledge_base'...");
             initializeIndex();
         } catch (Exception exception) {
             // 特别处理连接关闭异常，尝试重新连接
