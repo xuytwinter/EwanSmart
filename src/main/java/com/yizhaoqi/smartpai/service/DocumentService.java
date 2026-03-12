@@ -50,6 +50,9 @@ public class DocumentService {
     @Autowired
     private UserRepository userRepository;
 
+    @Autowired
+    private UploadService uploadService;
+
     /**
      * 删除文档及其相关数据
      * 该方法将删除:
@@ -223,6 +226,9 @@ public class DocumentService {
                 );
                 logger.info("成功生成文件下载链接（新路径）: fileMd5={}, fileName={}, objectName={}",
                         fileMd5, fileUpload.getFileName(), objectName);
+
+                // 使用 publicUrl 公开域名来替换原始域名
+                presignedUrl = uploadService.transToPublicUrl(presignedUrl);
                 return presignedUrl;
             } catch (Exception e) {
                 logger.warn("使用新路径生成下载链接失败，尝试使用旧路径（文件名）: fileMd5={}", fileMd5);
@@ -238,6 +244,7 @@ public class DocumentService {
                 );
                 logger.info("成功生成文件下载链接（旧路径）: fileMd5={}, fileName={}, objectName={}",
                         fileMd5, fileUpload.getFileName(), oldObjectName);
+                presignedUrl = uploadService.transToPublicUrl(presignedUrl);
                 return presignedUrl;
             }
         } catch (Exception e) {

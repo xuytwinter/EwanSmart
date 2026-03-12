@@ -1,9 +1,11 @@
 package com.yizhaoqi.smartpai.service;
 
+import com.yizhaoqi.smartpai.config.MinioConfig;
 import com.yizhaoqi.smartpai.model.ChunkInfo;
 import com.yizhaoqi.smartpai.model.FileUpload;
 import com.yizhaoqi.smartpai.repository.ChunkInfoRepository;
 import com.yizhaoqi.smartpai.repository.FileUploadRepository;
+import io.micrometer.common.util.StringUtils;
 import io.minio.*;
 import io.minio.http.Method;
 import io.minio.GetObjectResponse;
@@ -46,7 +48,7 @@ public class UploadService {
     private ChunkInfoRepository chunkInfoRepository;
 
     @Autowired
-    private String minioPublicUrl; // 注入 MinIO 的公共访问地址
+    private MinioConfig minioConfig;
 
     /**
      * 上传文件分片
@@ -675,5 +677,17 @@ public class UploadService {
                         .object("merged/" + fileMd5)
                         .build()
         );
+    }
+
+    /**
+     * 转换为公开 URL
+     * @param minioUrl
+     * @return
+     */
+    public String transToPublicUrl(String minioUrl) {
+        if (StringUtils.isBlank(minioUrl)) {
+            return minioUrl;
+        }
+        return minioUrl.replaceFirst(minioConfig.getEndpoint(), minioConfig.getPublicUrl());
     }
 }
