@@ -744,6 +744,12 @@ public class DocumentController {
             data.put("referenceNumber", referenceNumber);
             data.put("pageNumber", detail.pageNumber());
             data.put("anchorText", detail.anchorText());
+            data.put("retrievalMode", detail.retrievalMode());
+            data.put("retrievalLabel", detail.retrievalLabel());
+            data.put("matchedChunkText", detail.matchedChunkText());
+            data.put("evidenceSnippet", detail.evidenceSnippet());
+            data.put("score", detail.score());
+            data.put("chunkId", detail.chunkId());
 
             Map<String, Object> response = new HashMap<>();
             response.put("code", 200);

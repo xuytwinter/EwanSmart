@@ -153,7 +153,9 @@ public class HybridSearchService {
                                 hit.source().isPublic(),
                                 null,
                                 hit.source().getPageNumber(),
-                                hit.source().getAnchorText()
+                                hit.source().getAnchorText(),
+                                "HYBRID",
+                                hit.source().getTextContent()
                         );
                     })
                     .toList();
@@ -260,7 +262,9 @@ public class HybridSearchService {
                                 hit.source().isPublic(),
                                 null,
                                 hit.source().getPageNumber(),
-                                hit.source().getAnchorText()
+                                hit.source().getAnchorText(),
+                                "TEXT_ONLY",
+                                hit.source().getTextContent()
                         );
                     })
                     .toList();
@@ -334,7 +338,9 @@ public class HybridSearchService {
                                 false,
                                 null,
                                 hit.source().getPageNumber(),
-                                hit.source().getAnchorText()
+                                hit.source().getAnchorText(),
+                                "HYBRID",
+                                hit.source().getTextContent()
                         );
                     })
                     .toList();
@@ -380,7 +386,9 @@ public class HybridSearchService {
                             false,
                             null,
                             hit.source().getPageNumber(),
-                            hit.source().getAnchorText()
+                            hit.source().getAnchorText(),
+                            "TEXT_ONLY",
+                            hit.source().getTextContent()
                     );
                 })
                 .toList();

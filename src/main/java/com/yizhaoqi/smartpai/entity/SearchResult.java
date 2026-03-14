@@ -14,25 +14,33 @@ public class SearchResult {
     private Boolean isPublic;  // 是否公开
     private Integer pageNumber; // PDF 页码
     private String anchorText; // 页内定位锚点
+    private String retrievalMode; // 召回方式
+    private String matchedChunkText; // 命中的 chunk 原文
 
     public SearchResult(String fileMd5, Integer chunkId, String textContent, Double score) {
-        this(fileMd5, chunkId, textContent, score, null, null, false, null, null, null);
+        this(fileMd5, chunkId, textContent, score, null, null, false, null, null, null, null, null);
     }
 
     public SearchResult(String fileMd5, Integer chunkId, String textContent, Double score, String fileName) {
-        this(fileMd5, chunkId, textContent, score, null, null, false, fileName, null, null);
+        this(fileMd5, chunkId, textContent, score, null, null, false, fileName, null, null, null, null);
     }
 
     public SearchResult(String fileMd5, Integer chunkId, String textContent, Double score, String userId, String orgTag, boolean isPublic) {
-        this(fileMd5, chunkId, textContent, score, userId, orgTag, isPublic, null, null, null);
+        this(fileMd5, chunkId, textContent, score, userId, orgTag, isPublic, null, null, null, null, null);
     }
 
     public SearchResult(String fileMd5, Integer chunkId, String textContent, Double score, String userId, String orgTag, boolean isPublic, String fileName) {
-        this(fileMd5, chunkId, textContent, score, userId, orgTag, isPublic, fileName, null, null);
+        this(fileMd5, chunkId, textContent, score, userId, orgTag, isPublic, fileName, null, null, null, null);
     }
 
     public SearchResult(String fileMd5, Integer chunkId, String textContent, Double score, String userId, String orgTag,
                         boolean isPublic, String fileName, Integer pageNumber, String anchorText) {
+        this(fileMd5, chunkId, textContent, score, userId, orgTag, isPublic, fileName, pageNumber, anchorText, null, textContent);
+    }
+
+    public SearchResult(String fileMd5, Integer chunkId, String textContent, Double score, String userId, String orgTag,
+                        boolean isPublic, String fileName, Integer pageNumber, String anchorText,
+                        String retrievalMode, String matchedChunkText) {
         this.fileMd5 = fileMd5;
         this.chunkId = chunkId;
         this.textContent = textContent;
@@ -43,5 +51,7 @@ public class SearchResult {
         this.fileName = fileName;
         this.pageNumber = pageNumber;
         this.anchorText = anchorText;
+        this.retrievalMode = retrievalMode;
+        this.matchedChunkText = matchedChunkText != null ? matchedChunkText : textContent;
     }
 }

@@ -124,6 +124,7 @@ interface Props {
   singlePageMode?: boolean;
   sourcePageNumber?: number;
   anchorText?: string;
+  searchText?: string;
   visible?: boolean;
 }
 
@@ -169,7 +170,7 @@ const canvasRef = ref<HTMLCanvasElement | null>(null);
 const textLayerRef = ref<HTMLDivElement | null>(null);
 
 const targetPageNumber = computed(() => clampPage(props.pageNumber || 1, totalPages.value || 1));
-const matchCandidates = computed(() => buildMatchCandidates(props.anchorText || ''));
+const matchCandidates = computed(() => buildMatchCandidates(props.searchText || props.anchorText || ''));
 const singlePagePreviewActive = computed(() => Boolean(props.singlePageMode && props.sourcePageNumber));
 const displayCurrentPage = computed(() => {
   if (singlePagePreviewActive.value) {
@@ -214,6 +215,13 @@ watch(
 
 watch(
   () => props.anchorText,
+  () => {
+    applyHighlight();
+  }
+);
+
+watch(
+  () => props.searchText,
   () => {
     applyHighlight();
   }
@@ -269,33 +277,38 @@ function normalizeForMatch(value: string) {
     .toLowerCase();
 }
 
-function buildMatchCandidates(value: string) {
-  if (!value) return [];
+function buildMatchCandidates(value: string | string[]) {
+  const rawValues = Array.isArray(value) ? value : value.split(/\n+/);
+  const values = rawValues.map(item => item.trim()).filter(Boolean);
+  if (!values.length) return [];
 
   const candidates = new Set<string>();
-  const normalizedFull = normalizeForMatch(value);
-  if (normalizedFull.length >= 6) {
-    candidates.add(normalizedFull);
-  }
 
-  const normalizedSource = value.normalize('NFKC').replace(/\s+/g, ' ').trim();
-  const quotePattern = /[“"「『《](.+?)[”"」』》]/g;
-  for (const match of normalizedSource.matchAll(quotePattern)) {
-    const quoted = normalizeForMatch(match[1] || '');
-    if (quoted.length >= 4) {
-      candidates.add(quoted);
+  values.forEach(item => {
+    const normalizedFull = normalizeForMatch(item);
+    if (normalizedFull.length >= 6) {
+      candidates.add(normalizedFull);
     }
-  }
 
-  const withoutCitations = normalizedSource.replace(/(?:\(|（)?来源#\d+:[^)）;；。！？!?]*/g, ' ');
-  const segments = withoutCitations
-    .split(/[：:；;，,。！？!?、\n\r]/)
-    .map(segment => normalizeForMatch(segment))
-    .filter(segment => segment.length >= 6);
+    const normalizedSource = item.normalize('NFKC').replace(/\s+/g, ' ').trim();
+    const quotePattern = /[“"「『《](.+?)[”"」』》]/g;
+    for (const match of normalizedSource.matchAll(quotePattern)) {
+      const quoted = normalizeForMatch(match[1] || '');
+      if (quoted.length >= 4) {
+        candidates.add(quoted);
+      }
+    }
 
-  segments
-    .sort((left, right) => right.length - left.length)
-    .forEach(segment => candidates.add(segment));
+    const withoutCitations = normalizedSource.replace(/(?:\(|（)?来源#\d+:[^)）;；。！？!?]*/g, ' ');
+    const segments = withoutCitations
+      .split(/[：:；;，,。！？!?、\n\r]/)
+      .map(segment => normalizeForMatch(segment))
+      .filter(segment => segment.length >= 6);
+
+    segments
+      .sort((left, right) => right.length - left.length)
+      .forEach(segment => candidates.add(segment));
+  });
 
   return [...candidates];
 }
@@ -769,24 +782,51 @@ function resolveFuzzyMatchRange(target: string, anchors: string[]): [number, num
   const ranges = buildPhraseRanges(target);
   if (!ranges.length) return null;
 
-  let bestMatch: { start: number; end: number; score: number } | null = null;
+  const sortedAnchors = [...anchors]
+    .filter(anchor => anchor && anchor.length >= 6)
+    .sort((left, right) => right.length - left.length);
 
-  anchors.forEach(anchor => {
-    if (!anchor || anchor.length < 6) return;
+  let bestMatch: { start: number; end: number; score: number; weightedScore: number } | null = null;
+
+  for (const anchor of sortedAnchors) {
+    let bestRangeForAnchor: { start: number; end: number; score: number; weightedScore: number } | null = null;
 
     ranges.forEach(range => {
       const score = calculateDiceCoefficient(anchor, range.text);
       if (score < 0.18) return;
 
-      if (!bestMatch || score > bestMatch.score) {
-        bestMatch = {
+      const weightedScore = score * Math.min(anchor.length, range.text.length);
+      if (
+        !bestRangeForAnchor ||
+        weightedScore > bestRangeForAnchor.weightedScore ||
+        (weightedScore === bestRangeForAnchor.weightedScore && score > bestRangeForAnchor.score)
+      ) {
+        bestRangeForAnchor = {
           start: range.start,
           end: range.end,
-          score
+          score,
+          weightedScore
         };
       }
     });
-  });
+
+    if (!bestRangeForAnchor) continue;
+
+    if (
+      (anchor.length >= 18 && bestRangeForAnchor.score >= 0.2) ||
+      (anchor.length >= 12 && bestRangeForAnchor.score >= 0.28)
+    ) {
+      return [bestRangeForAnchor.start, bestRangeForAnchor.end];
+    }
+
+    if (
+      !bestMatch ||
+      bestRangeForAnchor.weightedScore > bestMatch.weightedScore ||
+      (bestRangeForAnchor.weightedScore === bestMatch.weightedScore && bestRangeForAnchor.score > bestMatch.score)
+    ) {
+      bestMatch = bestRangeForAnchor;
+    }
+  }
 
   return bestMatch ? [bestMatch.start, bestMatch.end] : null;
 }

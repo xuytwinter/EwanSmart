@@ -329,6 +329,19 @@ declare namespace Api {
   }
 
   namespace Chat {
+    interface ReferenceEvidence {
+      fileMd5: string;
+      fileName: string;
+      pageNumber?: number | null;
+      anchorText?: string | null;
+      retrievalMode?: 'HYBRID' | 'TEXT_ONLY' | null;
+      retrievalLabel?: string | null;
+      matchedChunkText?: string | null;
+      evidenceSnippet?: string | null;
+      score?: number | null;
+      chunkId?: number | null;
+    }
+
     interface Input {
       message: string;
       conversationId?: string;
@@ -348,15 +361,7 @@ declare namespace Api {
       status?: 'pending' | 'loading' | 'finished' | 'error';
       timestamp?: string;
       conversationId?: string;
-      referenceMappings?: Record<
-        string,
-        {
-          fileMd5: string;
-          fileName: string;
-          pageNumber?: number | null;
-          anchorText?: string | null;
-        }
-      >;
+      referenceMappings?: Record<string, ReferenceEvidence>;
     }
 
     interface Token {
@@ -372,12 +377,8 @@ declare namespace Api {
       fileMd5?: string;
     }
 
-    interface ReferenceDetailResponse {
-      fileMd5: string;
-      fileName: string;
+    interface ReferenceDetailResponse extends Chat.ReferenceEvidence {
       referenceNumber: number;
-      pageNumber?: number | null;
-      anchorText?: string | null;
     }
   }
 }

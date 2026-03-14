@@ -34,6 +34,9 @@ import java.util.concurrent.RejectedExecutionException;
 public class ChatHandler {
     
     private static final Logger logger = LoggerFactory.getLogger(ChatHandler.class);
+    private static final int MAX_CONTEXT_SNIPPET_LEN = 300;
+    private static final int MAX_MATCHED_CHUNK_LEN = 800;
+    private static final int MAX_EVIDENCE_SNIPPET_LEN = 160;
     private final RedisTemplate<String, String> redisTemplate;
     private final HybridSearchService searchService;
     private final LlmProviderRouter llmProviderRouter;
@@ -288,6 +291,12 @@ public class ChatHandler {
             item.put("fileName", detail.fileName());
             item.put("pageNumber", detail.pageNumber());
             item.put("anchorText", detail.anchorText());
+            item.put("retrievalMode", detail.retrievalMode());
+            item.put("retrievalLabel", detail.retrievalLabel());
+            item.put("matchedChunkText", detail.matchedChunkText());
+            item.put("evidenceSnippet", detail.evidenceSnippet());
+            item.put("score", detail.score());
+            item.put("chunkId", detail.chunkId());
             serialized.put(String.valueOf(entry.getKey()), item);
         }
         return serialized;
@@ -302,13 +311,12 @@ public class ChatHandler {
         // 创建当前会话的引用映射
         Map<Integer, ReferenceInfo> referenceMapping = new HashMap<>();
 
-        final int MAX_SNIPPET_LEN = 300; // 单段最长字符数，超出截断
         StringBuilder context = new StringBuilder();
         for (int i = 0; i < searchResults.size(); i++) {
             SearchResult result = searchResults.get(i);
             String snippet = result.getTextContent();
-            if (snippet.length() > MAX_SNIPPET_LEN) {
-                snippet = snippet.substring(0, MAX_SNIPPET_LEN) + "…";
+            if (snippet.length() > MAX_CONTEXT_SNIPPET_LEN) {
+                snippet = snippet.substring(0, MAX_CONTEXT_SNIPPET_LEN) + "…";
             }
             String fileLabel = result.getFileName() != null ? result.getFileName() : "unknown";
             String fileMd5 = result.getFileMd5();
@@ -324,15 +332,11 @@ public class ChatHandler {
 
             // 保存引用编号到MD5的映射
             if (fileMd5 != null) {
-                referenceMapping.put(i + 1, new ReferenceInfo(
-                        fileMd5,
-                        fileLabel,
-                        result.getPageNumber(),
-                        result.getAnchorText()
-                ));
+                ReferenceInfo detail = buildReferenceInfo(result, fileLabel);
+                referenceMapping.put(i + 1, detail);
                 // 详细日志：记录每个引用编号的映射关系
-                logger.info("引用映射: sessionId={}, 引用编号#{}={}, 文件名={}, MD5={}, page={}",
-                    sessionId, i + 1, fileLabel, fileMd5, result.getPageNumber());
+                logger.info("引用映射: sessionId={}, 引用编号#{}={}, 文件名={}, MD5={}, page={}, retrievalMode={}, chunkId={}",
+                    sessionId, i + 1, fileLabel, fileMd5, result.getPageNumber(), detail.retrievalMode(), detail.chunkId());
             }
         }
 
@@ -483,6 +487,63 @@ public class ChatHandler {
         return detail;
     }
 
+    private ReferenceInfo buildReferenceInfo(SearchResult result, String fileLabel) {
+        String matchedChunkText = trimToMaxLength(
+                result.getMatchedChunkText() != null ? result.getMatchedChunkText() : result.getTextContent(),
+                MAX_MATCHED_CHUNK_LEN
+        );
+        String evidenceSnippet = buildEvidenceSnippet(matchedChunkText);
+
+        return new ReferenceInfo(
+                result.getFileMd5(),
+                fileLabel,
+                result.getPageNumber(),
+                result.getAnchorText(),
+                result.getRetrievalMode(),
+                buildRetrievalLabel(result.getRetrievalMode()),
+                matchedChunkText,
+                evidenceSnippet,
+                result.getScore(),
+                result.getChunkId()
+        );
+    }
+
+    private String buildRetrievalLabel(String retrievalMode) {
+        if ("TEXT_ONLY".equalsIgnoreCase(retrievalMode)) {
+            return "关键词召回";
+        }
+        return "混合召回（语义相关 + 关键词命中）";
+    }
+
+    private String buildEvidenceSnippet(String matchedChunkText) {
+        String normalized = normalizeEvidenceText(matchedChunkText);
+        if (normalized.isBlank()) {
+            return "";
+        }
+
+        String[] sentences = normalized.split("(?<=[。！？!?；;])");
+        for (String sentence : sentences) {
+            String trimmedSentence = sentence.trim();
+            if (trimmedSentence.length() >= 12) {
+                return trimToMaxLength(trimmedSentence, MAX_EVIDENCE_SNIPPET_LEN);
+            }
+        }
+
+        return trimToMaxLength(normalized, MAX_EVIDENCE_SNIPPET_LEN);
+    }
+
+    private String trimToMaxLength(String value, int maxLength) {
+        String normalized = normalizeEvidenceText(value);
+        if (normalized.length() <= maxLength) {
+            return normalized;
+        }
+        return normalized.substring(0, maxLength) + "…";
+    }
+
+    private String normalizeEvidenceText(String value) {
+        return value == null ? "" : value.replaceAll("\\s+", " ").trim();
+    }
+
     /**
      * 清理会话的引用映射
      *
@@ -495,6 +556,17 @@ public class ChatHandler {
         }
     }
 
-    public record ReferenceInfo(String fileMd5, String fileName, Integer pageNumber, String anchorText) {
+    public record ReferenceInfo(
+            String fileMd5,
+            String fileName,
+            Integer pageNumber,
+            String anchorText,
+            String retrievalMode,
+            String retrievalLabel,
+            String matchedChunkText,
+            String evidenceSnippet,
+            Double score,
+            Integer chunkId
+    ) {
     }
 }

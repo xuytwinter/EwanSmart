@@ -37,16 +37,48 @@
       <template v-else>
         <div class="content-wrapper">
           <template v-if="previewType === 'pdf' && previewUrl">
-            <PdfDocumentViewer
-              :url="resolvedPreviewUrl"
-              :source-url="resolvedSourceUrl"
-              :file-name="fileName"
-              :page-number="pageNumber"
-              :single-page-mode="singlePageMode"
-              :source-page-number="sourcePageNumber"
-              :anchor-text="anchorText"
-              :visible="visible"
-            />
+            <div class="pdf-preview-stack">
+              <div v-if="hasEvidenceDetails" class="evidence-panel">
+                <div class="evidence-row">
+                  <span class="evidence-label">命中方式</span>
+                  <span class="evidence-value">{{ retrievalLabel || fallbackRetrievalLabel }}</span>
+                </div>
+                <div v-if="evidenceSnippet" class="evidence-row">
+                  <span class="evidence-label">相关内容</span>
+                  <span class="evidence-value">{{ evidenceSnippet }}</span>
+                </div>
+                <div v-if="matchedChunkPreview" class="evidence-row">
+                  <div class="evidence-row-head">
+                    <span class="evidence-label">命中原文</span>
+                    <NButton
+                      v-if="showExpandEvidenceButton"
+                      quaternary
+                      size="tiny"
+                      @click="expandedEvidence = !expandedEvidence"
+                    >
+                      {{ expandedEvidence ? '收起' : '展开全文' }}
+                    </NButton>
+                  </div>
+                  <div class="evidence-value evidence-block">{{ matchedChunkPreview }}</div>
+                </div>
+                <div class="evidence-meta">
+                  <span v-if="pageNumber">页码：第 {{ pageNumber }} 页</span>
+                  <span>文件：{{ fileName }}</span>
+                  <span v-if="displayScore !== ''">相关分数：{{ displayScore }}</span>
+                </div>
+              </div>
+              <PdfDocumentViewer
+                :url="resolvedPreviewUrl"
+                :source-url="resolvedSourceUrl"
+                :file-name="fileName"
+                :page-number="pageNumber"
+                :single-page-mode="singlePageMode"
+                :source-page-number="sourcePageNumber"
+                :anchor-text="resolvedHighlightAnchor"
+                :search-text="resolvedHighlightSearchText"
+                :visible="visible"
+              />
+            </div>
           </template>
           <template v-else-if="previewType === 'image' && resolvedPreviewUrl">
             <div class="image-preview-shell">
@@ -88,6 +120,13 @@ interface Props {
   fileMd5?: string;
   pageNumber?: number;
   anchorText?: string;
+  searchText?: string;
+  retrievalMode?: Api.Chat.ReferenceEvidence['retrievalMode'];
+  retrievalLabel?: string;
+  evidenceSnippet?: string;
+  matchedChunkText?: string;
+  score?: number | null;
+  chunkId?: number | null;
   visible: boolean;
 }
 
@@ -107,11 +146,44 @@ const previewUrl = ref('');
 const sourceUrl = ref('');
 const singlePageMode = ref(false);
 const sourcePageNumber = ref<number | undefined>(undefined);
+const expandedEvidence = ref(false);
 const isHttpProxy = import.meta.env.DEV && import.meta.env.VITE_HTTP_PROXY === 'Y';
 const { baseURL: serviceBaseUrl } = getServiceBaseURL(import.meta.env, isHttpProxy);
 
 const resolvedPreviewUrl = computed(() => resolveFileAccessUrl(previewUrl.value));
 const resolvedSourceUrl = computed(() => resolveFileAccessUrl(sourceUrl.value));
+const hasEvidenceDetails = computed(() => Boolean(props.retrievalLabel || props.evidenceSnippet || props.matchedChunkText));
+const fallbackRetrievalLabel = computed(() => {
+  if (props.retrievalMode === 'TEXT_ONLY') {
+    return '关键词召回';
+  }
+  if (props.retrievalMode === 'HYBRID') {
+    return '混合召回（语义相关 + 关键词命中）';
+  }
+  return '';
+});
+const showExpandEvidenceButton = computed(() => (props.matchedChunkText || '').length > 220);
+const matchedChunkPreview = computed(() => {
+  const sourceText = props.matchedChunkText || '';
+  if (!sourceText) return '';
+  if (expandedEvidence.value || sourceText.length <= 220) {
+    return sourceText;
+  }
+  return `${sourceText.slice(0, 220)}…`;
+});
+const resolvedHighlightAnchor = computed(() => props.evidenceSnippet || props.anchorText || '');
+const resolvedHighlightSearchText = computed(() => {
+  return [props.evidenceSnippet, props.matchedChunkText, props.searchText, props.anchorText]
+    .map(text => text?.trim())
+    .filter((text, index, values): text is string => Boolean(text) && values.indexOf(text) === index)
+    .join('\n');
+});
+const displayScore = computed(() => {
+  if (typeof props.score !== 'number' || Number.isNaN(props.score)) {
+    return '';
+  }
+  return props.score.toFixed(3);
+});
 
 function resolveFileAccessUrl(url: string) {
   if (!url) return '';
@@ -152,6 +224,7 @@ function getFileIcon(fileName: string) {
 // 监听文件名变化，加载预览内容
 watch(() => props.fileName, async (newFileName) => {
   if (newFileName && props.visible) {
+    expandedEvidence.value = false;
     await loadPreviewContent();
   }
 }, { immediate: true });
@@ -159,6 +232,7 @@ watch(() => props.fileName, async (newFileName) => {
 // 监听可见性变化
 watch(() => props.visible, async (visible) => {
   if (visible && props.fileName) {
+    expandedEvidence.value = false;
     await loadPreviewContent();
   }
 });
@@ -375,6 +449,38 @@ function closePreview() {
     
     .content-wrapper {
       @apply h-full min-h-0 overflow-hidden p-5;
+    }
+
+    .pdf-preview-stack {
+      @apply flex h-full min-h-0 flex-col gap-4;
+    }
+
+    .evidence-panel {
+      @apply rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-stone-700 shadow-sm;
+    }
+
+    .evidence-row {
+      @apply mb-3 last:mb-0;
+    }
+
+    .evidence-row-head {
+      @apply mb-1 flex items-center justify-between gap-3;
+    }
+
+    .evidence-label {
+      @apply mb-1 block text-xs font-600 tracking-wide text-amber-700;
+    }
+
+    .evidence-value {
+      @apply leading-6 text-stone-700;
+    }
+
+    .evidence-block {
+      @apply rounded-xl bg-white px-3 py-2 text-stone-600 shadow-sm;
+    }
+
+    .evidence-meta {
+      @apply mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-500;
     }
     
     .preview-text {

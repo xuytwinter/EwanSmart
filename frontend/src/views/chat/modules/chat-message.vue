@@ -17,6 +17,13 @@ const previewFileName = ref('');
 const previewFileMd5 = ref('');
 const previewPageNumber = ref<number | undefined>(undefined);
 const previewAnchorText = ref('');
+const previewSearchText = ref('');
+const previewRetrievalMode = ref<Api.Chat.ReferenceEvidence['retrievalMode']>(null);
+const previewRetrievalLabel = ref('');
+const previewEvidenceSnippet = ref('');
+const previewMatchedChunkText = ref('');
+const previewScore = ref<number | null>(null);
+const previewChunkId = ref<number | null>(null);
 
 function handleCopy(content: string) {
   navigator.clipboard.writeText(content);
@@ -27,6 +34,55 @@ const chatStore = useChatStore();
 
 // 存储文件名和对应的事件处理
 const sourceFiles = ref<Array<{fileName: string, id: string, referenceNumber: number, fileMd5?: string, pageNumber?: number}>>([]);
+const bareUrlPattern = /https?:\/\/[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+/g;
+
+function splitTrailingUrlPunctuation(rawUrl: string) {
+  let url = rawUrl;
+  let trailing = '';
+
+  while (url) {
+    const lastChar = url.at(-1);
+    if (!lastChar) break;
+
+    if (/[，。！？；：、,.!?;:]/.test(lastChar)) {
+      trailing = `${lastChar}${trailing}`;
+      url = url.slice(0, -1);
+      continue;
+    }
+
+    if (lastChar === ')' || lastChar === '）') {
+      const openingChar = lastChar === ')' ? '(' : '（';
+      const closingChar = lastChar;
+      const openingCount = (url.match(new RegExp(`\\${openingChar}`, 'g')) || []).length;
+      const closingCount = (url.match(new RegExp(`\\${closingChar}`, 'g')) || []).length;
+
+      if (closingCount > openingCount) {
+        trailing = `${lastChar}${trailing}`;
+        url = url.slice(0, -1);
+        continue;
+      }
+    }
+
+    break;
+  }
+
+  return { url, trailing };
+}
+
+function normalizeBareUrls(text: string) {
+  return text.replace(bareUrlPattern, (match, offset: number, source: string) => {
+    const previousChar = source[offset - 1] || '';
+    const previousTwoChars = source.slice(Math.max(0, offset - 2), offset);
+    const previousTenChars = source.slice(Math.max(0, offset - 10), offset).toLowerCase();
+
+    if (previousChar === '<' || previousTwoChars === '](' || /(?:href|src)=["']?$/.test(previousTenChars)) {
+      return match;
+    }
+
+    const { url, trailing } = splitTrailingUrlPunctuation(match);
+    return url ? `<${url}>${trailing}` : match;
+  });
+}
 
 function createSourceLink(
   sourceNum: string,
@@ -58,15 +114,15 @@ function processSourceLinks(text: string): string {
   // (来源#1: test.pdf | 第5页; 来源#2: other.pdf | 第8页)
   const entryBoundary = '(?=\\s*(?:[;；,，、。！？!?\\)）]|$))';
   const pagePattern = new RegExp(
-    `来源#(\\d+):\\s*([^|;；,，、。！？!?\\n\\r（）()]+?)\\s*\\|\\s*第(\\d+)页${entryBoundary}`,
+    `来源#(\\d+):\\s*([^|;；,，、。！？!?\\n\\r]+?)\\s*\\|\\s*第(\\d+)页${entryBoundary}`,
     'g'
   );
   const md5Pattern = new RegExp(
-    `来源#(\\d+):\\s*([^|;；,，、。！？!?\\n\\r（）()]+?)\\s*\\|\\s*MD5:\\s*([a-fA-F0-9]+)${entryBoundary}`,
+    `来源#(\\d+):\\s*([^|;；,，、。！？!?\\n\\r]+?)\\s*\\|\\s*MD5:\\s*([a-fA-F0-9]+)${entryBoundary}`,
     'g'
   );
   const simplePattern = new RegExp(
-    `来源#(\\d+):\\s*([^<>\\n\\r（）()|;；,，、。！？!?]+?)${entryBoundary}`,
+    `来源#(\\d+):\\s*([^<>\\n\\r|;；,，、。！？!?]+?)${entryBoundary}`,
     'g'
   );
 
@@ -96,7 +152,7 @@ const content = computed(() => {
 
   // 只对助手消息处理来源链接
   if (props.msg.role === 'assistant') {
-    return processSourceLinks(rawContent);
+    return normalizeBareUrls(processSourceLinks(rawContent));
   }
 
   return rawContent;
@@ -113,6 +169,39 @@ function extractContextAnchorText(target: HTMLElement) {
     .replace(/[（(]\s*$/, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function buildPreviewSearchText(...texts: Array<string | undefined>) {
+  return texts
+    .map(text => text?.trim())
+    .filter((text, index, values): text is string => Boolean(text) && values.indexOf(text) === index)
+    .join('\n');
+}
+
+function applyPreviewEvidence(
+  fileName: string,
+  fileMd5: string,
+  pageNumber: number | null | undefined,
+  evidence: Partial<Api.Chat.ReferenceEvidence>,
+  clickedAnchorText?: string
+) {
+  previewFileName.value = evidence.fileName || fileName;
+  previewFileMd5.value = fileMd5;
+  previewPageNumber.value = pageNumber || undefined;
+  previewAnchorText.value = evidence.anchorText || clickedAnchorText || '';
+  previewSearchText.value = buildPreviewSearchText(
+    evidence.evidenceSnippet || undefined,
+    evidence.matchedChunkText || undefined,
+    clickedAnchorText,
+    evidence.anchorText || undefined
+  );
+  previewRetrievalMode.value = evidence.retrievalMode ?? null;
+  previewRetrievalLabel.value = evidence.retrievalLabel || '';
+  previewEvidenceSnippet.value = evidence.evidenceSnippet || '';
+  previewMatchedChunkText.value = evidence.matchedChunkText || '';
+  previewScore.value = evidence.score ?? null;
+  previewChunkId.value = evidence.chunkId ?? null;
+  previewVisible.value = true;
 }
 
 // 处理内容点击事件（事件委托）
@@ -153,11 +242,13 @@ async function handleSourceFileClick(fileInfo: {
     let detail: Api.Document.ReferenceDetailResponse | null = null;
 
     if (persistedDetail?.fileMd5) {
-      previewFileName.value = persistedDetail.fileName || fileName;
-      previewFileMd5.value = persistedDetail.fileMd5;
-      previewPageNumber.value = persistedDetail.pageNumber || undefined;
-      previewAnchorText.value = persistedDetail.anchorText || clickedAnchorText || '';
-      previewVisible.value = true;
+      applyPreviewEvidence(
+        fileName,
+        persistedDetail.fileMd5,
+        persistedDetail.pageNumber,
+        persistedDetail,
+        clickedAnchorText
+      );
       return;
     }
 
@@ -182,11 +273,17 @@ async function handleSourceFileClick(fileInfo: {
 
     const targetMd5 = detail?.fileMd5 || extractedMd5 || null;
     if (targetMd5) {
-      previewFileName.value = detail?.fileName || fileName;
-      previewFileMd5.value = targetMd5;
-      previewPageNumber.value = detail?.pageNumber || undefined;
-      previewAnchorText.value = detail?.anchorText || clickedAnchorText || '';
-      previewVisible.value = true;
+      applyPreviewEvidence(
+        fileName,
+        targetMd5,
+        detail?.pageNumber,
+        detail || {
+          fileName,
+          fileMd5: targetMd5,
+          anchorText: clickedAnchorText || null
+        },
+        clickedAnchorText
+      );
       return;
     }
 
@@ -224,6 +321,13 @@ function closePreview() {
   previewFileMd5.value = '';
   previewPageNumber.value = undefined;
   previewAnchorText.value = '';
+  previewSearchText.value = '';
+  previewRetrievalMode.value = null;
+  previewRetrievalLabel.value = '';
+  previewEvidenceSnippet.value = '';
+  previewMatchedChunkText.value = '';
+  previewScore.value = null;
+  previewChunkId.value = null;
 }
 </script>
 
@@ -271,6 +375,13 @@ function closePreview() {
         :file-md5="previewFileMd5"
         :page-number="previewPageNumber"
         :anchor-text="previewAnchorText"
+        :search-text="previewSearchText"
+        :retrieval-mode="previewRetrievalMode"
+        :retrieval-label="previewRetrievalLabel"
+        :evidence-snippet="previewEvidenceSnippet"
+        :matched-chunk-text="previewMatchedChunkText"
+        :score="previewScore"
+        :chunk-id="previewChunkId"
         :visible="previewVisible"
         @close="closePreview"
       />
