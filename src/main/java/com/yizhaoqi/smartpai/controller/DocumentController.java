@@ -110,6 +110,59 @@ public class DocumentController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
         }
     }
+
+    @PostMapping("/{fileMd5}/reindex")
+    public ResponseEntity<?> reindexDocument(
+            @PathVariable String fileMd5,
+            @RequestAttribute("userId") String userId,
+            @RequestAttribute("role") String role) {
+
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("REINDEX_DOCUMENT");
+        try {
+            LogUtils.logBusiness("REINDEX_DOCUMENT", userId, "接收到重建文档索引请求: fileMd5=%s, role=%s", fileMd5, role);
+
+            Optional<FileUpload> fileOpt = fileUploadRepository.findFirstByFileMd5OrderByCreatedAtDesc(fileMd5);
+            if (fileOpt.isEmpty()) {
+                monitor.end("重建失败：文档不存在");
+                Map<String, Object> response = new HashMap<>();
+                response.put("code", HttpStatus.NOT_FOUND.value());
+                response.put("message", "文档不存在");
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+            }
+
+            FileUpload file = fileOpt.get();
+            if (!file.getUserId().equals(userId) && !"ADMIN".equals(role)) {
+                monitor.end("重建失败：权限不足");
+                Map<String, Object> response = new HashMap<>();
+                response.put("code", HttpStatus.FORBIDDEN.value());
+                response.put("message", "没有权限重建此文档索引");
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
+            }
+
+            var result = documentService.reindexDocument(fileMd5, userId);
+            monitor.end("文档索引重建成功");
+
+            Map<String, Object> data = new HashMap<>();
+            data.put("fileMd5", fileMd5);
+            data.put("fileName", file.getFileName());
+            data.put("actualEmbeddingTokens", result.actualEmbeddingTokens());
+            data.put("actualChunkCount", result.actualChunkCount());
+            data.put("modelVersion", result.modelVersion());
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 200);
+            response.put("message", "文档索引重建成功");
+            response.put("data", data);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            LogUtils.logBusinessError("REINDEX_DOCUMENT", userId, "重建文档索引失败: fileMd5=%s", e, fileMd5);
+            monitor.end("重建失败: " + e.getMessage());
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
+            response.put("message", "重建文档索引失败: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
     
     /**
      * 获取用户可访问的所有文件列表
@@ -354,6 +407,7 @@ public class DocumentController {
     public ResponseEntity<?> previewFileByName(
             @RequestParam String fileName,
             @RequestParam(required = false) String fileMd5,
+            @RequestParam(required = false) Integer pageNumber,
             @RequestParam(required = false) String token) {
         
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("PREVIEW_FILE_BY_NAME");
@@ -389,7 +443,8 @@ public class DocumentController {
                 }
             }
             
-            LogUtils.logBusiness("PREVIEW_FILE_BY_NAME", userId != null ? userId : "anonymous", "接收到文件预览请求: fileName=%s, fileMd5=%s", fileName, fileMd5);
+            LogUtils.logBusiness("PREVIEW_FILE_BY_NAME", userId != null ? userId : "anonymous",
+                    "接收到文件预览请求: fileName=%s, fileMd5=%s, pageNumber=%s", fileName, fileMd5, pageNumber);
 
             FileUpload file = null;
 
@@ -420,7 +475,7 @@ public class DocumentController {
                     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
                 }
 
-                Map<String, Object> previewData = buildPreviewResponse(file);
+                Map<String, Object> previewData = buildPreviewResponse(file, pageNumber, false);
                 if (previewData == null) {
                     Map<String, Object> response = new HashMap<>();
                     response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
@@ -432,6 +487,11 @@ public class DocumentController {
                 response.put("code", 200);
                 response.put("message", "文件预览内容获取成功");
                 response.put("data", previewData);
+                LogUtils.logBusiness("PREVIEW_FILE_BY_NAME", "anonymous",
+                        "预览响应已生成: fileMd5=%s, mode=%s, pageNumber=%s",
+                        file.getFileMd5(),
+                        Boolean.TRUE.equals(previewData.get("singlePageMode")) ? "single-page" : "full-document",
+                        pageNumber);
                 return ResponseEntity.ok(response);
             }
 
@@ -472,7 +532,7 @@ public class DocumentController {
             file = targetFile.get();
             
             // 获取文件预览内容
-            Map<String, Object> previewData = buildPreviewResponse(file);
+            Map<String, Object> previewData = buildPreviewResponse(file, pageNumber, true);
             if (previewData == null) {
                 LogUtils.logUserOperation(userId, "PREVIEW_FILE_BY_NAME", fileName, "FAILED_GET_CONTENT");
                 monitor.end("预览失败：无法获取文件内容");
@@ -490,6 +550,11 @@ public class DocumentController {
             response.put("code", 200);
             response.put("message", "文件预览内容获取成功");
             response.put("data", previewData);
+            LogUtils.logBusiness("PREVIEW_FILE_BY_NAME", userId,
+                    "预览响应已生成: fileMd5=%s, mode=%s, pageNumber=%s",
+                    file.getFileMd5(),
+                    Boolean.TRUE.equals(previewData.get("singlePageMode")) ? "single-page" : "full-document",
+                    pageNumber);
             return ResponseEntity.ok(response);
             
         } catch (Exception e) {
@@ -505,6 +570,77 @@ public class DocumentController {
             Map<String, Object> response = new HashMap<>();
             response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
             response.put("message", "文件预览失败: " + e.getMessage()); 
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    @GetMapping("/page-preview")
+    public ResponseEntity<?> previewPdfPage(
+            @RequestParam String fileMd5,
+            @RequestParam Integer pageNumber,
+            @RequestAttribute("userId") String userId,
+            @RequestAttribute("orgTags") String orgTags) {
+
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("PREVIEW_PDF_PAGE");
+        try {
+            LogUtils.logBusiness("PREVIEW_PDF_PAGE", userId,
+                    "接收到 PDF 单页预览请求: fileMd5=%s, pageNumber=%s", fileMd5, pageNumber);
+
+            FileUpload file = documentService.getAccessibleFiles(userId, orgTags).stream()
+                    .filter(item -> item.getFileMd5().equals(fileMd5))
+                    .findFirst()
+                    .orElse(null);
+
+            if (file == null) {
+                monitor.end("预览失败：文件不存在或无权限访问");
+                Map<String, Object> response = new HashMap<>();
+                response.put("code", HttpStatus.NOT_FOUND.value());
+                response.put("message", "文件不存在或无权限访问");
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+            }
+
+            if (!"pdf".equalsIgnoreCase(getFileExtension(file.getFileName()))) {
+                monitor.end("预览失败：仅支持 PDF 单页预览");
+                Map<String, Object> response = new HashMap<>();
+                response.put("code", HttpStatus.BAD_REQUEST.value());
+                response.put("message", "仅支持 PDF 单页预览");
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+            }
+
+            DocumentService.PdfSinglePagePreview preview = documentService.getPdfSinglePagePreview(fileMd5, pageNumber);
+            byte[] pdfBytes = preview.content();
+            String encodedFileName = URLEncoder.encode(file.getFileName().replace(".pdf", "") + "-page-" + pageNumber + ".pdf",
+                    StandardCharsets.UTF_8);
+            String cacheStatus = preview.cacheHit() ? "HIT" : "MISS";
+
+            LogUtils.logBusiness("PREVIEW_PDF_PAGE", userId,
+                    "PDF 单页预览响应: fileMd5=%s, pageNumber=%s, cache=%s, contentLength=%s",
+                    fileMd5, pageNumber, cacheStatus, pdfBytes.length);
+
+            monitor.end("PDF 单页预览生成成功");
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_PDF)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename*=UTF-8''" + encodedFileName)
+                    .header(HttpHeaders.CACHE_CONTROL, "private, max-age=1800")
+                    .header(HttpHeaders.ETAG, "\"" + fileMd5 + ":" + pageNumber + "\"")
+                    .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(pdfBytes.length))
+                    .header("X-Preview-Mode", "single-page")
+                    .header("X-Preview-Cache", cacheStatus)
+                    .header("X-Preview-Page", String.valueOf(pageNumber))
+                    .body(pdfBytes);
+        } catch (IllegalArgumentException e) {
+            monitor.end("预览失败: " + e.getMessage());
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", HttpStatus.BAD_REQUEST.value());
+            response.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+        } catch (Exception e) {
+            LogUtils.logBusinessError("PREVIEW_PDF_PAGE", userId,
+                    "PDF 单页预览失败: fileMd5=%s, pageNumber=%s", e, fileMd5, pageNumber);
+            monitor.end("预览失败: " + e.getMessage());
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
+            response.put("message", "PDF 单页预览失败: " + e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
         }
     }
@@ -626,7 +762,7 @@ public class DocumentController {
         }
     }
 
-    private Map<String, Object> buildPreviewResponse(FileUpload file) {
+    private Map<String, Object> buildPreviewResponse(FileUpload file, Integer pageNumber, boolean preferSinglePagePreview) {
         String fileName = file.getFileName();
         String extension = getFileExtension(fileName);
         String previewType = getPreviewType(extension);
@@ -651,8 +787,23 @@ public class DocumentController {
             return null;
         }
 
+        if (preferSinglePagePreview && "pdf".equals(previewType) && pageNumber != null && pageNumber > 0) {
+            payload.put("previewUrl", buildSinglePagePreviewUrl(file.getFileMd5(), pageNumber));
+            payload.put("sourceUrl", previewUrl);
+            payload.put("singlePageMode", true);
+            payload.put("sourcePageNumber", pageNumber);
+            return payload;
+        }
+
         payload.put("previewUrl", previewUrl);
         return payload;
+    }
+
+    private String buildSinglePagePreviewUrl(String fileMd5, Integer pageNumber) {
+        return "/api/v1/documents/page-preview?fileMd5="
+                + URLEncoder.encode(fileMd5, StandardCharsets.UTF_8)
+                + "&pageNumber="
+                + pageNumber;
     }
 
     private String getPreviewType(String extension) {

@@ -17,9 +17,13 @@ import org.springframework.stereotype.Service;
 import org.xml.sax.SAXException;
 
 import java.io.*;
+import java.text.Normalizer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import com.hankcs.hanlp.seg.common.Term;
 import com.hankcs.hanlp.tokenizer.StandardTokenizer;
 
@@ -27,6 +31,9 @@ import com.hankcs.hanlp.tokenizer.StandardTokenizer;
 public class ParseService {
 
     private static final Logger logger = LoggerFactory.getLogger(ParseService.class);
+    private static final int PDF_BOUNDARY_SCAN_LINES = 3;
+    private static final int PDF_BOILERPLATE_MIN_LENGTH = 4;
+    private static final int PDF_BOILERPLATE_MAX_LENGTH = 120;
 
     @Autowired
     private DocumentVectorRepository documentVectorRepository;
@@ -270,13 +277,11 @@ public class ParseService {
 
     private void parsePdfAndSave(String fileMd5, InputStream fileStream, String userId, String orgTag, boolean isPublic) throws IOException {
         try (PDDocument document = PDDocument.load(fileStream)) {
-            PDFTextStripper stripper = new PDFTextStripper();
             int savedChunkCount = 0;
 
-            for (int pageNumber = 1; pageNumber <= document.getNumberOfPages(); pageNumber++) {
-                stripper.setStartPage(pageNumber);
-                stripper.setEndPage(pageNumber);
-                String pageText = stripper.getText(document);
+            List<String> cleanedPageTexts = extractCleanPdfPageTexts(document);
+            for (int pageNumber = 1; pageNumber <= cleanedPageTexts.size(); pageNumber++) {
+                String pageText = cleanedPageTexts.get(pageNumber - 1);
                 if (pageText == null || pageText.isBlank()) {
                     continue;
                 }
@@ -289,14 +294,11 @@ public class ParseService {
 
     private EmbeddingEstimate estimatePdfEmbeddingUsage(InputStream fileStream) throws IOException {
         try (PDDocument document = PDDocument.load(fileStream)) {
-            PDFTextStripper stripper = new PDFTextStripper();
             long estimatedTokens = 0L;
             int estimatedChunkCount = 0;
 
-            for (int pageNumber = 1; pageNumber <= document.getNumberOfPages(); pageNumber++) {
-                stripper.setStartPage(pageNumber);
-                stripper.setEndPage(pageNumber);
-                String pageText = stripper.getText(document);
+            List<String> cleanedPageTexts = extractCleanPdfPageTexts(document);
+            for (String pageText : cleanedPageTexts) {
                 if (pageText == null || pageText.isBlank()) {
                     continue;
                 }
@@ -308,6 +310,168 @@ public class ParseService {
 
             return new EmbeddingEstimate(estimatedTokens, estimatedChunkCount);
         }
+    }
+
+    private List<String> extractCleanPdfPageTexts(PDDocument document) throws IOException {
+        PDFTextStripper stripper = new PDFTextStripper();
+        List<List<String>> rawPageLines = new ArrayList<>();
+
+        for (int pageNumber = 1; pageNumber <= document.getNumberOfPages(); pageNumber++) {
+            stripper.setStartPage(pageNumber);
+            stripper.setEndPage(pageNumber);
+            String pageText = stripper.getText(document);
+            rawPageLines.add(splitPdfLines(pageText));
+        }
+
+        Map<String, Integer> topLineCounts = collectBoundaryLineCounts(rawPageLines, true);
+        Map<String, Integer> bottomLineCounts = collectBoundaryLineCounts(rawPageLines, false);
+        int repeatedThreshold = Math.max(2, Math.min(3, document.getNumberOfPages()));
+
+        List<String> cleanedPages = new ArrayList<>(rawPageLines.size());
+        for (int pageIndex = 0; pageIndex < rawPageLines.size(); pageIndex++) {
+            List<String> cleanedLines = removePdfBoilerplateLines(
+                    rawPageLines.get(pageIndex),
+                    topLineCounts,
+                    bottomLineCounts,
+                    repeatedThreshold
+            );
+            String cleanedText = String.join("\n", cleanedLines).trim();
+            cleanedPages.add(cleanedText);
+        }
+
+        return cleanedPages;
+    }
+
+    private List<String> splitPdfLines(String pageText) {
+        if (pageText == null || pageText.isBlank()) {
+            return new ArrayList<>();
+        }
+
+        String[] lines = pageText.split("\\R");
+        List<String> result = new ArrayList<>(lines.length);
+        for (String line : lines) {
+            result.add(line == null ? "" : line.strip());
+        }
+        return result;
+    }
+
+    private Map<String, Integer> collectBoundaryLineCounts(List<List<String>> pageLines, boolean topBoundary) {
+        Map<String, Integer> counts = new HashMap<>();
+
+        for (List<String> lines : pageLines) {
+            List<String> boundaryLines = topBoundary
+                    ? firstMeaningfulLines(lines, PDF_BOUNDARY_SCAN_LINES)
+                    : lastMeaningfulLines(lines, PDF_BOUNDARY_SCAN_LINES);
+
+            for (String line : boundaryLines) {
+                String key = normalizePdfBoundaryLine(line);
+                if (key == null) {
+                    continue;
+                }
+                counts.merge(key, 1, Integer::sum);
+            }
+        }
+
+        return counts;
+    }
+
+    private List<String> firstMeaningfulLines(List<String> lines, int maxCount) {
+        List<String> result = new ArrayList<>(maxCount);
+        for (String line : lines) {
+            if (line == null || line.isBlank()) {
+                continue;
+            }
+            result.add(line);
+            if (result.size() >= maxCount) {
+                break;
+            }
+        }
+        return result;
+    }
+
+    private List<String> lastMeaningfulLines(List<String> lines, int maxCount) {
+        List<String> result = new ArrayList<>(maxCount);
+        for (int index = lines.size() - 1; index >= 0; index--) {
+            String line = lines.get(index);
+            if (line == null || line.isBlank()) {
+                continue;
+            }
+            result.add(0, line);
+            if (result.size() >= maxCount) {
+                break;
+            }
+        }
+        return result;
+    }
+
+    private List<String> removePdfBoilerplateLines(
+            List<String> lines,
+            Map<String, Integer> topLineCounts,
+            Map<String, Integer> bottomLineCounts,
+            int repeatedThreshold) {
+
+        int start = 0;
+        int remainingTopChecks = PDF_BOUNDARY_SCAN_LINES;
+        while (start < lines.size() && remainingTopChecks > 0) {
+            String line = lines.get(start);
+            if (line == null || line.isBlank()) {
+                start++;
+                continue;
+            }
+
+            String key = normalizePdfBoundaryLine(line);
+            if (key == null || topLineCounts.getOrDefault(key, 0) < repeatedThreshold) {
+                break;
+            }
+
+            logger.debug("过滤 PDF 页眉文本: {}", line);
+            start++;
+            remainingTopChecks--;
+        }
+
+        int end = lines.size() - 1;
+        int remainingBottomChecks = PDF_BOUNDARY_SCAN_LINES;
+        while (end >= start && remainingBottomChecks > 0) {
+            String line = lines.get(end);
+            if (line == null || line.isBlank()) {
+                end--;
+                continue;
+            }
+
+            String key = normalizePdfBoundaryLine(line);
+            if (key == null || bottomLineCounts.getOrDefault(key, 0) < repeatedThreshold) {
+                break;
+            }
+
+            logger.debug("过滤 PDF 页脚文本: {}", line);
+            end--;
+            remainingBottomChecks--;
+        }
+
+        List<String> cleanedLines = new ArrayList<>();
+        for (int index = start; index <= end; index++) {
+            cleanedLines.add(lines.get(index));
+        }
+        return cleanedLines;
+    }
+
+    private String normalizePdfBoundaryLine(String line) {
+        if (line == null) {
+            return null;
+        }
+
+        String normalized = Normalizer.normalize(line, Normalizer.Form.NFKC)
+                .replace('\u00A0', ' ')
+                .replaceAll("\\s+", " ")
+                .replaceAll("\\d+", "#")
+                .trim()
+                .toLowerCase(Locale.ROOT);
+
+        if (normalized.length() < PDF_BOILERPLATE_MIN_LENGTH || normalized.length() > PDF_BOILERPLATE_MAX_LENGTH) {
+            return null;
+        }
+
+        return normalized;
     }
 
     private boolean isPdfDocument(BufferedInputStream stream) throws IOException {

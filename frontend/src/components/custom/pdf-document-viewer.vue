@@ -12,7 +12,10 @@
             <icon-mdi-chevron-left />
           </template>
         </NButton>
-        <span class="toolbar-status">第 {{ currentPage }} / {{ totalPages || 1 }} 页</span>
+        <span class="toolbar-status">
+          <template v-if="singlePagePreviewActive">第 {{ displayCurrentPage }} 页 / 单页预览</template>
+          <template v-else>第 {{ displayCurrentPage }} / {{ totalPages || 1 }} 页</template>
+        </span>
         <NButton size="tiny" quaternary :disabled="currentPage >= totalPages" @click="goToPage(currentPage + 1)">
           <template #icon>
             <icon-mdi-chevron-right />
@@ -39,8 +42,8 @@
       </div>
     </div>
 
-    <div class="pdf-viewer-body">
-      <aside class="page-sidebar">
+    <div class="pdf-viewer-body" :class="{ 'is-single-page': singlePagePreviewActive }">
+      <aside v-if="!singlePagePreviewActive" class="page-sidebar">
         <button
           v-for="page in pageSummaries"
           :key="page.pageNumber"
@@ -52,7 +55,7 @@
           }"
           @click="goToPage(page.pageNumber)"
         >
-          <span class="page-nav-number">P{{ page.pageNumber }}</span>
+          <span class="page-nav-number">P{{ displayPageNumber(page.pageNumber) }}</span>
           <span class="page-nav-summary">{{ page.summary || `第 ${page.pageNumber} 页` }}</span>
         </button>
       </aside>
@@ -68,7 +71,7 @@
         </div>
         <div v-else class="page-scroll-shell">
           <div class="page-meta-row">
-            <span>第 {{ currentPage }} 页</span>
+            <span>第 {{ displayCurrentPage }} 页</span>
             <span v-if="currentPage === targetPageNumber">引用定位页</span>
             <span v-else-if="highlightCount > 0">已匹配到相关文本</span>
             <span v-else>浏览当前页</span>
@@ -108,14 +111,18 @@ import { GlobalWorkerOptions, TextLayer, getDocument } from 'pdfjs-dist';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { NButton, NSpin } from 'naive-ui';
+import { getAuthorization } from '@/service/request/shared';
 import workerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
 
 interface Props {
   url: string;
+  sourceUrl?: string;
   fileName?: string;
   pageNumber?: number;
+  singlePageMode?: boolean;
+  sourcePageNumber?: number;
   anchorText?: string;
   visible?: boolean;
 }
@@ -142,6 +149,8 @@ const props = defineProps<Props>();
 
 const minZoom = 0.7;
 const maxZoom = 2.2;
+const pdfRangeChunkSize = 256 * 1024;
+const eagerSummaryRadius = 1;
 
 const pdfDocument = shallowRef<PDFDocumentProxy | null>(null);
 const documentLoading = ref(false);
@@ -160,7 +169,14 @@ const canvasRef = ref<HTMLCanvasElement | null>(null);
 const textLayerRef = ref<HTMLDivElement | null>(null);
 
 const targetPageNumber = computed(() => clampPage(props.pageNumber || 1, totalPages.value || 1));
-const normalizedAnchor = computed(() => normalizeForMatch(props.anchorText || ''));
+const matchCandidates = computed(() => buildMatchCandidates(props.anchorText || ''));
+const singlePagePreviewActive = computed(() => Boolean(props.singlePageMode && props.sourcePageNumber));
+const displayCurrentPage = computed(() => {
+  if (singlePagePreviewActive.value) {
+    return props.sourcePageNumber || props.pageNumber || 1;
+  }
+  return currentPage.value;
+});
 
 let loadingTask: PDFDocumentLoadingTask | null = null;
 let renderTask: RenderTask | null = null;
@@ -173,6 +189,11 @@ let activeRenderPromise: Promise<void> | null = null;
 let rerenderAfterCurrent = false;
 let lastObservedStageWidth = 0;
 let lastSuccessfulRenderSignature = '';
+let summaryLoadTimer: number | null = null;
+let activeSummaryPromise: Promise<void> | null = null;
+let summaryQueue: number[] = [];
+let summaryLoadedPages = new Set<number>();
+let summaryLoadingPages = new Set<number>();
 
 watch(
   () => props.url,
@@ -210,6 +231,7 @@ watch(
 watch(currentPage, () => {
   if (!pdfDocument.value) return;
   void scheduleRender({ immediate: true });
+  scheduleSummaryLoading(getPrioritySummaryPages(currentPage.value), { prioritize: true });
 });
 
 watch(zoom, () => {
@@ -239,18 +261,174 @@ function clampPage(page: number, maxPage: number) {
 
 function normalizeForMatch(value: string) {
   return value
+    .normalize('NFKC')
     .replace(/[…]/g, '')
+    .replace(/[“”"「」『』《》]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
+}
+
+function buildMatchCandidates(value: string) {
+  if (!value) return [];
+
+  const candidates = new Set<string>();
+  const normalizedFull = normalizeForMatch(value);
+  if (normalizedFull.length >= 6) {
+    candidates.add(normalizedFull);
+  }
+
+  const normalizedSource = value.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  const quotePattern = /[“"「『《](.+?)[”"」』》]/g;
+  for (const match of normalizedSource.matchAll(quotePattern)) {
+    const quoted = normalizeForMatch(match[1] || '');
+    if (quoted.length >= 4) {
+      candidates.add(quoted);
+    }
+  }
+
+  const withoutCitations = normalizedSource.replace(/(?:\(|（)?来源#\d+:[^)）;；。！？!?]*/g, ' ');
+  const segments = withoutCitations
+    .split(/[：:；;，,。！？!?、\n\r]/)
+    .map(segment => normalizeForMatch(segment))
+    .filter(segment => segment.length >= 6);
+
+  segments
+    .sort((left, right) => right.length - left.length)
+    .forEach(segment => candidates.add(segment));
+
+  return [...candidates];
 }
 
 function summarizeText(value: string) {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+function buildFallbackSummary(pageNumber: number) {
+  return `第 ${pageNumber} 页`;
+}
+
+function buildSummaryFromItems(items: unknown[]) {
+  return summarizeText(
+    items
+      .filter((item): item is TextItem => typeof item === 'object' && item !== null && 'str' in item)
+      .map(item => item.str)
+      .join(' ')
+  ).slice(0, 80);
+}
+
+function updatePageSummary(pageNumber: number, items?: unknown[]) {
+  const summary = items ? buildSummaryFromItems(items) : '';
+  pageSummaries.value[pageNumber - 1] = {
+    pageNumber,
+    summary: summary || buildFallbackSummary(pageNumber)
+  };
+  summaryLoadedPages.add(pageNumber);
+}
+
+function getPrioritySummaryPages(centerPage: number) {
+  const pages = new Set<number>([centerPage, targetPageNumber.value]);
+
+  for (let offset = 1; offset <= eagerSummaryRadius; offset += 1) {
+    pages.add(centerPage - offset);
+    pages.add(centerPage + offset);
+  }
+
+  return [...pages].filter(pageNumber => pageNumber >= 1 && pageNumber <= totalPages.value);
+}
+
+function scheduleSummaryLoading(pageNumbers: number[], options?: { delay?: number; prioritize?: boolean }) {
+  if (!pdfDocument.value) return;
+
+  if (pageNumbers.length) {
+    const nextPages = pageNumbers.filter(pageNumber => {
+      return !summaryLoadedPages.has(pageNumber) && !summaryLoadingPages.has(pageNumber);
+    });
+
+    if (!nextPages.length && !summaryQueue.length) return;
+
+    if (nextPages.length) {
+      if (options?.prioritize) {
+        summaryQueue = [...nextPages, ...summaryQueue.filter(pageNumber => !nextPages.includes(pageNumber))];
+      } else {
+        const existingPages = new Set(summaryQueue);
+        nextPages.forEach(pageNumber => {
+          if (!existingPages.has(pageNumber)) {
+            summaryQueue.push(pageNumber);
+          }
+        });
+      }
+    }
+  }
+
+  if (summaryLoadTimer) {
+    window.clearTimeout(summaryLoadTimer);
+  }
+
+  summaryLoadTimer = window.setTimeout(() => {
+    summaryLoadTimer = null;
+    void flushSummaryQueue();
+  }, options?.delay ?? 0);
+}
+
+async function flushSummaryQueue() {
+  if (!pdfDocument.value || activeSummaryPromise || !summaryQueue.length) return;
+
+  const summaryPromise = loadQueuedSummaries();
+  activeSummaryPromise = summaryPromise;
+
+  try {
+    await summaryPromise;
+  } finally {
+    if (activeSummaryPromise === summaryPromise) {
+      activeSummaryPromise = null;
+    }
+
+    if (summaryQueue.length) {
+      scheduleSummaryLoading([], { delay: 120 });
+    }
+  }
+}
+
+async function loadQueuedSummaries() {
+  const documentProxy = pdfDocument.value;
+  if (!documentProxy) return;
+
+  while (summaryQueue.length && pdfDocument.value === documentProxy && props.visible !== false) {
+    const pageNumber = summaryQueue.shift();
+    if (!pageNumber || summaryLoadedPages.has(pageNumber) || summaryLoadingPages.has(pageNumber)) continue;
+
+    summaryLoadingPages.add(pageNumber);
+
+    try {
+      const page = await documentProxy.getPage(pageNumber);
+      if (pdfDocument.value !== documentProxy) return;
+
+      const textContent = await page.getTextContent();
+      if (pdfDocument.value !== documentProxy) return;
+
+      updatePageSummary(pageNumber, textContent.items);
+    } catch (error) {
+      pageSummaries.value[pageNumber - 1] = {
+        pageNumber,
+        summary: buildFallbackSummary(pageNumber)
+      };
+      summaryLoadedPages.add(pageNumber);
+    } finally {
+      summaryLoadingPages.delete(pageNumber);
+    }
+  }
+}
+
 function goToPage(page: number) {
   currentPage.value = clampPage(page, totalPages.value || 1);
+}
+
+function displayPageNumber(pageNumber: number) {
+  if (singlePagePreviewActive.value) {
+    return props.sourcePageNumber || props.pageNumber || pageNumber;
+  }
+  return pageNumber;
 }
 
 function zoomIn() {
@@ -266,8 +444,11 @@ function resetZoom() {
 }
 
 function openInNewTab() {
-  if (!props.url) return;
-  window.open(`${props.url}#page=${currentPage.value}`, '_blank', 'noopener,noreferrer');
+  const targetUrl = props.sourceUrl || props.url;
+  if (!targetUrl) return;
+
+  const page = singlePagePreviewActive.value ? (props.sourcePageNumber || props.pageNumber || 1) : currentPage.value;
+  window.open(`${targetUrl}#page=${page}`, '_blank', 'noopener,noreferrer');
 }
 
 async function loadDocument(url: string) {
@@ -287,9 +468,15 @@ async function loadDocument(url: string) {
   await cleanupPdfState();
 
   try {
+    const shouldAttachAuthHeaders = !/^https?:\/\//i.test(url) || url.includes('/api/v1/documents/page-preview');
+    const authorization = getAuthorization();
     loadingTask = getDocument({
       url,
-      withCredentials: false
+      withCredentials: false,
+      disableAutoFetch: true,
+      disableStream: true,
+      rangeChunkSize: pdfRangeChunkSize,
+      httpHeaders: shouldAttachAuthHeaders && authorization ? { Authorization: authorization } : undefined
     });
 
     const documentProxy = await loadingTask.promise;
@@ -303,10 +490,12 @@ async function loadDocument(url: string) {
     currentPage.value = targetPageNumber.value;
     pageSummaries.value = Array.from({ length: documentProxy.numPages }, (_, index) => ({
       pageNumber: index + 1,
-      summary: ''
+      summary: buildFallbackSummary(index + 1)
     }));
-
-    void loadPageSummaries(documentProxy, currentToken);
+    summaryLoadedPages = new Set();
+    summaryLoadingPages = new Set();
+    summaryQueue = [];
+    scheduleSummaryLoading(getPrioritySummaryPages(currentPage.value), { prioritize: true });
 
     await nextTick();
     await waitForStageReady(currentToken);
@@ -322,32 +511,6 @@ async function loadDocument(url: string) {
   } finally {
     if (currentToken === lifecycleToken) {
       documentLoading.value = false;
-    }
-  }
-}
-
-async function loadPageSummaries(documentProxy: PDFDocumentProxy, token: number) {
-  for (let pageNumber = 1; pageNumber <= documentProxy.numPages; pageNumber += 1) {
-    if (token !== lifecycleToken) return;
-    try {
-      const page = await documentProxy.getPage(pageNumber);
-      const textContent = await page.getTextContent();
-      const summary = summarizeText(
-        textContent.items
-          .filter((item): item is TextItem => 'str' in item)
-          .map(item => item.str)
-          .join(' ')
-      ).slice(0, 80);
-
-      pageSummaries.value[pageNumber - 1] = {
-        pageNumber,
-        summary: summary || `第 ${pageNumber} 页`
-      };
-    } catch (error) {
-      pageSummaries.value[pageNumber - 1] = {
-        pageNumber,
-        summary: `第 ${pageNumber} 页`
-      };
     }
   }
 }
@@ -485,6 +648,7 @@ async function renderCurrentPage(expectedToken = lifecycleToken, renderVersion =
     const textContent = await page.getTextContent({
       includeMarkedContent: true
     });
+    updatePageSummary(currentPage.value, textContent.items);
 
     textLayerTask = new TextLayer({
       textContentSource: textContent,
@@ -514,8 +678,8 @@ function applyHighlight() {
   textDivs.forEach(div => div.classList.remove('matched-text'));
   highlightRects.value = [];
 
-  const anchor = normalizedAnchor.value;
-  if (!anchor) return 0;
+  const candidates = matchCandidates.value;
+  if (!candidates.length) return 0;
 
   const itemRanges: Array<{ index: number; start: number; end: number }> = [];
   let mergedText = '';
@@ -537,7 +701,7 @@ function applyHighlight() {
     });
   });
 
-  const matchRange = resolveMatchRange(mergedText, anchor);
+  const matchRange = resolveMatchRange(mergedText, candidates);
   if (!matchRange) return 0;
 
   const [matchStart, matchEnd] = matchRange;
@@ -578,23 +742,110 @@ function applyHighlight() {
   return highlightRects.value.length;
 }
 
-function resolveMatchRange(target: string, anchor: string): [number, number] | null {
-  if (!target || !anchor) return null;
+function resolveMatchRange(target: string, anchors: string[]): [number, number] | null {
+  if (!target || !anchors.length) return null;
 
-  const exactMatchIndex = target.indexOf(anchor);
-  if (exactMatchIndex >= 0) {
-    return [exactMatchIndex, exactMatchIndex + anchor.length];
+  for (const anchor of anchors) {
+    if (!anchor) continue;
+
+    const exactMatchIndex = target.indexOf(anchor);
+    if (exactMatchIndex >= 0) {
+      return [exactMatchIndex, exactMatchIndex + anchor.length];
+    }
+
+    const partialAnchor = anchor.slice(0, Math.min(anchor.length, 48)).trim();
+    if (partialAnchor.length < 8) continue;
+
+    const partialMatchIndex = target.indexOf(partialAnchor);
+    if (partialMatchIndex >= 0) {
+      return [partialMatchIndex, partialMatchIndex + partialAnchor.length];
+    }
   }
 
-  const partialAnchor = anchor.slice(0, Math.min(anchor.length, 48)).trim();
-  if (partialAnchor.length < 8) return null;
+  return resolveFuzzyMatchRange(target, anchors);
+}
 
-  const partialMatchIndex = target.indexOf(partialAnchor);
-  if (partialMatchIndex >= 0) {
-    return [partialMatchIndex, partialMatchIndex + partialAnchor.length];
+function resolveFuzzyMatchRange(target: string, anchors: string[]): [number, number] | null {
+  const ranges = buildPhraseRanges(target);
+  if (!ranges.length) return null;
+
+  let bestMatch: { start: number; end: number; score: number } | null = null;
+
+  anchors.forEach(anchor => {
+    if (!anchor || anchor.length < 6) return;
+
+    ranges.forEach(range => {
+      const score = calculateDiceCoefficient(anchor, range.text);
+      if (score < 0.18) return;
+
+      if (!bestMatch || score > bestMatch.score) {
+        bestMatch = {
+          start: range.start,
+          end: range.end,
+          score
+        };
+      }
+    });
+  });
+
+  return bestMatch ? [bestMatch.start, bestMatch.end] : null;
+}
+
+function buildPhraseRanges(target: string) {
+  const ranges: Array<{ start: number; end: number; text: string }> = [];
+  const phrasePattern = /[^，,；;。！？!?]+[，,；;。！？!?]?/g;
+
+  for (const match of target.matchAll(phrasePattern)) {
+    const text = match[0]?.trim();
+    const start = match.index ?? -1;
+    if (!text || start < 0) continue;
+
+    const normalized = normalizeForMatch(text);
+    if (normalized.length < 6) continue;
+
+    ranges.push({
+      start,
+      end: start + match[0].length,
+      text: normalized
+    });
   }
 
-  return null;
+  return ranges;
+}
+
+function calculateDiceCoefficient(left: string, right: string) {
+  const leftBigrams = buildBigrams(left);
+  const rightBigrams = buildBigrams(right);
+  if (!leftBigrams.size || !rightBigrams.size) return 0;
+
+  let overlap = 0;
+  leftBigrams.forEach((count, bigram) => {
+    const rightCount = rightBigrams.get(bigram) || 0;
+    overlap += Math.min(count, rightCount);
+  });
+
+  const leftSize = [...leftBigrams.values()].reduce((sum, count) => sum + count, 0);
+  const rightSize = [...rightBigrams.values()].reduce((sum, count) => sum + count, 0);
+  return (2 * overlap) / (leftSize + rightSize);
+}
+
+function buildBigrams(value: string) {
+  const compact = value.replace(/\s+/g, '');
+  const bigrams = new Map<string, number>();
+
+  if (compact.length < 2) {
+    if (compact) {
+      bigrams.set(compact, 1);
+    }
+    return bigrams;
+  }
+
+  for (let index = 0; index < compact.length - 1; index += 1) {
+    const bigram = compact.slice(index, index + 2);
+    bigrams.set(bigram, (bigrams.get(bigram) || 0) + 1);
+  }
+
+  return bigrams;
 }
 
 async function waitForStageReady(expectedToken = lifecycleToken) {
@@ -707,6 +958,11 @@ function mergeHighlightRects(rects: HighlightRect[]) {
 }
 
 async function cleanupPdfState() {
+  if (summaryLoadTimer) {
+    window.clearTimeout(summaryLoadTimer);
+    summaryLoadTimer = null;
+  }
+
   if (renderTimer) {
     window.clearTimeout(renderTimer);
     renderTimer = null;
@@ -718,6 +974,10 @@ async function cleanupPdfState() {
   rerenderAfterCurrent = false;
   lastObservedStageWidth = 0;
   lastSuccessfulRenderSignature = '';
+  activeSummaryPromise = null;
+  summaryQueue = [];
+  summaryLoadedPages = new Set();
+  summaryLoadingPages = new Set();
 
   renderTask?.cancel();
   renderTask = null;
@@ -783,6 +1043,10 @@ async function cleanupPdfState() {
 
 .pdf-viewer-body {
   @apply grid min-h-0 flex-1 overflow-hidden grid-cols-[220px_minmax(0,1fr)];
+}
+
+.pdf-viewer-body.is-single-page {
+  @apply block;
 }
 
 .page-sidebar {
@@ -877,8 +1141,14 @@ async function cleanupPdfState() {
 }
 
 .pdf-text-layer :deep(span.matched-text) {
-  background: transparent;
+  background: rgba(250, 204, 21, 0.42);
+  box-shadow: inset 0 -0.52em rgba(245, 158, 11, 0.34);
+  border-radius: 4px;
   color: transparent;
+  text-decoration: underline;
+  text-decoration-color: rgba(217, 119, 6, 0.9);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 1px;
 }
 
 .pdf-text-layer :deep(.endOfContent) {

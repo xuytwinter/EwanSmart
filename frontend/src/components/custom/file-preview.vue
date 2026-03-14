@@ -38,9 +38,12 @@
         <div class="content-wrapper">
           <template v-if="previewType === 'pdf' && previewUrl">
             <PdfDocumentViewer
-              :url="previewUrl"
+              :url="resolvedPreviewUrl"
+              :source-url="resolvedSourceUrl"
               :file-name="fileName"
               :page-number="pageNumber"
+              :single-page-mode="singlePageMode"
+              :source-page-number="sourcePageNumber"
               :anchor-text="anchorText"
               :visible="visible"
             />
@@ -77,6 +80,7 @@ import { NButton, NSpin } from 'naive-ui';
 import PdfDocumentViewer from '@/components/custom/pdf-document-viewer.vue';
 import SvgIcon from '@/components/custom/svg-icon.vue';
 import { request } from '@/service/request';
+import { getServiceBaseURL } from '@/utils/service';
 import { getFileExt } from '@/utils/common';
 
 interface Props {
@@ -100,10 +104,40 @@ const content = ref('');
 const error = ref('');
 const previewType = ref<'pdf' | 'image' | 'text' | 'download'>('text');
 const previewUrl = ref('');
-const resolvedPreviewUrl = computed(() => {
-  if (!previewUrl.value) return '';
-  return previewUrl.value;
-});
+const sourceUrl = ref('');
+const singlePageMode = ref(false);
+const sourcePageNumber = ref<number | undefined>(undefined);
+const isHttpProxy = import.meta.env.DEV && import.meta.env.VITE_HTTP_PROXY === 'Y';
+const { baseURL: serviceBaseUrl } = getServiceBaseURL(import.meta.env, isHttpProxy);
+
+const resolvedPreviewUrl = computed(() => resolveFileAccessUrl(previewUrl.value));
+const resolvedSourceUrl = computed(() => resolveFileAccessUrl(sourceUrl.value));
+
+function resolveFileAccessUrl(url: string) {
+  if (!url) return '';
+  if (/^(https?:)?\/\//i.test(url) || /^(blob:|data:)/i.test(url)) {
+    return url;
+  }
+
+  if (url.startsWith('/api/')) {
+    if (serviceBaseUrl.startsWith('/proxy-')) {
+      return `${serviceBaseUrl}${url.replace(/^\/api\/v\d+/, '')}`;
+    }
+
+    if (/^https?:\/\//i.test(serviceBaseUrl)) {
+      return `${new URL(serviceBaseUrl).origin}${url}`;
+    }
+
+    const serviceOrigin = serviceBaseUrl.replace(/\/api(?:\/v\d+)?\/?$/, '');
+    return `${serviceOrigin}${url}`;
+  }
+
+  if (url.startsWith('/')) {
+    return url;
+  }
+
+  return `${serviceBaseUrl.replace(/\/$/, '')}/${url.replace(/^\//, '')}`;
+}
 
 // 获取文件图标
 function getFileIcon(fileName: string) {
@@ -143,6 +177,9 @@ async function loadPreviewContent() {
   error.value = '';
   content.value = '';
   previewUrl.value = '';
+  sourceUrl.value = '';
+  singlePageMode.value = false;
+  sourcePageNumber.value = undefined;
   previewType.value = 'text';
 
   try {
@@ -162,12 +199,16 @@ async function loadPreviewContent() {
         fileMd5?: string;
         content?: string;
         previewUrl?: string;
+        sourceUrl?: string;
+        singlePageMode?: boolean;
+        sourcePageNumber?: number;
         previewType?: 'pdf' | 'image' | 'text' | 'download';
       }>({
         url: '/documents/preview',
         params: {
           fileName: props.fileName,
           fileMd5: props.fileMd5,
+          pageNumber: props.pageNumber,
           token: token || undefined
         }
       });
@@ -186,6 +227,9 @@ async function loadPreviewContent() {
         previewType.value = data.previewType || 'download';
         content.value = data.content || '';
         previewUrl.value = data.previewUrl || '';
+        sourceUrl.value = data.sourceUrl || data.previewUrl || '';
+        singlePageMode.value = Boolean(data.singlePageMode);
+        sourcePageNumber.value = data.sourcePageNumber || props.pageNumber;
       }
     } else {
       // 降级：使用文件名预览（向后兼容）
@@ -200,11 +244,15 @@ async function loadPreviewContent() {
         fileMd5?: string;
         content?: string;
         previewUrl?: string;
+        sourceUrl?: string;
+        singlePageMode?: boolean;
+        sourcePageNumber?: number;
         previewType?: 'pdf' | 'image' | 'text' | 'download';
       }>({
         url: '/documents/preview',
         params: {
           fileName: props.fileName,
+          pageNumber: props.pageNumber,
           token: token || undefined
         }
       });
@@ -223,6 +271,9 @@ async function loadPreviewContent() {
         previewType.value = data.previewType || 'download';
         content.value = data.content || '';
         previewUrl.value = data.previewUrl || '';
+        sourceUrl.value = data.sourceUrl || data.previewUrl || '';
+        singlePageMode.value = Boolean(data.singlePageMode);
+        sourcePageNumber.value = data.sourcePageNumber || props.pageNumber;
       }
     }
   } catch (err: any) {

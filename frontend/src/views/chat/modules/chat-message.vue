@@ -102,6 +102,19 @@ const content = computed(() => {
   return rawContent;
 });
 
+function extractContextAnchorText(target: HTMLElement) {
+  const scope = target.closest('li, p, blockquote, td, th');
+  const rawText = scope?.textContent?.replace(/\s+/g, ' ').trim() || '';
+  if (!rawText) return '';
+
+  const beforeCitation = rawText.split(/(?:\(|（)?来源#\d+:/)[0] || rawText;
+  return beforeCitation
+    .replace(/^\s*\d+\.\s*/, '')
+    .replace(/[（(]\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // 处理内容点击事件（事件委托）
 function handleContentClick(event: MouseEvent) {
   const target = event.target as HTMLElement;
@@ -112,10 +125,12 @@ function handleContentClick(event: MouseEvent) {
     if (fileId) {
       const file = sourceFiles.value.find(f => f.id === fileId);
       if (file) {
+        const contextAnchorText = extractContextAnchorText(target);
         handleSourceFileClick({
           fileName: file.fileName,
           referenceNumber: file.referenceNumber,
-          fileMd5: file.fileMd5
+          fileMd5: file.fileMd5,
+          anchorText: contextAnchorText
         });
       }
     }
@@ -123,8 +138,13 @@ function handleContentClick(event: MouseEvent) {
 }
 
 // 处理来源文件点击事件
-async function handleSourceFileClick(fileInfo: { fileName: string, referenceNumber: number, fileMd5?: string }) {
-  const { fileName, referenceNumber, fileMd5: extractedMd5 } = fileInfo;
+async function handleSourceFileClick(fileInfo: {
+  fileName: string;
+  referenceNumber: number;
+  fileMd5?: string;
+  anchorText?: string;
+}) {
+  const { fileName, referenceNumber, fileMd5: extractedMd5, anchorText: clickedAnchorText } = fileInfo;
   const persistedDetail = props.msg.referenceMappings?.[String(referenceNumber)] || props.msg.referenceMappings?.[referenceNumber];
   const referenceSessionId = props.msg.conversationId || props.sessionId;
   console.log('点击了来源文件:', fileName, '引用编号:', referenceNumber, '提取的MD5:', extractedMd5, '会话ID:', referenceSessionId);
@@ -136,7 +156,7 @@ async function handleSourceFileClick(fileInfo: { fileName: string, referenceNumb
       previewFileName.value = persistedDetail.fileName || fileName;
       previewFileMd5.value = persistedDetail.fileMd5;
       previewPageNumber.value = persistedDetail.pageNumber || undefined;
-      previewAnchorText.value = persistedDetail.anchorText || '';
+      previewAnchorText.value = persistedDetail.anchorText || clickedAnchorText || '';
       previewVisible.value = true;
       return;
     }
@@ -165,7 +185,7 @@ async function handleSourceFileClick(fileInfo: { fileName: string, referenceNumb
       previewFileName.value = detail?.fileName || fileName;
       previewFileMd5.value = targetMd5;
       previewPageNumber.value = detail?.pageNumber || undefined;
-      previewAnchorText.value = detail?.anchorText || '';
+      previewAnchorText.value = detail?.anchorText || clickedAnchorText || '';
       previewVisible.value = true;
       return;
     }

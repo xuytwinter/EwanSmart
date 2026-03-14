@@ -61,8 +61,10 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
                 path.matches(".*/upload/merge.*") || 
                 path.matches(".*/documents/uploads.*") ||
                 path.matches(".*/documents/accessible.*") ||
+                path.matches(".*/documents/page-preview.*") ||
                 path.matches(".*/search/hybrid.*") ||
-                (path.matches(".*/documents/[a-fA-F0-9]{32}.*") && "DELETE".equals(request.getMethod()))) {
+                (path.matches(".*/documents/[a-fA-F0-9]{32}.*") &&
+                        ("DELETE".equals(request.getMethod()) || "POST".equals(request.getMethod())))) {
                 
                 String operation = "未知操作";
                 if (path.contains("/chunk")) {
@@ -73,10 +75,14 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
                     operation = "获取用户文档";
                 } else if (path.contains("/accessible")) {
                     operation = "获取可访问文档";
+                } else if (path.contains("/page-preview")) {
+                    operation = "获取 PDF 单页预览";
                 } else if (path.contains("/search/hybrid")) {
                     operation = "混合检索";
                 } else if ("DELETE".equals(request.getMethod()) && path.matches(".*/documents/[a-fA-F0-9]{32}.*")) {
                     operation = "删除文档";
+                } else if ("POST".equals(request.getMethod()) && path.matches(".*/documents/[a-fA-F0-9]{32}/reindex.*")) {
+                    operation = "重建文档索引";
                 }
                 
                 logger.info("处理{}请求: {}", operation, path);
