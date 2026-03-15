@@ -784,6 +784,22 @@ function applyHighlight() {
   const candidates = matchCandidates.value;
   if (!candidates.length) return 0;
 
+  const directSource = props.searchText || props.anchorText || '';
+  const directMatch = resolveDirectClueHighlight(
+    textLayer,
+    textLayerTask.textDivs,
+    textLayerTask.textContentItemsStr,
+    directSource
+  );
+  if (directMatch) {
+    highlightRects.value = [directMatch.rect];
+    directMatch.firstElement?.scrollIntoView({
+      block: 'center',
+      behavior: 'smooth'
+    });
+    return 1;
+  }
+
   const paragraphMatch = resolveParagraphHighlight(textLayer, textLayerTask.textDivs, textLayerTask.textContentItemsStr, candidates);
   if (paragraphMatch) {
     highlightRects.value = [paragraphMatch.rect];
@@ -844,6 +860,75 @@ function applyHighlight() {
   return highlightRects.value.length;
 }
 
+function resolveDirectClueHighlight(
+  container: HTMLElement,
+  textDivs: HTMLElement[],
+  textItems: string[],
+  clueText: string
+) {
+  const compactClue = compactForMatch(clueText);
+  if (compactClue.length < 8) return null;
+
+  const itemRanges: Array<{ index: number; start: number; end: number }> = [];
+  let mergedCompactText = '';
+
+  textItems.forEach((item, index) => {
+    const compactItem = compactForMatch(item);
+    if (!compactItem) return;
+
+    const start = mergedCompactText.length;
+    mergedCompactText += compactItem;
+    itemRanges.push({
+      index,
+      start,
+      end: mergedCompactText.length
+    });
+  });
+
+  if (!itemRanges.length || !mergedCompactText) return null;
+
+  let matchStart = mergedCompactText.indexOf(compactClue);
+  let matchEnd = matchStart >= 0 ? matchStart + compactClue.length : -1;
+
+  if (matchStart < 0 && compactClue.length >= 20) {
+    const prefixLength = Math.min(28, Math.floor(compactClue.length * 0.4));
+    const suffixLength = Math.min(28, Math.floor(compactClue.length * 0.4));
+    const prefix = compactClue.slice(0, prefixLength);
+    const suffix = compactClue.slice(-suffixLength);
+    const prefixIndex = mergedCompactText.indexOf(prefix);
+    if (prefixIndex >= 0) {
+      const suffixIndex = mergedCompactText.indexOf(suffix, prefixIndex + prefix.length);
+      if (suffixIndex >= 0) {
+        matchStart = prefixIndex;
+        matchEnd = suffixIndex + suffix.length;
+      }
+    }
+  }
+
+  if (matchStart < 0 || matchEnd <= matchStart) return null;
+
+  let firstElement: HTMLElement | undefined;
+  const matchedFragments: HighlightFragment[] = [];
+
+  itemRanges.forEach(({ index, start, end }) => {
+    if (end <= matchStart || start >= matchEnd) return;
+    const div = textDivs[index];
+    if (!div) return;
+    firstElement ??= div;
+    matchedFragments.push({ div });
+  });
+
+  if (!matchedFragments.length) return null;
+
+  const [rect] = buildHighlightRects(container, matchedFragments);
+  if (!rect) return null;
+
+  return {
+    rect,
+    firstElement
+  };
+}
+
 function resolveMatchRange(target: string, anchors: string[]): [number, number] | null {
   if (!target || !anchors.length) return null;
 
@@ -885,9 +970,12 @@ function resolveParagraphHighlight(
     .sort((left, right) => right.compact.length - left.compact.length);
 
   if (!normalizedAnchors.length) return null;
+  const primaryAnchor = normalizedAnchors[0];
+  const secondaryAnchors = normalizedAnchors.slice(1);
 
   const maxWindowSize = Math.min(6, lines.length);
-  let bestMatch: { rect: HighlightRect; firstElement?: HTMLElement; score: number } | null = null;
+  let bestPrimaryMatch: { rect: HighlightRect; firstElement?: HTMLElement; score: number } | null = null;
+  let bestFallbackMatch: { rect: HighlightRect; firstElement?: HTMLElement; score: number } | null = null;
 
   for (let start = 0; start < lines.length; start += 1) {
     let mergedText = '';
@@ -901,6 +989,15 @@ function resolveParagraphHighlight(
     for (let end = start; end < Math.min(lines.length, start + maxWindowSize); end += 1) {
       const line = lines[end];
       const previousLine = end > start ? lines[end - 1] : null;
+      if (previousLine) {
+        const previousBottom = previousLine.rect.top + previousLine.rect.height;
+        const verticalGap = line.rect.top - previousBottom;
+        const continuityTolerance = Math.max(10, Math.min(previousLine.rect.height, line.rect.height) * 1.2);
+        if (verticalGap > continuityTolerance) {
+          break;
+        }
+      }
+
       if (previousLine && isLikelyListStart(line.rawText) && /[。！？!?]$/.test(previousLine.rawText.trim())) {
         break;
       }
@@ -919,43 +1016,53 @@ function resolveParagraphHighlight(
 
       if (mergedCompactText.length < 6) continue;
 
-      const score = scoreParagraphMatch(mergedText, mergedCompactText, normalizedAnchors);
+      const primaryScore = scoreAgainstAnchor(mergedText, mergedCompactText, primaryAnchor);
+      const secondaryScore = secondaryAnchors.length
+        ? scoreParagraphMatch(mergedText, mergedCompactText, secondaryAnchors)
+        : 0;
+      const score = Math.max(primaryScore * 1.12, secondaryScore);
       if (score <= 0) continue;
-
-      const minimumScore = mergedCompactText.length >= 42 ? 0.34 : mergedCompactText.length >= 20 ? 0.4 : 0.5;
-      if (score < minimumScore && (!bestMatch || score <= bestMatch.score)) continue;
 
       const paddedRect = clampRectToContainer(
         {
           left: left - 6,
           top: top - 5,
           width: right - left + 12,
-          height: bottom - top + 10
+          height: bottom - top + 24
         },
         container.clientWidth,
         container.clientHeight
       );
 
-      if (!bestMatch || score > bestMatch.score) {
-        bestMatch = {
+      const primaryMinimum = primaryAnchor.compact.length >= 40 ? 0.3 : primaryAnchor.compact.length >= 20 ? 0.38 : 0.5;
+      if (primaryScore >= primaryMinimum) {
+        if (!bestPrimaryMatch || score > bestPrimaryMatch.score) {
+          bestPrimaryMatch = {
+            rect: paddedRect,
+            firstElement,
+            score
+          };
+        }
+      } else if (secondaryScore >= 0.62 && (!bestFallbackMatch || secondaryScore > bestFallbackMatch.score)) {
+        bestFallbackMatch = {
           rect: paddedRect,
           firstElement,
-          score
+          score: secondaryScore
         };
       }
 
       // 当窗口文本已完整覆盖较长锚点时，避免继续扩大导致误框
-      if (normalizedAnchors[0] && mergedCompactText.includes(normalizedAnchors[0].compact)) {
+      if (primaryAnchor && mergedCompactText.includes(primaryAnchor.compact)) {
         break;
       }
 
-      if (/[。！？!?]$/.test(line.rawText.trim()) && score >= 0.58) {
+      if (/[。！？!?]$/.test(line.rawText.trim()) && primaryScore >= 0.52) {
         break;
       }
     }
   }
 
-  return bestMatch;
+  return bestPrimaryMatch || bestFallbackMatch;
 }
 
 function buildTextLines(container: HTMLElement, textDivs: HTMLElement[], textItems: string[]) {
@@ -1032,29 +1139,42 @@ function isLikelyListStart(text: string) {
 
 function scoreParagraphMatch(text: string, compactText: string, anchors: Array<{ normalized: string; compact: string }>) {
   let bestScore = 0;
-  const normalizedText = normalizeForMatch(text);
-
   for (const anchor of anchors) {
-    const compactAnchor = anchor.compact;
-    const normalizedAnchor = anchor.normalized;
-    if (!compactAnchor || !normalizedAnchor) continue;
-
-    let score = 0;
-    if (compactText.includes(compactAnchor)) {
-      score = 1;
-    } else if (compactAnchor.includes(compactText)) {
-      score = Math.max(0.7, compactText.length / compactAnchor.length);
-    } else {
-      const diceScore = calculateDiceCoefficient(compactText, compactAnchor);
-      const containsUrl = /https?:\/\//.test(normalizedAnchor) && normalizedText.includes('http');
-      score = containsUrl ? Math.max(diceScore, 0.36) : diceScore;
-    }
-
-    const anchorWeight = Math.min(1.25, 0.85 + compactAnchor.length / 110);
-    bestScore = Math.max(bestScore, score * anchorWeight);
+    bestScore = Math.max(bestScore, scoreAgainstAnchor(text, compactText, anchor));
   }
 
   return bestScore;
+}
+
+function scoreAgainstAnchor(text: string, compactText: string, anchor: { normalized: string; compact: string }) {
+  if (!anchor?.normalized || !anchor.compact || !text || !compactText) return 0;
+
+  const compactAnchor = anchor.compact;
+  const normalizedText = normalizeForMatch(text);
+  let score = 0;
+
+  if (compactText.includes(compactAnchor)) {
+    score = 1;
+  } else if (compactAnchor.includes(compactText)) {
+    score = Math.max(0.68, compactText.length / compactAnchor.length);
+  } else {
+    score = calculateDiceCoefficient(compactText, compactAnchor);
+  }
+
+  if (compactAnchor.length >= 18) {
+    const prefix = compactAnchor.slice(0, Math.min(14, compactAnchor.length));
+    if (!compactText.includes(prefix)) {
+      score *= 0.7;
+    } else {
+      score = Math.max(score, 0.62);
+    }
+  }
+
+  if (/https?:\/\//.test(anchor.normalized) && normalizedText.includes('http')) {
+    score = Math.max(score, 0.36);
+  }
+
+  return score;
 }
 
 function clampRectToContainer(rect: HighlightRect, maxWidth: number, maxHeight: number): HighlightRect {
