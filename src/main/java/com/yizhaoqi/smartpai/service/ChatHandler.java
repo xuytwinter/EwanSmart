@@ -90,7 +90,7 @@ public class ChatHandler {
             logger.debug("搜索结果数量: {}", searchResults.size());
             
             // 4. 构建上下文
-            String context = buildContext(searchResults, session.getId());
+            String context = buildContext(searchResults, session.getId(), userMessage);
             
             // 5. 调用活动 LLM Provider 并处理流式响应
             logger.info("调用活动 LLM Provider 生成回复");
@@ -293,6 +293,7 @@ public class ChatHandler {
             item.put("anchorText", detail.anchorText());
             item.put("retrievalMode", detail.retrievalMode());
             item.put("retrievalLabel", detail.retrievalLabel());
+            item.put("retrievalQuery", detail.retrievalQuery());
             item.put("matchedChunkText", detail.matchedChunkText());
             item.put("evidenceSnippet", detail.evidenceSnippet());
             item.put("score", detail.score());
@@ -302,7 +303,7 @@ public class ChatHandler {
         return serialized;
     }
 
-    private String buildContext(List<SearchResult> searchResults, String sessionId) {
+    private String buildContext(List<SearchResult> searchResults, String sessionId, String userMessage) {
         if (searchResults == null || searchResults.isEmpty()) {
             // 返回空字符串，让 LLM provider 按"无检索结果"逻辑处理
             return "";
@@ -332,7 +333,7 @@ public class ChatHandler {
 
             // 保存引用编号到MD5的映射
             if (fileMd5 != null) {
-                ReferenceInfo detail = buildReferenceInfo(result, fileLabel);
+                ReferenceInfo detail = buildReferenceInfo(result, fileLabel, userMessage);
                 referenceMapping.put(i + 1, detail);
                 // 详细日志：记录每个引用编号的映射关系
                 logger.info("引用映射: sessionId={}, 引用编号#{}={}, 文件名={}, MD5={}, page={}, retrievalMode={}, chunkId={}",
@@ -487,12 +488,12 @@ public class ChatHandler {
         return detail;
     }
 
-    private ReferenceInfo buildReferenceInfo(SearchResult result, String fileLabel) {
+    private ReferenceInfo buildReferenceInfo(SearchResult result, String fileLabel, String userMessage) {
         String matchedChunkText = trimToMaxLength(
                 result.getMatchedChunkText() != null ? result.getMatchedChunkText() : result.getTextContent(),
                 MAX_MATCHED_CHUNK_LEN
         );
-        String evidenceSnippet = buildEvidenceSnippet(matchedChunkText);
+        String evidenceSnippet = buildEvidenceSnippet(userMessage, result.getAnchorText(), matchedChunkText);
 
         return new ReferenceInfo(
                 result.getFileMd5(),
@@ -501,6 +502,7 @@ public class ChatHandler {
                 result.getAnchorText(),
                 result.getRetrievalMode(),
                 buildRetrievalLabel(result.getRetrievalMode()),
+                normalizeEvidenceText(userMessage),
                 matchedChunkText,
                 evidenceSnippet,
                 result.getScore(),
@@ -515,13 +517,22 @@ public class ChatHandler {
         return "混合召回（语义相关 + 关键词命中）";
     }
 
-    private String buildEvidenceSnippet(String matchedChunkText) {
-        String normalized = normalizeEvidenceText(matchedChunkText);
-        if (normalized.isBlank()) {
+    private String buildEvidenceSnippet(String userMessage, String anchorText, String matchedChunkText) {
+        String normalizedAnchorText = normalizeEvidenceText(anchorText);
+        if (!normalizedAnchorText.isBlank()) {
+            return trimToMaxLength(normalizedAnchorText, MAX_EVIDENCE_SNIPPET_LEN);
+        }
+
+        String normalizedMatchedChunk = normalizeEvidenceText(matchedChunkText);
+        if (normalizedMatchedChunk.isBlank()) {
+            String normalizedUserMessage = normalizeEvidenceText(userMessage);
+            if (!normalizedUserMessage.isBlank()) {
+                return trimToMaxLength(normalizedUserMessage, MAX_EVIDENCE_SNIPPET_LEN);
+            }
             return "";
         }
 
-        String[] sentences = normalized.split("(?<=[。！？!?；;])");
+        String[] sentences = normalizedMatchedChunk.split("(?<=[。！？!?；;])");
         for (String sentence : sentences) {
             String trimmedSentence = sentence.trim();
             if (trimmedSentence.length() >= 12) {
@@ -529,7 +540,7 @@ public class ChatHandler {
             }
         }
 
-        return trimToMaxLength(normalized, MAX_EVIDENCE_SNIPPET_LEN);
+        return trimToMaxLength(normalizedMatchedChunk, MAX_EVIDENCE_SNIPPET_LEN);
     }
 
     private String trimToMaxLength(String value, int maxLength) {
@@ -563,6 +574,7 @@ public class ChatHandler {
             String anchorText,
             String retrievalMode,
             String retrievalLabel,
+            String retrievalQuery,
             String matchedChunkText,
             String evidenceSnippet,
             Double score,

@@ -746,6 +746,7 @@ public class DocumentController {
             data.put("anchorText", detail.anchorText());
             data.put("retrievalMode", detail.retrievalMode());
             data.put("retrievalLabel", detail.retrievalLabel());
+            data.put("retrievalQuery", detail.retrievalQuery());
             data.put("matchedChunkText", detail.matchedChunkText());
             data.put("evidenceSnippet", detail.evidenceSnippet());
             data.put("score", detail.score());

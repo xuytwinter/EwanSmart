@@ -336,6 +336,7 @@ declare namespace Api {
       anchorText?: string | null;
       retrievalMode?: 'HYBRID' | 'TEXT_ONLY' | null;
       retrievalLabel?: string | null;
+      retrievalQuery?: string | null;
       matchedChunkText?: string | null;
       evidenceSnippet?: string | null;
       score?: number | null;

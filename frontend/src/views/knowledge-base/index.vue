@@ -378,13 +378,15 @@ async function onBeforeUpload(
     <SearchDialog v-model:visible="searchVisible" />
     
     <!-- 文件预览弹窗 -->
-    <NModal v-model:show="previewVisible" preset="card" title="文件预览" style="width: 80%; max-width: 1000px;">
-      <FilePreview
-        :file-name="previewFileName"
-        :file-md5="previewFileMd5"
-        :visible="previewVisible"
-        @close="closeFilePreview"
-      />
+    <NModal v-model:show="previewVisible" class="document-preview-modal" :auto-focus="false">
+      <div class="document-preview-modal-shell">
+        <FilePreview
+          :file-name="previewFileName"
+          :file-md5="previewFileMd5"
+          :visible="previewVisible"
+          @close="closeFilePreview"
+        />
+      </div>
     </NModal>
   </div>
 </template>
@@ -398,5 +400,15 @@ async function onBeforeUpload(
   .n-progress-icon.n-progress-icon--as-text {
     white-space: nowrap;
   }
+}
+
+:deep(.document-preview-modal) {
+  width: min(96vw, 1320px);
+}
+
+.document-preview-modal-shell {
+  overflow: hidden;
+  border-radius: 32px;
+  box-shadow: 0 36px 120px rgba(15, 23, 42, 0.28);
 }
 </style>

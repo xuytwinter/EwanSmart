@@ -1,32 +1,33 @@
 <template>
   <div class="pdf-viewer-shell">
-    <div class="pdf-viewer-toolbar">
+    <div v-if="!embeddedHeader" class="pdf-viewer-toolbar">
       <div class="toolbar-copy">
-        <span class="viewer-badge">PDF 语义预览</span>
-        <span class="viewer-title">{{ fileName || '未命名文档' }}</span>
-        <span v-if="anchorText" class="viewer-anchor">{{ anchorText }}</span>
+        <span class="viewer-badge">{{ singlePagePreviewActive ? '单页定位' : 'PDF 预览' }}</span>
+        <span class="viewer-kicker">{{ viewerKicker }}</span>
       </div>
       <div class="toolbar-actions">
-        <NButton size="tiny" quaternary :disabled="currentPage <= 1" @click="goToPage(currentPage - 1)">
-          <template #icon>
-            <icon-mdi-chevron-left />
-          </template>
-        </NButton>
-        <span class="toolbar-status">
-          <template v-if="singlePagePreviewActive">第 {{ displayCurrentPage }} 页 / 单页预览</template>
+        <span class="toolbar-chip">
+          <template v-if="singlePagePreviewActive">第 {{ displayCurrentPage }} 页</template>
           <template v-else>第 {{ displayCurrentPage }} / {{ totalPages || 1 }} 页</template>
         </span>
-        <NButton size="tiny" quaternary :disabled="currentPage >= totalPages" @click="goToPage(currentPage + 1)">
-          <template #icon>
-            <icon-mdi-chevron-right />
-          </template>
-        </NButton>
+        <span class="toolbar-chip">{{ Math.round(zoom * 100) }}%</span>
+        <template v-if="!singlePagePreviewActive">
+          <NButton size="tiny" quaternary :disabled="currentPage <= 1" @click="goToPage(currentPage - 1)">
+            <template #icon>
+              <icon-mdi-chevron-left />
+            </template>
+          </NButton>
+          <NButton size="tiny" quaternary :disabled="currentPage >= totalPages" @click="goToPage(currentPage + 1)">
+            <template #icon>
+              <icon-mdi-chevron-right />
+            </template>
+          </NButton>
+        </template>
         <NButton size="tiny" quaternary :disabled="zoom <= minZoom" @click="zoomOut">
           <template #icon>
             <icon-mdi-magnify-minus-outline />
           </template>
         </NButton>
-        <span class="toolbar-status">{{ Math.round(zoom * 100) }}%</span>
         <NButton size="tiny" quaternary :disabled="zoom >= maxZoom" @click="zoomIn">
           <template #icon>
             <icon-mdi-magnify-plus-outline />
@@ -70,7 +71,7 @@
           <span>{{ renderError }}</span>
         </div>
         <div v-else class="page-scroll-shell">
-          <div class="page-meta-row">
+          <div v-if="!singlePagePreviewActive && !embeddedHeader" class="page-meta-row">
             <span>第 {{ displayCurrentPage }} 页</span>
             <span v-if="currentPage === targetPageNumber">引用定位页</span>
             <span v-else-if="highlightCount > 0">已匹配到相关文本</span>
@@ -105,7 +106,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch, watchEffect } from 'vue';
 import { useResizeObserver } from '@vueuse/core';
 import { GlobalWorkerOptions, TextLayer, getDocument } from 'pdfjs-dist';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
@@ -126,6 +127,19 @@ interface Props {
   anchorText?: string;
   searchText?: string;
   visible?: boolean;
+  embeddedHeader?: boolean;
+}
+
+interface Emits {
+  (e: 'toolbar-change', payload: {
+    modeLabel: string;
+    helperText: string;
+    pageLabel: string;
+    zoomLabel: string;
+    singlePage: boolean;
+    canPrev: boolean;
+    canNext: boolean;
+  }): void;
 }
 
 interface PageSummary {
@@ -142,11 +156,19 @@ interface HighlightRect {
 
 interface HighlightFragment {
   div: HTMLElement;
-  startRatio: number;
-  endRatio: number;
+}
+
+interface TextLine {
+  rect: HighlightRect;
+  rawText: string;
+  text: string;
+  compactText: string;
+  elements: HTMLElement[];
+  centerY: number;
 }
 
 const props = defineProps<Props>();
+const emit = defineEmits<Emits>();
 
 const minZoom = 0.7;
 const maxZoom = 2.2;
@@ -172,12 +194,30 @@ const textLayerRef = ref<HTMLDivElement | null>(null);
 const targetPageNumber = computed(() => clampPage(props.pageNumber || 1, totalPages.value || 1));
 const matchCandidates = computed(() => buildMatchCandidates(props.searchText || props.anchorText || ''));
 const singlePagePreviewActive = computed(() => Boolean(props.singlePageMode && props.sourcePageNumber));
+const viewerKicker = computed(() => {
+  if (singlePagePreviewActive.value) {
+    return '当前是定位页快照，支持缩放；整本文档请点“新窗口”查看。';
+  }
+  return '支持翻页、缩放和新窗口查看原文件。';
+});
 const displayCurrentPage = computed(() => {
   if (singlePagePreviewActive.value) {
     return props.sourcePageNumber || props.pageNumber || 1;
   }
   return currentPage.value;
 });
+const embeddedHeader = computed(() => Boolean(props.embeddedHeader));
+const toolbarState = computed(() => ({
+  modeLabel: singlePagePreviewActive.value ? '单页定位' : 'PDF 预览',
+  helperText: viewerKicker.value,
+  pageLabel: singlePagePreviewActive.value
+    ? `第 ${displayCurrentPage.value} 页`
+    : `第 ${displayCurrentPage.value} / ${totalPages.value || 1} 页`,
+  zoomLabel: `${Math.round(zoom.value * 100)}%`,
+  singlePage: singlePagePreviewActive.value,
+  canPrev: currentPage.value > 1,
+  canNext: currentPage.value < totalPages.value
+}));
 
 let loadingTask: PDFDocumentLoadingTask | null = null;
 let renderTask: RenderTask | null = null;
@@ -247,6 +287,10 @@ watch(zoom, () => {
   void scheduleRender({ immediate: true });
 });
 
+watchEffect(() => {
+  emit('toolbar-change', toolbarState.value);
+});
+
 useResizeObserver(stageRef, entries => {
   if (!pdfDocument.value || documentLoading.value || props.visible === false) return;
 
@@ -277,6 +321,10 @@ function normalizeForMatch(value: string) {
     .toLowerCase();
 }
 
+function compactForMatch(value: string) {
+  return normalizeForMatch(value).replace(/\s+/g, '');
+}
+
 function buildMatchCandidates(value: string | string[]) {
   const rawValues = Array.isArray(value) ? value : value.split(/\n+/);
   const values = rawValues.map(item => item.trim()).filter(Boolean);
@@ -290,8 +338,17 @@ function buildMatchCandidates(value: string | string[]) {
       candidates.add(normalizedFull);
     }
 
+    // 检测URL并完整保留
+    const urlPattern = /(https?:\/\/[^\s，,。；;：:!？!?、\n\r]+)/g;
+    for (const urlMatch of item.matchAll(urlPattern)) {
+      const url = urlMatch[0]?.trim();
+      if (url && url.length >= 8) {
+        candidates.add(normalizeForMatch(url));
+      }
+    }
+
     const normalizedSource = item.normalize('NFKC').replace(/\s+/g, ' ').trim();
-    const quotePattern = /[“"「『《](.+?)[”"」』》]/g;
+    const quotePattern = /[["「『《](.+?)[」」』》]/g;
     for (const match of normalizedSource.matchAll(quotePattern)) {
       const quoted = normalizeForMatch(match[1] || '');
       if (quoted.length >= 4) {
@@ -299,15 +356,30 @@ function buildMatchCandidates(value: string | string[]) {
       }
     }
 
+    // 移除引文标记后再分割，使用更智能的分段逻辑
     const withoutCitations = normalizedSource.replace(/(?:\(|（)?来源#\d+:[^)）;；。！？!?]*/g, ' ');
+    // 按句号、问号、感叹号分割，保留冒号用于连接
     const segments = withoutCitations
-      .split(/[：:；;，,。！？!?、\n\r]/)
+      .split(/[；;，,。！？!?、\n\r]/)
       .map(segment => normalizeForMatch(segment))
       .filter(segment => segment.length >= 6);
 
     segments
       .sort((left, right) => right.length - left.length)
       .forEach(segment => candidates.add(segment));
+
+    // 添加冒号分割的前后部分作为额外候选
+    const colonSegments = item.split(/[：:]/);
+    if (colonSegments.length > 1) {
+      const beforeColon = normalizeForMatch(colonSegments[0].trim());
+      const afterColon = normalizeForMatch(colonSegments.slice(1).join(':').trim());
+      if (beforeColon.length >= 6) {
+        candidates.add(beforeColon);
+      }
+      if (afterColon.length >= 6) {
+        candidates.add(afterColon);
+      }
+    }
   });
 
   return [...candidates];
@@ -463,6 +535,25 @@ function openInNewTab() {
   const page = singlePagePreviewActive.value ? (props.sourcePageNumber || props.pageNumber || 1) : currentPage.value;
   window.open(`${targetUrl}#page=${page}`, '_blank', 'noopener,noreferrer');
 }
+
+function goPrevPage() {
+  if (currentPage.value <= 1) return;
+  goToPage(currentPage.value - 1);
+}
+
+function goNextPage() {
+  if (currentPage.value >= totalPages.value) return;
+  goToPage(currentPage.value + 1);
+}
+
+defineExpose({
+  zoomIn,
+  zoomOut,
+  resetZoom,
+  goPrevPage,
+  goNextPage,
+  openInNewTab
+});
 
 async function loadDocument(url: string) {
   lifecycleToken += 1;
@@ -688,11 +779,20 @@ function applyHighlight() {
   if (!textLayerTask || !textLayer) return 0;
 
   const textDivs = textLayerTask.textDivs;
-  textDivs.forEach(div => div.classList.remove('matched-text'));
   highlightRects.value = [];
 
   const candidates = matchCandidates.value;
   if (!candidates.length) return 0;
+
+  const paragraphMatch = resolveParagraphHighlight(textLayer, textLayerTask.textDivs, textLayerTask.textContentItemsStr, candidates);
+  if (paragraphMatch) {
+    highlightRects.value = [paragraphMatch.rect];
+    paragraphMatch.firstElement?.scrollIntoView({
+      block: 'center',
+      behavior: 'smooth'
+    });
+    return 1;
+  }
 
   const itemRanges: Array<{ index: number; start: number; end: number }> = [];
   let mergedText = '';
@@ -726,20 +826,9 @@ function applyHighlight() {
     const div = textDivs[index];
     if (!div) return;
 
-    const itemLength = end - start;
-    if (itemLength <= 0) return;
-
-    const overlapStart = Math.max(start, matchStart);
-    const overlapEnd = Math.min(end, matchEnd);
-    const startRatio = (overlapStart - start) / itemLength;
-    const endRatio = (overlapEnd - start) / itemLength;
-
-    div.classList.add('matched-text');
     firstMatch ??= div;
     matchedFragments.push({
-      div,
-      startRatio,
-      endRatio
+      div
     });
   });
 
@@ -778,22 +867,234 @@ function resolveMatchRange(target: string, anchors: string[]): [number, number] 
   return resolveFuzzyMatchRange(target, anchors);
 }
 
+function resolveParagraphHighlight(
+  container: HTMLElement,
+  textDivs: HTMLElement[],
+  textItems: string[],
+  anchors: string[]
+) {
+  const lines = buildTextLines(container, textDivs, textItems);
+  if (!lines.length) return null;
+
+  const normalizedAnchors = anchors
+    .map(anchor => ({
+      normalized: normalizeForMatch(anchor),
+      compact: compactForMatch(anchor)
+    }))
+    .filter(anchor => anchor.normalized.length >= 6 && anchor.compact.length >= 6)
+    .sort((left, right) => right.compact.length - left.compact.length);
+
+  if (!normalizedAnchors.length) return null;
+
+  const maxWindowSize = Math.min(6, lines.length);
+  let bestMatch: { rect: HighlightRect; firstElement?: HTMLElement; score: number } | null = null;
+
+  for (let start = 0; start < lines.length; start += 1) {
+    let mergedText = '';
+    let mergedCompactText = '';
+    let left = Number.POSITIVE_INFINITY;
+    let right = 0;
+    let top = Number.POSITIVE_INFINITY;
+    let bottom = 0;
+    let firstElement: HTMLElement | undefined;
+
+    for (let end = start; end < Math.min(lines.length, start + maxWindowSize); end += 1) {
+      const line = lines[end];
+      const previousLine = end > start ? lines[end - 1] : null;
+      if (previousLine && isLikelyListStart(line.rawText) && /[。！？!?]$/.test(previousLine.rawText.trim())) {
+        break;
+      }
+
+      if (mergedText) {
+        mergedText += ' ';
+      }
+      mergedText += line.text;
+      mergedCompactText += line.compactText;
+
+      left = Math.min(left, line.rect.left);
+      top = Math.min(top, line.rect.top);
+      right = Math.max(right, line.rect.left + line.rect.width);
+      bottom = Math.max(bottom, line.rect.top + line.rect.height);
+      firstElement ??= line.elements[0];
+
+      if (mergedCompactText.length < 6) continue;
+
+      const score = scoreParagraphMatch(mergedText, mergedCompactText, normalizedAnchors);
+      if (score <= 0) continue;
+
+      const minimumScore = mergedCompactText.length >= 42 ? 0.34 : mergedCompactText.length >= 20 ? 0.4 : 0.5;
+      if (score < minimumScore && (!bestMatch || score <= bestMatch.score)) continue;
+
+      const paddedRect = clampRectToContainer(
+        {
+          left: left - 6,
+          top: top - 5,
+          width: right - left + 12,
+          height: bottom - top + 10
+        },
+        container.clientWidth,
+        container.clientHeight
+      );
+
+      if (!bestMatch || score > bestMatch.score) {
+        bestMatch = {
+          rect: paddedRect,
+          firstElement,
+          score
+        };
+      }
+
+      // 当窗口文本已完整覆盖较长锚点时，避免继续扩大导致误框
+      if (normalizedAnchors[0] && mergedCompactText.includes(normalizedAnchors[0].compact)) {
+        break;
+      }
+
+      if (/[。！？!?]$/.test(line.rawText.trim()) && score >= 0.58) {
+        break;
+      }
+    }
+  }
+
+  return bestMatch;
+}
+
+function buildTextLines(container: HTMLElement, textDivs: HTMLElement[], textItems: string[]) {
+  const containerRect = container.getBoundingClientRect();
+  const lines: TextLine[] = [];
+
+  textItems.forEach((item, index) => {
+    const div = textDivs[index];
+    if (!div) return;
+
+    const rawText = item.normalize('NFKC').replace(/\s+/g, ' ').trim();
+    const text = normalizeForMatch(rawText);
+    const compactText = text.replace(/\s+/g, '');
+    if (!rawText || !text || compactText.length < 2) return;
+
+    const rect = div.getBoundingClientRect();
+    if (!rect || rect.width < 2 || rect.height < 2) return;
+
+    const relativeRect: HighlightRect = {
+      left: Math.max(0, rect.left - containerRect.left),
+      top: Math.max(0, rect.top - containerRect.top),
+      width: rect.width,
+      height: rect.height
+    };
+    const centerY = relativeRect.top + relativeRect.height / 2;
+
+    const targetLine = lines.find(line => {
+      const tolerance = Math.max(4, Math.min(line.rect.height, relativeRect.height) * 0.65);
+      return Math.abs(line.centerY - centerY) <= tolerance;
+    });
+
+    if (!targetLine) {
+      lines.push({
+        rect: { ...relativeRect },
+        rawText,
+        text,
+        compactText,
+        elements: [div],
+        centerY
+      });
+      return;
+    }
+
+    targetLine.rect.left = Math.min(targetLine.rect.left, relativeRect.left);
+    targetLine.rect.top = Math.min(targetLine.rect.top, relativeRect.top);
+    targetLine.rect.width = Math.max(
+      targetLine.rect.left + targetLine.rect.width,
+      relativeRect.left + relativeRect.width
+    ) - targetLine.rect.left;
+    targetLine.rect.height = Math.max(
+      targetLine.rect.top + targetLine.rect.height,
+      relativeRect.top + relativeRect.height
+    ) - targetLine.rect.top;
+    targetLine.centerY = (targetLine.centerY * targetLine.elements.length + centerY) / (targetLine.elements.length + 1);
+    targetLine.rawText = `${targetLine.rawText} ${rawText}`;
+    targetLine.text = `${targetLine.text} ${text}`;
+    targetLine.compactText += compactText;
+    targetLine.elements.push(div);
+  });
+
+  return lines.sort((left, right) => {
+    if (Math.abs(left.rect.top - right.rect.top) > 2) {
+      return left.rect.top - right.rect.top;
+    }
+    return left.rect.left - right.rect.left;
+  });
+}
+
+function isLikelyListStart(text: string) {
+  const value = text.trim();
+  if (!value) return false;
+  return /^[•·●○▪▸\-–—\d]+[\.\)、\s]?/.test(value);
+}
+
+function scoreParagraphMatch(text: string, compactText: string, anchors: Array<{ normalized: string; compact: string }>) {
+  let bestScore = 0;
+  const normalizedText = normalizeForMatch(text);
+
+  for (const anchor of anchors) {
+    const compactAnchor = anchor.compact;
+    const normalizedAnchor = anchor.normalized;
+    if (!compactAnchor || !normalizedAnchor) continue;
+
+    let score = 0;
+    if (compactText.includes(compactAnchor)) {
+      score = 1;
+    } else if (compactAnchor.includes(compactText)) {
+      score = Math.max(0.7, compactText.length / compactAnchor.length);
+    } else {
+      const diceScore = calculateDiceCoefficient(compactText, compactAnchor);
+      const containsUrl = /https?:\/\//.test(normalizedAnchor) && normalizedText.includes('http');
+      score = containsUrl ? Math.max(diceScore, 0.36) : diceScore;
+    }
+
+    const anchorWeight = Math.min(1.25, 0.85 + compactAnchor.length / 110);
+    bestScore = Math.max(bestScore, score * anchorWeight);
+  }
+
+  return bestScore;
+}
+
+function clampRectToContainer(rect: HighlightRect, maxWidth: number, maxHeight: number): HighlightRect {
+  const left = Math.max(0, Math.min(rect.left, Math.max(0, maxWidth - 1)));
+  const top = Math.max(0, Math.min(rect.top, Math.max(0, maxHeight - 1)));
+  const right = Math.max(left + 1, Math.min(rect.left + rect.width, maxWidth));
+  const bottom = Math.max(top + 1, Math.min(rect.top + rect.height, maxHeight));
+
+  return {
+    left,
+    top,
+    width: Math.max(1, right - left),
+    height: Math.max(1, bottom - top)
+  };
+}
+
 function resolveFuzzyMatchRange(target: string, anchors: string[]): [number, number] | null {
   const ranges = buildPhraseRanges(target);
   if (!ranges.length) return null;
+
+  interface FuzzyMatchCandidate {
+    start: number;
+    end: number;
+    score: number;
+    weightedScore: number;
+  }
 
   const sortedAnchors = [...anchors]
     .filter(anchor => anchor && anchor.length >= 6)
     .sort((left, right) => right.length - left.length);
 
-  let bestMatch: { start: number; end: number; score: number; weightedScore: number } | null = null;
+  let bestMatch: FuzzyMatchCandidate | null = null;
 
   for (const anchor of sortedAnchors) {
-    let bestRangeForAnchor: { start: number; end: number; score: number; weightedScore: number } | null = null;
+    let bestRangeForAnchor: FuzzyMatchCandidate | null = null;
 
-    ranges.forEach(range => {
+    for (const range of ranges) {
       const score = calculateDiceCoefficient(anchor, range.text);
-      if (score < 0.18) return;
+      // 降低阈值，提高匹配的容错性
+      if (score < 0.12) continue;
 
       const weightedScore = score * Math.min(anchor.length, range.text.length);
       if (
@@ -808,13 +1109,15 @@ function resolveFuzzyMatchRange(target: string, anchors: string[]): [number, num
           weightedScore
         };
       }
-    });
+    }
 
     if (!bestRangeForAnchor) continue;
 
+    // 对于较长的文本，降低匹配分数要求
     if (
-      (anchor.length >= 18 && bestRangeForAnchor.score >= 0.2) ||
-      (anchor.length >= 12 && bestRangeForAnchor.score >= 0.28)
+      (anchor.length >= 18 && bestRangeForAnchor.score >= 0.15) ||
+      (anchor.length >= 12 && bestRangeForAnchor.score >= 0.2) ||
+      (anchor.length >= 8 && bestRangeForAnchor.score >= 0.25)
     ) {
       return [bestRangeForAnchor.start, bestRangeForAnchor.end];
     }
@@ -828,17 +1131,42 @@ function resolveFuzzyMatchRange(target: string, anchors: string[]): [number, num
     }
   }
 
-  return bestMatch ? [bestMatch.start, bestMatch.end] : null;
+  // 返回最佳匹配，即使分数不高（只要有匹配就返回）
+  return bestMatch && bestMatch.score >= 0.15
+    ? [bestMatch.start, bestMatch.end]
+    : null;
 }
 
 function buildPhraseRanges(target: string) {
   const ranges: Array<{ start: number; end: number; text: string }> = [];
+
+  // 先提取URL，保留完整URL作为一个range
+  const urlPattern = /(https?:\/\/[^\s，,。；;：:!？!?、\n\r]+)/g;
+  for (const match of target.matchAll(urlPattern)) {
+    const url = match[0]?.trim();
+    const start = match.index ?? -1;
+    if (!url || start < 0) continue;
+
+    const normalized = normalizeForMatch(url);
+    if (normalized.length < 8) continue;
+
+    ranges.push({
+      start,
+      end: start + url.length,
+      text: normalized
+    });
+  }
+
+  // 使用URL占位符替换，避免被分割
+  const urlPlaceholders = target.replace(urlPattern, '__URL__');
+
+  // 然后按标点分割其他文本
   const phrasePattern = /[^，,；;。！？!?]+[，,；;。！？!?]?/g;
 
-  for (const match of target.matchAll(phrasePattern)) {
+  for (const match of urlPlaceholders.matchAll(phrasePattern)) {
     const text = match[0]?.trim();
     const start = match.index ?? -1;
-    if (!text || start < 0) continue;
+    if (!text || start < 0 || text.includes('__URL__')) continue;
 
     const normalized = normalizeForMatch(text);
     if (normalized.length < 6) continue;
@@ -934,67 +1262,40 @@ function buildHighlightRects(container: HTMLElement, matchedFragments: Highlight
 
   const containerRect = container.getBoundingClientRect();
   const rects = matchedFragments
-    .map(({ div, startRatio, endRatio }) => {
+    .map(({ div }) => {
       const rect = div.getBoundingClientRect();
       if (rect.width < 2 || rect.height < 2) return null;
 
-      const insetY = Math.max(1, rect.height * 0.2);
-      const safeStartRatio = Math.min(Math.max(startRatio, 0), 1);
-      const safeEndRatio = Math.min(Math.max(endRatio, safeStartRatio), 1);
-      const segmentLeft = rect.left + rect.width * safeStartRatio;
-      const segmentWidth = rect.width * (safeEndRatio - safeStartRatio);
-      if (segmentWidth < 2) return null;
-
-      const insetX = Math.min(1.5, segmentWidth * 0.06);
+      const paddingX = Math.max(2, Math.min(8, rect.width * 0.04));
+      const paddingY = Math.max(2, Math.min(8, rect.height * 0.22));
 
       return {
-        left: Math.max(0, segmentLeft - containerRect.left - insetX),
-        top: Math.max(0, rect.top - containerRect.top + insetY),
-        width: segmentWidth + insetX * 2,
-        height: Math.max(6, rect.height - insetY * 1.35)
+        left: Math.max(0, rect.left - containerRect.left - paddingX),
+        top: Math.max(0, rect.top - containerRect.top - paddingY),
+        width: rect.width + paddingX * 2,
+        height: rect.height + paddingY * 2
       };
     })
     .filter((rect): rect is HighlightRect => Boolean(rect));
+  if (!rects.length) return [];
 
-  return mergeHighlightRects(rects);
-}
+  const left = Math.min(...rects.map(rect => rect.left));
+  const top = Math.min(...rects.map(rect => rect.top));
+  const right = Math.max(...rects.map(rect => rect.left + rect.width));
+  const bottom = Math.max(...rects.map(rect => rect.top + rect.height));
 
-function mergeHighlightRects(rects: HighlightRect[]) {
-  if (rects.length <= 1) return rects;
-
-  const sortedRects = [...rects].sort((a, b) => {
-    if (Math.abs(a.top - b.top) > 2) {
-      return a.top - b.top;
-    }
-    return a.left - b.left;
-  });
-
-  const merged: HighlightRect[] = [];
-
-  sortedRects.forEach(rect => {
-    const previousRect = merged.at(-1);
-    if (!previousRect) {
-      merged.push({ ...rect });
-      return;
-    }
-
-    const topDelta = Math.abs(previousRect.top - rect.top);
-    const heightDelta = Math.abs(previousRect.height - rect.height);
-    const gap = rect.left - (previousRect.left + previousRect.width);
-    const lineTolerance = Math.max(3, Math.min(previousRect.height, rect.height) * 0.35);
-
-    if (topDelta <= lineTolerance && heightDelta <= lineTolerance && gap <= 12) {
-      const right = Math.max(previousRect.left + previousRect.width, rect.left + rect.width);
-      previousRect.top = Math.min(previousRect.top, rect.top);
-      previousRect.height = Math.max(previousRect.height, rect.height);
-      previousRect.width = right - previousRect.left;
-      return;
-    }
-
-    merged.push({ ...rect });
-  });
-
-  return merged;
+  return [
+    clampRectToContainer(
+      {
+        left,
+        top,
+        width: right - left,
+        height: bottom - top
+      },
+      container.clientWidth,
+      container.clientHeight
+    )
+  ];
 }
 
 async function cleanupPdfState() {
@@ -1050,63 +1351,59 @@ async function cleanupPdfState() {
 
 <style scoped lang="scss">
 .pdf-viewer-shell {
-  @apply flex h-full min-h-0 flex-col rounded-2xl border border-stone-200 bg-stone-50;
+  @apply flex h-full min-h-0 flex-col bg-white;
 }
 
 .pdf-viewer-toolbar {
-  @apply flex items-start justify-between gap-4 border-b border-stone-200 bg-white px-4 py-3;
+  @apply flex items-start justify-between gap-3 border-b border-stone-200 bg-white px-3 py-2;
 }
 
 .toolbar-copy {
   @apply flex min-w-0 flex-col gap-1;
 }
 
+.viewer-kicker {
+  @apply text-xs leading-5 text-stone-500;
+}
+
 .viewer-badge {
-  @apply inline-flex w-fit rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700;
-}
-
-.viewer-title {
-  @apply truncate text-sm font-semibold text-stone-700;
-}
-
-.viewer-anchor {
-  @apply line-clamp-2 max-w-520px text-xs text-stone-500;
+  @apply inline-flex w-fit text-xs font-semibold text-primary;
 }
 
 .toolbar-actions {
   @apply flex flex-wrap items-center justify-end gap-2;
 }
 
-.toolbar-status {
-  @apply text-xs text-stone-500;
+.toolbar-chip {
+  @apply inline-flex items-center text-xs text-stone-500;
 }
 
 .pdf-viewer-body {
-  @apply grid min-h-0 flex-1 overflow-hidden grid-cols-[220px_minmax(0,1fr)];
+  @apply grid min-h-0 flex-1 overflow-hidden grid-cols-[230px_minmax(0,1fr)];
 }
 
 .pdf-viewer-body.is-single-page {
-  @apply block;
+  @apply block h-full min-h-0;
 }
 
 .page-sidebar {
-  @apply min-h-0 overflow-y-auto border-r border-stone-200 bg-stone-100 p-3;
+  @apply min-h-0 overflow-y-auto border-r border-stone-200 bg-white p-2;
 }
 
 .page-nav-item {
-  @apply mb-2 flex w-full flex-col items-start gap-1 rounded-2xl border border-transparent bg-white/80 px-3 py-3 text-left transition;
+  @apply mb-1 flex w-full flex-col items-start gap-1 rounded-8px px-3 py-3 text-left text-stone-700 transition;
 }
 
 .page-nav-item:hover {
-  @apply border-stone-300 bg-white;
+  @apply bg-stone-50;
 }
 
 .page-nav-item.is-active {
-  @apply border-stone-700 bg-stone-900 text-white shadow-sm;
+  @apply bg-primary/8 text-primary;
 }
 
 .page-nav-item.is-target {
-  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.9);
+  box-shadow: inset 2px 0 0 rgba(24, 144, 255, 0.75);
 }
 
 .page-nav-number {
@@ -1118,11 +1415,11 @@ async function cleanupPdfState() {
 }
 
 .page-stage {
-  @apply relative min-h-0 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.12),_transparent_35%),linear-gradient(180deg,_#f8fafc_0%,_#f1f5f9_100%)] p-6;
+  @apply relative min-h-0 overflow-auto bg-white p-3;
 }
 
 .stage-feedback {
-  @apply flex h-full min-h-320px flex-col items-center justify-center gap-3 rounded-3xl border border-dashed border-stone-300 bg-white/80 text-stone-500;
+  @apply flex h-full min-h-320px flex-col items-center justify-center gap-3 rounded-12px bg-stone-50 text-stone-500;
 }
 
 .stage-feedback.is-error {
@@ -1130,15 +1427,30 @@ async function cleanupPdfState() {
 }
 
 .page-scroll-shell {
-  @apply flex min-h-full flex-col items-center gap-4;
+  @apply flex min-h-full flex-col items-center gap-3;
 }
 
 .page-meta-row {
-  @apply flex w-full max-w-960px items-center justify-between rounded-full border border-white/60 bg-white/75 px-4 py-2 text-xs text-stone-500 shadow-sm backdrop-blur;
+  @apply mb-2 flex w-full max-w-960px items-center justify-between px-1 text-xs text-stone-500;
 }
 
 .pdf-page-shell {
-  @apply relative rounded-[28px] border border-stone-200 bg-white p-6 shadow-[0_30px_80px_rgba(15,23,42,0.08)];
+  @apply relative bg-white p-2;
+}
+
+.pdf-viewer-body.is-single-page .page-stage {
+  @apply h-full min-h-0;
+  padding: 10px 12px 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.pdf-viewer-body.is-single-page .page-scroll-shell {
+  @apply min-h-max justify-start gap-0;
+}
+
+.pdf-viewer-body.is-single-page .pdf-page-shell {
+  @apply p-1;
 }
 
 .pdf-canvas {
@@ -1154,14 +1466,11 @@ async function cleanupPdfState() {
   border-radius: 6px;
   background: linear-gradient(
     180deg,
-    rgba(254, 240, 138, 0.14) 0%,
-    rgba(250, 204, 21, 0.5) 22%,
-    rgba(250, 204, 21, 0.7) 55%,
-    rgba(245, 158, 11, 0.44) 100%
+    rgba(64, 169, 255, 0.12) 0%,
+    rgba(24, 144, 255, 0.28) 100%
   );
-  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.08);
-  mix-blend-mode: multiply;
-  opacity: 0.96;
+  box-shadow: 0 0 0 1px rgba(24, 144, 255, 0.12);
+  opacity: 0.92;
 }
 
 .pdf-text-layer {
@@ -1180,22 +1489,29 @@ async function cleanupPdfState() {
   padding: 0;
 }
 
-.pdf-text-layer :deep(span.matched-text) {
-  background: rgba(250, 204, 21, 0.42);
-  box-shadow: inset 0 -0.52em rgba(245, 158, 11, 0.34);
-  border-radius: 4px;
-  color: transparent;
-  text-decoration: underline;
-  text-decoration-color: rgba(217, 119, 6, 0.9);
-  text-decoration-thickness: 2px;
-  text-underline-offset: 1px;
-}
-
 .pdf-text-layer :deep(.endOfContent) {
   @apply absolute left-0 top-full block h-px w-px opacity-0;
 }
 
 .page-loading-mask {
-  @apply absolute inset-6 z-20 flex items-center justify-center gap-2 rounded-2xl bg-white/75 text-sm text-stone-500 backdrop-blur-sm;
+  @apply absolute inset-2 z-20 flex items-center justify-center gap-2 bg-white/75 text-sm text-stone-500 backdrop-blur-sm;
+}
+
+@media (max-width: 960px) {
+  .pdf-viewer-toolbar {
+    @apply flex-col;
+  }
+
+  .toolbar-actions {
+    @apply w-full justify-start;
+  }
+
+  .pdf-viewer-body {
+    @apply grid-cols-1;
+  }
+
+  .page-sidebar {
+    @apply max-h-42 border-b border-r-0;
+  }
 }
 </style>

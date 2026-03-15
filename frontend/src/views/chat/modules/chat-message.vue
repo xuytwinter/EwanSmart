@@ -1,29 +1,19 @@
 <script setup lang="ts">
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { nextTick } from 'vue';
-import { VueMarkdownIt } from '@/vendor/vue-markdown-shiki';
-import FilePreview from '@/components/custom/file-preview.vue';
 import { formatDate } from '@/utils/common';
+import { router } from '@/router';
+import { request } from '@/service/request';
+import { VueMarkdownIt } from '@/vendor/vue-markdown-shiki';
 defineOptions({ name: 'ChatMessage' });
 
 const props = defineProps<{
   msg: Api.Chat.Message,
-  sessionId?: string
+  sessionId?: string,
+  retrievalQueryFallback?: string
 }>();
 
 const authStore = useAuthStore();
-const previewVisible = ref(false);
-const previewFileName = ref('');
-const previewFileMd5 = ref('');
-const previewPageNumber = ref<number | undefined>(undefined);
-const previewAnchorText = ref('');
-const previewSearchText = ref('');
-const previewRetrievalMode = ref<Api.Chat.ReferenceEvidence['retrievalMode']>(null);
-const previewRetrievalLabel = ref('');
-const previewEvidenceSnippet = ref('');
-const previewMatchedChunkText = ref('');
-const previewScore = ref<number | null>(null);
-const previewChunkId = ref<number | null>(null);
 
 function handleCopy(content: string) {
   navigator.clipboard.writeText(content);
@@ -171,37 +161,33 @@ function extractContextAnchorText(target: HTMLElement) {
     .trim();
 }
 
-function buildPreviewSearchText(...texts: Array<string | undefined>) {
-  return texts
-    .map(text => text?.trim())
-    .filter((text, index, values): text is string => Boolean(text) && values.indexOf(text) === index)
-    .join('\n');
-}
+function openReferencePreviewPage(payload: {
+  retrievalMode?: Api.Chat.ReferenceEvidence['retrievalMode'];
+  retrievalLabel?: string | null;
+  retrievalQuery?: string | null;
+  evidenceSnippet?: string | null;
+  matchedChunkText?: string | null;
+  score?: number | null;
+  chunkId?: number | null;
+  fileName: string;
+  fileMd5?: string | null;
+  pageNumber?: number | null;
+  anchorText?: string | null;
+  sessionId?: string;
+  referenceNumber: number;
+}) {
+  const previewKey = `reference-preview:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+  localStorage.setItem(previewKey, JSON.stringify(payload));
 
-function applyPreviewEvidence(
-  fileName: string,
-  fileMd5: string,
-  pageNumber: number | null | undefined,
-  evidence: Partial<Api.Chat.ReferenceEvidence>,
-  clickedAnchorText?: string
-) {
-  previewFileName.value = evidence.fileName || fileName;
-  previewFileMd5.value = fileMd5;
-  previewPageNumber.value = pageNumber || undefined;
-  previewAnchorText.value = evidence.anchorText || clickedAnchorText || '';
-  previewSearchText.value = buildPreviewSearchText(
-    evidence.evidenceSnippet || undefined,
-    evidence.matchedChunkText || undefined,
-    clickedAnchorText,
-    evidence.anchorText || undefined
-  );
-  previewRetrievalMode.value = evidence.retrievalMode ?? null;
-  previewRetrievalLabel.value = evidence.retrievalLabel || '';
-  previewEvidenceSnippet.value = evidence.evidenceSnippet || '';
-  previewMatchedChunkText.value = evidence.matchedChunkText || '';
-  previewScore.value = evidence.score ?? null;
-  previewChunkId.value = evidence.chunkId ?? null;
-  previewVisible.value = true;
+  const routeLocation = router.resolve({
+    path: '/chat',
+    query: {
+      preview: 'reference',
+      previewKey
+    }
+  });
+
+  window.open(routeLocation.href, '_blank', 'noopener,noreferrer');
 }
 
 // 处理内容点击事件（事件委托）
@@ -240,19 +226,9 @@ async function handleSourceFileClick(fileInfo: {
 
   try {
     let detail: Api.Document.ReferenceDetailResponse | null = null;
+    const fallbackRetrievalQuery = props.retrievalQueryFallback || '';
 
-    if (persistedDetail?.fileMd5) {
-      applyPreviewEvidence(
-        fileName,
-        persistedDetail.fileMd5,
-        persistedDetail.pageNumber,
-        persistedDetail,
-        clickedAnchorText
-      );
-      return;
-    }
-
-    if (referenceSessionId) {
+    if (referenceSessionId && (!persistedDetail?.retrievalQuery || !persistedDetail?.matchedChunkText || !persistedDetail?.evidenceSnippet)) {
       try {
         const { error: detailError, data: detailData } = await request<Api.Document.ReferenceDetailResponse>({
           url: 'documents/reference-detail',
@@ -271,63 +247,45 @@ async function handleSourceFileClick(fileInfo: {
       }
     }
 
+    if (persistedDetail?.fileMd5 && !detail) {
+      openReferencePreviewPage({
+        fileName: persistedDetail.fileName || fileName,
+        fileMd5: persistedDetail.fileMd5,
+        pageNumber: persistedDetail.pageNumber,
+        anchorText: persistedDetail.anchorText || clickedAnchorText || '',
+        retrievalMode: persistedDetail.retrievalMode,
+        retrievalLabel: persistedDetail.retrievalLabel,
+        retrievalQuery: persistedDetail.retrievalQuery || fallbackRetrievalQuery,
+        evidenceSnippet: persistedDetail.evidenceSnippet,
+        matchedChunkText: persistedDetail.matchedChunkText,
+        score: persistedDetail.score,
+        chunkId: persistedDetail.chunkId,
+        sessionId: referenceSessionId,
+        referenceNumber
+      });
+      return;
+    }
+
     const targetMd5 = detail?.fileMd5 || extractedMd5 || null;
-    if (targetMd5) {
-      applyPreviewEvidence(
-        fileName,
-        targetMd5,
-        detail?.pageNumber,
-        detail || {
-          fileName,
-          fileMd5: targetMd5,
-          anchorText: clickedAnchorText || null
-        },
-        clickedAnchorText
-      );
-      return;
-    }
-
-    // 降级方案：使用文件名下载（向后兼容）
-    console.log('降级方案: 使用文件名下载', fileName);
-    const { error, data } = await request<Api.Document.DownloadResponse>({
-      url: 'documents/download',
-      params: {
-        fileName: fileName,
-        token: authStore.token
-      },
-      baseURL: '/proxy-api'
+    openReferencePreviewPage({
+      fileName: detail?.fileName || fileName,
+      fileMd5: targetMd5,
+      pageNumber: detail?.pageNumber,
+      anchorText: detail?.anchorText || clickedAnchorText || '',
+      retrievalMode: detail?.retrievalMode,
+      retrievalLabel: detail?.retrievalLabel,
+      retrievalQuery: detail?.retrievalQuery || fallbackRetrievalQuery,
+      evidenceSnippet: detail?.evidenceSnippet,
+      matchedChunkText: detail?.matchedChunkText,
+      score: detail?.score,
+      chunkId: detail?.chunkId,
+      sessionId: referenceSessionId,
+      referenceNumber
     });
-
-    if (error) {
-      window.$message?.error(`文件下载失败: ${error.response?.data?.message || '未知错误'}`);
-      return;
-    }
-
-    if (data?.downloadUrl) {
-      window.open(data.downloadUrl, '_blank');
-      window.$message?.success(`文件下载链接已打开: ${data.fileName || fileName}`);
-    } else {
-      window.$message?.error('未能获取到下载链接');
-    }
   } catch (err) {
     console.error('文件下载失败:', err);
     window.$message?.error(`文件下载失败: ${fileName}`);
   }
-}
-
-function closePreview() {
-  previewVisible.value = false;
-  previewFileName.value = '';
-  previewFileMd5.value = '';
-  previewPageNumber.value = undefined;
-  previewAnchorText.value = '';
-  previewSearchText.value = '';
-  previewRetrievalMode.value = null;
-  previewRetrievalLabel.value = '';
-  previewEvidenceSnippet.value = '';
-  previewMatchedChunkText.value = '';
-  previewScore.value = null;
-  previewChunkId.value = null;
 }
 </script>
 
@@ -369,23 +327,6 @@ function closePreview() {
         </template>
       </NButton>
     </div>
-    <NModal v-model:show="previewVisible" preset="card" title="引用文档预览" style="width: 80%; max-width: 1000px;">
-      <FilePreview
-        :file-name="previewFileName"
-        :file-md5="previewFileMd5"
-        :page-number="previewPageNumber"
-        :anchor-text="previewAnchorText"
-        :search-text="previewSearchText"
-        :retrieval-mode="previewRetrievalMode"
-        :retrieval-label="previewRetrievalLabel"
-        :evidence-snippet="previewEvidenceSnippet"
-        :matched-chunk-text="previewMatchedChunkText"
-        :score="previewScore"
-        :chunk-id="previewChunkId"
-        :visible="previewVisible"
-        @close="closePreview"
-      />
-    </NModal>
   </div>
 </template>
 
