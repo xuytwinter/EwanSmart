@@ -1,7 +1,13 @@
 <script setup lang="tsx">
-import type { DataTableColumns, FormRules, PaginationProps, SelectOption } from 'naive-ui';
+import type { DataTableColumns, DataTableRowKey, FormRules, PaginationProps, SelectOption } from 'naive-ui';
 import { NButton, NInput, NInputNumber, NPopconfirm, NTag } from 'naive-ui';
-import { fetchCreateInviteCode, fetchDisableInviteCode, fetchGetInviteCodeList } from '@/service/api';
+import {
+  fetchCreateInviteCode,
+  fetchDeleteInviteCode,
+  fetchDisableInviteCode,
+  fetchGetInviteCodeList,
+  fetchUpdateInviteCode
+} from '@/service/api';
 
 const appStore = useAppStore();
 
@@ -20,17 +26,27 @@ const enabledOptions: SelectOption[] = [
 
 const loading = ref(false);
 const data = ref<Api.InviteCode.Item[]>([]);
+const checkedRowKeys = ref<number[]>([]);
 
 const filterStatus = ref<'all' | 'enabled' | 'disabled'>('all');
 const visible = ref(false);
 const submitting = ref(false);
+const editingId = ref<number | null>(null);
 const { formRef, validate, restoreValidation } = useNaiveForm();
 const { defaultRequiredRule } = useFormRules();
 
 const model = ref<InviteCodeFormModel>(createDefaultModel());
+const isEditing = computed(() => editingId.value !== null);
 
 const rules = ref<FormRules>({
   code: [
+    {
+      validator(_, value: string) {
+        return !isEditing.value || Boolean(value?.trim());
+      },
+      message: '编辑时邀请码不能为空',
+      trigger: ['blur', 'input']
+    },
     {
       validator(_, value: string) {
         return !(value?.trim() && Number(model.value.count) > 1);
@@ -92,7 +108,12 @@ const mobilePagination = computed(() => ({
   pageSlot: appStore.isMobile ? 3 : 9
 }));
 
+const hasCheckedRows = computed(() => checkedRowKeys.value.length > 0);
+
 const columns = computed<DataTableColumns<Api.InviteCode.Item>>(() => [
+  {
+    type: 'selection'
+  },
   {
     key: 'index',
     title: '序号',
@@ -105,7 +126,7 @@ const columns = computed<DataTableColumns<Api.InviteCode.Item>>(() => [
     minWidth: 220,
     render: row => (
       <div class="flex items-center gap-2">
-        <span class="font-mono text-3">{row.code}</span>
+        <span class="text-3 font-mono">{row.code}</span>
         <NButton
           size="tiny"
           quaternary
@@ -169,22 +190,40 @@ const columns = computed<DataTableColumns<Api.InviteCode.Item>>(() => [
   {
     key: 'operate',
     title: '操作',
-    width: 120,
-    render: row =>
-      row.enabled ? (
-        <NPopconfirm onPositiveClick={() => handleDisable(row.id)}>
+    width: 260,
+    render: row => (
+      <div class="flex items-center gap-2">
+        {row.usedCount === 0 ? (
+          <NButton type="primary" ghost size="small" onClick={() => openEditDialog(row)}>
+            编辑
+          </NButton>
+        ) : null}
+        {row.enabled ? (
+          <NPopconfirm onPositiveClick={() => handleDisable(row.id)}>
+            {{
+              default: () => '禁用后该邀请码将无法继续使用，确认继续吗？',
+              trigger: () => (
+                <NButton type="warning" ghost size="small">
+                  禁用
+                </NButton>
+              )
+            }}
+          </NPopconfirm>
+        ) : (
+          <NTag type="default">已停用</NTag>
+        )}
+        <NPopconfirm onPositiveClick={() => handleDelete(row.id)}>
           {{
-            default: () => '禁用后该邀请码将无法继续使用，确认继续吗？',
+            default: () => '删除后无法恢复，确认删除该邀请码吗？',
             trigger: () => (
               <NButton type="error" ghost size="small">
-                禁用
+                删除
               </NButton>
             )
           }}
         </NPopconfirm>
-      ) : (
-        <NTag type="default">已停用</NTag>
-      )
+      </div>
+    )
   }
 ]);
 
@@ -211,9 +250,14 @@ async function getData() {
     pagination.page = payload.current || Number(pagination.page);
     pagination.pageSize = payload.size || Number(pagination.pageSize);
     pagination.itemCount = payload.total || 0;
+    checkedRowKeys.value = [];
   }
 
   loading.value = false;
+}
+
+function handleCheck(rowKeys: DataTableRowKey[]) {
+  checkedRowKeys.value = rowKeys.map(Number);
 }
 
 async function handleFilterChange(value: 'all' | 'enabled' | 'disabled') {
@@ -223,7 +267,22 @@ async function handleFilterChange(value: 'all' | 'enabled' | 'disabled') {
 }
 
 function openCreateDialog() {
+  editingId.value = null;
   model.value = createDefaultModel();
+  visible.value = true;
+  nextTick(() => {
+    restoreValidation();
+  });
+}
+
+function openEditDialog(row: Api.InviteCode.Item) {
+  editingId.value = row.id;
+  model.value = {
+    code: row.code,
+    count: 1,
+    maxUses: row.maxUses,
+    expiresAt: row.expiresAt ? dayjs(row.expiresAt).valueOf() : null
+  };
   visible.value = true;
   nextTick(() => {
     restoreValidation();
@@ -232,6 +291,7 @@ function openCreateDialog() {
 
 function closeDialog() {
   visible.value = false;
+  editingId.value = null;
 }
 
 function normalizeDateTime(value: number | null) {
@@ -243,15 +303,21 @@ async function handleCreate() {
   await validate();
 
   submitting.value = true;
-  const { error } = await fetchCreateInviteCode({
-    code: model.value.code.trim() || undefined,
-    count: Number(model.value.count),
+  const payload = {
+    code: model.value.code.trim(),
     maxUses: Number(model.value.maxUses),
     expiresAt: normalizeDateTime(model.value.expiresAt)
-  });
+  };
+  const { error } = isEditing.value
+    ? await fetchUpdateInviteCode(editingId.value!, payload)
+    : await fetchCreateInviteCode({
+        ...payload,
+        code: payload.code || undefined,
+        count: Number(model.value.count)
+      });
 
   if (!error) {
-    window.$message?.success(`已创建 ${Number(model.value.count)} 个邀请码`);
+    window.$message?.success(isEditing.value ? '邀请码已更新' : `已创建 ${Number(model.value.count)} 个邀请码`);
     closeDialog();
     await getData();
   }
@@ -268,14 +334,59 @@ async function handleDisable(id: number) {
   }
 }
 
+async function handleDelete(id: number) {
+  const { error } = await fetchDeleteInviteCode(id);
+
+  if (!error) {
+    window.$message?.success('邀请码已删除');
+
+    if (data.value.length === 1 && Number(pagination.page) > 1) {
+      pagination.page = Number(pagination.page) - 1;
+    }
+
+    await getData();
+  }
+}
+
+async function handleBatchDelete() {
+  const ids = [...checkedRowKeys.value];
+
+  if (ids.length === 0) return;
+
+  const results = await Promise.all(ids.map(async id => ({ id, ...(await fetchDeleteInviteCode(id)) })));
+  const successCount = results.filter(item => !item.error).length;
+  const failedCount = ids.length - successCount;
+
+  if (successCount > 0) {
+    window.$message?.success(
+      failedCount > 0 ? `已删除 ${successCount} 个邀请码，${failedCount} 个删除失败` : `已删除 ${successCount} 个邀请码`
+    );
+
+    if (successCount === data.value.length && Number(pagination.page) > 1) {
+      pagination.page = Number(pagination.page) - 1;
+    }
+
+    await getData();
+    return;
+  }
+
+  window.$message?.error('批量删除失败，请稍后重试');
+}
+
 onMounted(() => {
   getData();
 });
 </script>
 
 <template>
-  <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden lt-sm:overflow-auto">
-    <NCard title="邀请码管理" :bordered="false" size="small" class="sm:flex-1-hidden card-wrapper">
+  <div class="min-h-500px flex-col-stretch gap-16px overflow-auto">
+    <NCard
+      title="邀请码管理"
+      :bordered="false"
+      size="small"
+      class="sm:flex-1-hidden card-wrapper"
+      content-class="flex-col-stretch min-h-0 sm:h-full"
+    >
       <template #header-extra>
         <NSpace :size="12" align="center" wrap>
           <NSelect
@@ -285,6 +396,12 @@ onMounted(() => {
             @update:value="handleFilterChange"
           />
           <NButton type="primary" @click="openCreateDialog">创建邀请码</NButton>
+          <NPopconfirm @positive-click="handleBatchDelete">
+            <template #trigger>
+              <NButton type="error" ghost :disabled="!hasCheckedRows || loading">批量删除</NButton>
+            </template>
+            已选择 {{ checkedRowKeys.length }} 个邀请码，确认删除吗？
+          </NPopconfirm>
           <NButton @click="getData">刷新</NButton>
         </NSpace>
       </template>
@@ -293,24 +410,28 @@ onMounted(() => {
         默认一周后过期。邀请码留空时，后端会自动生成 16 位随机码；批量创建时会连续生成多条随机邀请码。
       </div>
 
-      <NDataTable
-        :columns="columns"
-        :data="data"
-        size="small"
-        :flex-height="!appStore.isMobile"
-        :scroll-x="1240"
-        :loading="loading"
-        remote
-        :row-key="row => row.id"
-        :pagination="mobilePagination"
-        class="sm:h-full"
-      />
+      <div class="min-h-0 sm:flex-1">
+        <NDataTable
+          :columns="columns"
+          :data="data"
+          size="small"
+          :flex-height="!appStore.isMobile"
+          :scroll-x="1240"
+          :loading="loading"
+          remote
+          :row-key="row => row.id"
+          :pagination="mobilePagination"
+          :checked-row-keys="checkedRowKeys"
+          class="sm:h-full"
+          @update:checked-row-keys="handleCheck"
+        />
+      </div>
     </NCard>
 
     <NModal
       v-model:show="visible"
       preset="dialog"
-      title="创建邀请码"
+      :title="isEditing ? '编辑邀请码' : '创建邀请码'"
       :show-icon="false"
       :mask-closable="false"
       class="w-520px!"
@@ -319,13 +440,20 @@ onMounted(() => {
         <NFormItem label="邀请码" path="code">
           <NInput
             v-model:value="model.code"
-            placeholder="单条创建可自定义，批量创建时请留空"
+            :placeholder="isEditing ? '请输入邀请码' : '单条创建可自定义，批量创建时请留空'"
             maxlength="64"
             clearable
           />
         </NFormItem>
-        <NFormItem label="批量数量" path="count">
-          <NInputNumber v-model:value="model.count" class="w-full" :min="1" :max="100" :precision="0" placeholder="默认 1" />
+        <NFormItem v-if="!isEditing" label="批量数量" path="count">
+          <NInputNumber
+            v-model:value="model.count"
+            class="w-full"
+            :min="1"
+            :max="100"
+            :precision="0"
+            placeholder="默认 1"
+          />
         </NFormItem>
         <NFormItem label="最大使用次数" path="maxUses">
           <NInputNumber v-model:value="model.maxUses" class="w-full" :min="1" :precision="0" placeholder="请输入次数" />
@@ -344,7 +472,9 @@ onMounted(() => {
       <template #action>
         <NSpace :size="12">
           <NButton @click="closeDialog">取消</NButton>
-          <NButton type="primary" :loading="submitting" @click="handleCreate">创建</NButton>
+          <NButton type="primary" :loading="submitting" @click="handleCreate">
+            {{ isEditing ? '保存' : '创建' }}
+          </NButton>
         </NSpace>
       </template>
     </NModal>

@@ -426,6 +426,47 @@ public class AdminController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "禁用邀请码失败: " + e.getMessage()));
         }
     }
+
+    /**
+     * 删除邀请码
+     */
+    @DeleteMapping("/invite-codes/{id}")
+    public ResponseEntity<?> deleteInviteCode(
+            @RequestHeader("Authorization") String token,
+            @PathVariable Long id) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            inviteCodeService.delete(id, adminUsername);
+            return ResponseEntity.ok(Map.of("code", 200, "message", "邀请码已删除"));
+        } catch (CustomException e) {
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "删除邀请码失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 编辑邀请码
+     */
+    @PutMapping("/invite-codes/{id}")
+    public ResponseEntity<?> updateInviteCode(
+            @RequestHeader("Authorization") String token,
+            @PathVariable Long id,
+            @RequestBody UpdateInviteCodeRequest request) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            var updated = inviteCodeService.update(id, adminUsername, request.code(), request.maxUses(), request.expiresAt());
+            return ResponseEntity.ok(Map.of("code", 200, "message", "邀请码已更新", "data", updated));
+        } catch (CustomException e) {
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "编辑邀请码失败: " + e.getMessage()));
+        }
+    }
     
     /**
      * 创建组织标签
@@ -987,3 +1028,5 @@ record AssignOrgTagsRequest(List<String> orgTags) {}
 record OrgTagUpdateRequest(String name, String description, String parentTag, Long uploadMaxSizeMb) {}
 
 record CreateInviteCodeRequest(String code, Integer maxUses, LocalDateTime expiresAt, Integer count) {}
+
+record UpdateInviteCodeRequest(String code, Integer maxUses, LocalDateTime expiresAt) {}

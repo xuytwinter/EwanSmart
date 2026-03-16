@@ -111,17 +111,50 @@ public class InviteCodeService {
 
     @Transactional
     public void disable(Long id, String adminUsername) {
-        User admin = userRepository.findByUsername(adminUsername)
-                .orElseThrow(() -> new CustomException("Admin not found", HttpStatus.NOT_FOUND));
-
-        if (admin.getRole() != User.Role.ADMIN) {
-            throw new CustomException("Only administrators can disable invite codes", HttpStatus.FORBIDDEN);
-        }
+        validateAdmin(adminUsername, "disable");
 
         InviteCode inviteCode = inviteCodeRepository.findById(id)
                 .orElseThrow(() -> new CustomException("Invite code not found", HttpStatus.NOT_FOUND));
         inviteCode.setEnabled(false);
         inviteCodeRepository.save(inviteCode);
+    }
+
+    @Transactional
+    public void delete(Long id, String adminUsername) {
+        validateAdmin(adminUsername, "delete");
+
+        InviteCode inviteCode = inviteCodeRepository.findById(id)
+                .orElseThrow(() -> new CustomException("Invite code not found", HttpStatus.NOT_FOUND));
+        inviteCodeRepository.delete(inviteCode);
+    }
+
+    @Transactional
+    public InviteCode update(Long id, String adminUsername, String code, Integer maxUses, LocalDateTime expiresAt) {
+        validateAdmin(adminUsername, "edit");
+
+        InviteCode inviteCode = inviteCodeRepository.findById(id)
+                .orElseThrow(() -> new CustomException("Invite code not found", HttpStatus.NOT_FOUND));
+
+        if (inviteCode.getUsedCount() > 0) {
+            throw new CustomException("Used invite codes cannot be edited", HttpStatus.BAD_REQUEST);
+        }
+
+        String normalizedCode = normalizeCode(code);
+        InviteCode existingInviteCode = inviteCodeRepository.findByCode(normalizedCode).orElse(null);
+        if (existingInviteCode != null && !existingInviteCode.getId().equals(id)) {
+            throw new CustomException("Invite code already exists", HttpStatus.BAD_REQUEST);
+        }
+
+        int normalizedMaxUses = maxUses == null || maxUses <= 0 ? 1 : maxUses;
+        if (expiresAt != null && expiresAt.isBefore(LocalDateTime.now())) {
+            throw new CustomException("Invite code expiry must be in the future", HttpStatus.BAD_REQUEST);
+        }
+
+        inviteCode.setCode(normalizedCode);
+        inviteCode.setMaxUses(normalizedMaxUses);
+        inviteCode.setExpiresAt(expiresAt);
+
+        return inviteCodeRepository.save(inviteCode);
     }
 
     public Map<String, Object> list(Boolean enabled, int page, int size) {
@@ -163,6 +196,18 @@ public class InviteCodeService {
     }
 
     private String normalizeCode(String code) {
+        if (code == null || code.isBlank()) {
+            throw new CustomException("Invite code cannot be empty", HttpStatus.BAD_REQUEST);
+        }
         return code.trim().toUpperCase();
+    }
+
+    private void validateAdmin(String adminUsername, String action) {
+        User admin = userRepository.findByUsername(adminUsername)
+                .orElseThrow(() -> new CustomException("Admin not found", HttpStatus.NOT_FOUND));
+
+        if (admin.getRole() != User.Role.ADMIN) {
+            throw new CustomException("Only administrators can " + action + " invite codes", HttpStatus.FORBIDDEN);
+        }
     }
 }

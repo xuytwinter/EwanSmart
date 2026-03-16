@@ -23,3 +23,25 @@ export function fetchDisableInviteCode(id: number) {
     method: 'patch'
   });
 }
+
+export function fetchDeleteInviteCode(id: number) {
+  return request({
+    url: `/admin/invite-codes/${id}`,
+    method: 'delete'
+  });
+}
+
+export function fetchUpdateInviteCode(
+  id: number,
+  data: {
+    code: string;
+    maxUses: number;
+    expiresAt?: string | null;
+  }
+) {
+  return request({
+    url: `/admin/invite-codes/${id}`,
+    method: 'put',
+    data
+  });
+}
