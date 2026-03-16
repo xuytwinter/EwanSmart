@@ -110,6 +110,8 @@ const mobilePagination = computed(() => ({
 
 const hasCheckedRows = computed(() => checkedRowKeys.value.length > 0);
 
+const inviteShareBaseUrl = 'https://smart.paicoding.com/#/login/register';
+
 const columns = computed<DataTableColumns<Api.InviteCode.Item>>(() => [
   {
     type: 'selection'
@@ -136,6 +138,16 @@ const columns = computed<DataTableColumns<Api.InviteCode.Item>>(() => [
           }}
         >
           复制
+        </NButton>
+        <NButton
+          size="tiny"
+          quaternary
+          onClick={() => {
+            navigator.clipboard.writeText(createInviteShareLink(row.code));
+            window.$message?.success('分享链接已复制');
+          }}
+        >
+          复制分享
         </NButton>
       </div>
     )
@@ -234,6 +246,10 @@ function createDefaultModel(): InviteCodeFormModel {
     maxUses: 1,
     expiresAt: dayjs().add(7, 'day').valueOf()
   };
+}
+
+function createInviteShareLink(code: string) {
+  return `${inviteShareBaseUrl}?inviteCode=${encodeURIComponent(code)}`;
 }
 
 async function getData() {

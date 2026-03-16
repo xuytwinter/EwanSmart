@@ -5,6 +5,7 @@ defineOptions({
   name: 'Register'
 });
 
+const route = useRoute();
 const { toggleLoginModule } = useRouterPush();
 const { formRef, validate } = useNaiveForm();
 
@@ -44,6 +45,19 @@ async function handleSubmit() {
   }
   loading.value = false;
 }
+
+function syncInviteCodeFromQuery(inviteCode: unknown) {
+  if (typeof inviteCode !== 'string') return;
+  model.inviteCode = inviteCode.trim();
+}
+
+watch(
+  () => route.query.inviteCode,
+  inviteCode => {
+    syncInviteCodeFromQuery(inviteCode);
+  },
+  { immediate: true }
+);
 </script>
 
 <template>
