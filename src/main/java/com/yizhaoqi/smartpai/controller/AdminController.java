@@ -8,6 +8,10 @@ import com.yizhaoqi.smartpai.model.OrganizationTag;
 import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.OrganizationTagRepository;
 import com.yizhaoqi.smartpai.repository.UserRepository;
+import com.yizhaoqi.smartpai.service.InviteCodeService;
+import com.yizhaoqi.smartpai.service.ModelProviderConfigService;
+import com.yizhaoqi.smartpai.service.RateLimitConfigService;
+import com.yizhaoqi.smartpai.service.UsageDashboardService;
 import com.yizhaoqi.smartpai.service.UserService;
 import com.yizhaoqi.smartpai.utils.JwtUtils;
 import com.yizhaoqi.smartpai.utils.LogUtils;
@@ -19,6 +23,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -49,6 +54,18 @@ public class AdminController {
 
     @Autowired
     private MinioMigrationUtil migrationUtil;
+
+    @Autowired
+    private InviteCodeService inviteCodeService;
+
+    @Autowired
+    private UsageDashboardService usageDashboardService;
+
+    @Autowired
+    private RateLimitConfigService rateLimitConfigService;
+
+    @Autowired
+    private ModelProviderConfigService modelProviderConfigService;
 
     /**
      * 获取所有用户列表
@@ -200,6 +217,131 @@ public class AdminController {
                     .body(Map.of("error", "获取用户活动失败: " + e.getMessage()));
         }
     }
+
+    @GetMapping("/usage/overview")
+    public ResponseEntity<?> getUsageOverview(
+            @RequestHeader("Authorization") String token,
+            @RequestParam(defaultValue = "7") int days) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "获取用量总览成功",
+                    "data", usageDashboardService.buildOverview(days)
+            ));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_GET_USAGE_OVERVIEW", adminUsername, "获取用量总览失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "获取用量总览失败: " + e.getMessage()));
+        }
+    }
+
+    @GetMapping("/rate-limits")
+    public ResponseEntity<?> getRateLimits(@RequestHeader("Authorization") String token) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "获取限流配置成功",
+                    "data", rateLimitConfigService.getCurrentSettings()
+            ));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_GET_RATE_LIMITS", adminUsername, "获取限流配置失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "获取限流配置失败: " + e.getMessage()));
+        }
+    }
+
+    @PutMapping("/rate-limits")
+    public ResponseEntity<?> updateRateLimits(
+            @RequestHeader("Authorization") String token,
+            @RequestBody RateLimitConfigService.UpdateRateLimitRequest request) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "限流配置更新成功",
+                    "data", rateLimitConfigService.updateSettings(request, adminUsername)
+            ));
+        } catch (CustomException e) {
+            LogUtils.logBusinessError("ADMIN_UPDATE_RATE_LIMITS", adminUsername, "更新限流配置失败: %s", e, e.getMessage());
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_UPDATE_RATE_LIMITS", adminUsername, "更新限流配置异常: %s", e, e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "更新限流配置失败: " + e.getMessage()));
+        }
+    }
+
+    @GetMapping("/model-providers")
+    public ResponseEntity<?> getModelProviders(@RequestHeader("Authorization") String token) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "获取模型配置成功",
+                    "data", modelProviderConfigService.getCurrentSettings()
+            ));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_GET_MODEL_PROVIDERS", adminUsername, "获取模型配置失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "获取模型配置失败: " + e.getMessage()));
+        }
+    }
+
+    @PutMapping("/model-providers/{scope}")
+    public ResponseEntity<?> updateModelProviders(
+            @RequestHeader("Authorization") String token,
+            @PathVariable String scope,
+            @RequestBody ModelProviderConfigService.UpdateScopeRequest request) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "模型配置更新成功",
+                    "data", modelProviderConfigService.updateScope(scope, request, adminUsername)
+            ));
+        } catch (CustomException e) {
+            LogUtils.logBusinessError("ADMIN_UPDATE_MODEL_PROVIDERS", adminUsername, "更新模型配置失败: %s", e, e.getMessage());
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_UPDATE_MODEL_PROVIDERS", adminUsername, "更新模型配置异常: %s", e, e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "更新模型配置失败: " + e.getMessage()));
+        }
+    }
+
+    @PostMapping("/model-providers/{scope}/test")
+    public ResponseEntity<?> testModelProviderConnection(
+            @RequestHeader("Authorization") String token,
+            @PathVariable String scope,
+            @RequestBody ModelProviderConfigService.ProviderConnectionTestRequest request) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "模型连接测试完成",
+                    "data", modelProviderConfigService.testConnection(scope, request)
+            ));
+        } catch (CustomException e) {
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "模型连接测试失败: " + e.getMessage()));
+        }
+    }
     
     /**
      * 创建管理员用户
@@ -224,6 +366,107 @@ public class AdminController {
                     .body(Map.of("code", 500, "message", "创建管理员用户失败: " + e.getMessage()));
         }
     }
+
+    /**
+     * 创建邀请码
+     */
+    @PostMapping("/invite-codes")
+    public ResponseEntity<?> createInviteCode(
+            @RequestHeader("Authorization") String token,
+            @RequestBody CreateInviteCodeRequest request) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            var created = inviteCodeService.createInviteCodes(
+                    adminUsername,
+                    request.code(),
+                    request.maxUses(),
+                    request.expiresAt(),
+                    request.count()
+            );
+            return ResponseEntity.ok(Map.of("code", 200, "message", "邀请码创建成功", "data", created));
+        } catch (CustomException e) {
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "创建邀请码失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 分页查询邀请码
+     */
+    @GetMapping("/invite-codes")
+    public ResponseEntity<?> listInviteCodes(
+            @RequestHeader("Authorization") String token,
+            @RequestParam(required = false) Boolean enabled,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+        return ResponseEntity.ok(Map.of("code", 200, "message", "获取邀请码成功", "data", inviteCodeService.list(enabled, page, size)));
+    }
+
+    /**
+     * 禁用邀请码
+     */
+    @PatchMapping("/invite-codes/{id}/disable")
+    public ResponseEntity<?> disableInviteCode(
+            @RequestHeader("Authorization") String token,
+            @PathVariable Long id) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            inviteCodeService.disable(id, adminUsername);
+            return ResponseEntity.ok(Map.of("code", 200, "message", "邀请码已禁用"));
+        } catch (CustomException e) {
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "禁用邀请码失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 删除邀请码
+     */
+    @DeleteMapping("/invite-codes/{id}")
+    public ResponseEntity<?> deleteInviteCode(
+            @RequestHeader("Authorization") String token,
+            @PathVariable Long id) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            inviteCodeService.delete(id, adminUsername);
+            return ResponseEntity.ok(Map.of("code", 200, "message", "邀请码已删除"));
+        } catch (CustomException e) {
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "删除邀请码失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 编辑邀请码
+     */
+    @PutMapping("/invite-codes/{id}")
+    public ResponseEntity<?> updateInviteCode(
+            @RequestHeader("Authorization") String token,
+            @PathVariable Long id,
+            @RequestBody UpdateInviteCodeRequest request) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            var updated = inviteCodeService.update(id, adminUsername, request.code(), request.maxUses(), request.expiresAt());
+            return ResponseEntity.ok(Map.of("code", 200, "message", "邀请码已更新", "data", updated));
+        } catch (CustomException e) {
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "编辑邀请码失败: " + e.getMessage()));
+        }
+    }
     
     /**
      * 创建组织标签
@@ -242,6 +485,7 @@ public class AdminController {
                 request.name(), 
                 request.description(), 
                 request.parentTag(), 
+                request.uploadMaxSizeMb(),
                 adminUsername
             );
             return ResponseEntity.ok(Map.of("code", 200, "message", "组织标签创建成功", "data", tag));
@@ -338,6 +582,7 @@ public class AdminController {
                 request.name(), 
                 request.description(), 
                 request.parentTag(), 
+                request.uploadMaxSizeMb(),
                 adminUsername
             );
             return ResponseEntity.ok(Map.of(
@@ -479,7 +724,7 @@ public class AdminController {
                         String json = redisTemplate.opsForValue().get(conversationKey);
                         if (json != null) {
                             String displayUsername = targetUsername != null ? targetUsername : redisUserId;
-                            processRedisConversation(json, allConversations, displayUsername, start_date, end_date);
+                            processRedisConversation(json, allConversations, displayUsername, conversationId, start_date, end_date);
                         }
                     }
                 }
@@ -510,9 +755,10 @@ public class AdminController {
     /**
      * 处理Redis中的对话数据
      */
-    private void processRedisConversation(String json, List<Map<String, Object>> targetList, String username, String startDate, String endDate) throws JsonProcessingException {
-        List<Map<String, String>> history = objectMapper.readValue(json, 
-                new TypeReference<List<Map<String, String>>>() {});
+    private void processRedisConversation(String json, List<Map<String, Object>> targetList, String username,
+                                          String conversationId, String startDate, String endDate) throws JsonProcessingException {
+        List<Map<String, Object>> history = objectMapper.readValue(json,
+                new TypeReference<List<Map<String, Object>>>() {});
         
         // 解析时间范围
         java.time.LocalDateTime startDateTime = null;
@@ -535,8 +781,8 @@ public class AdminController {
         }
         
         // 将对话转换为前端需要的格式，使用存储的时间戳并添加用户名
-        for (Map<String, String> message : history) {
-            String messageTimestamp = message.getOrDefault("timestamp", "未知时间");
+        for (Map<String, Object> message : history) {
+            String messageTimestamp = String.valueOf(message.getOrDefault("timestamp", "未知时间"));
             
             // 时间过滤
             if (startDateTime != null || endDateTime != null) {
@@ -568,6 +814,10 @@ public class AdminController {
             messageWithMetadata.put("content", message.get("content"));
             messageWithMetadata.put("timestamp", messageTimestamp);
             messageWithMetadata.put("username", username);
+            messageWithMetadata.put("conversationId", conversationId);
+            if (message.get("referenceMappings") != null) {
+                messageWithMetadata.put("referenceMappings", message.get("referenceMappings"));
+            }
             targetList.add(messageWithMetadata);
         }
     }
@@ -767,7 +1017,7 @@ record AdminUserRequest(String username, String password) {}
 /**
  * 组织标签请求体
  */
-record OrgTagRequest(String tagId, String name, String description, String parentTag) {}
+record OrgTagRequest(String tagId, String name, String description, String parentTag, Long uploadMaxSizeMb) {}
 
 /**
  * 分配组织标签请求体
@@ -775,4 +1025,8 @@ record OrgTagRequest(String tagId, String name, String description, String paren
 record AssignOrgTagsRequest(List<String> orgTags) {}
 
 // 添加组织标签更新请求记录类
-record OrgTagUpdateRequest(String name, String description, String parentTag) {} 
+record OrgTagUpdateRequest(String name, String description, String parentTag, Long uploadMaxSizeMb) {}
+
+record CreateInviteCodeRequest(String code, Integer maxUses, LocalDateTime expiresAt, Integer count) {}
+
+record UpdateInviteCodeRequest(String code, Integer maxUses, LocalDateTime expiresAt) {}

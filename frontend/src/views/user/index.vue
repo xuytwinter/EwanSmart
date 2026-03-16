@@ -1,4 +1,5 @@
 <script setup lang="tsx">
+import { ref } from 'vue';
 import { NButton, NTag } from 'naive-ui';
 import UserSearch from './modules/user-search.vue';
 import OrgTagSettingDialog from './modules/org-tag-setting-dialog.vue';
@@ -41,27 +42,61 @@ const { columns, columnChecks, data, getData, loading, mobilePagination, searchP
       )
     },
     {
-      key: 'email',
-      title: '邮箱',
-      width: 200
-    },
-    {
       key: 'status',
       title: '是否启用',
       width: 100,
       render: row => <NTag type={row.status ? 'success' : 'warning'}>{row.status ? '已启用' : '已禁用'}</NTag>
     },
     {
-      key: 'createTime',
+      key: 'createdAt',
       title: '创建时间',
       width: 200,
-      render: row => dayjs(row.createTime).format('YYYY-MM-DD HH:mm:ss')
+      render: row => dayjs(row.createdAt).format('YYYY-MM-DD HH:mm:ss')
     },
     {
-      key: 'lastLoginTime',
-      title: '最后登录时间',
-      width: 200,
-      render: row => dayjs(row.lastLoginTime).format('YYYY-MM-DD HH:mm:ss')
+      key: 'chatUsage',
+      title: '聊天次数',
+      width: 130,
+      render: row => (
+        <div class="flex flex-col gap-1 text-xs">
+          <span>{Number(row.usage?.chatRequestCount || 0).toLocaleString()} 次</span>
+          <span class="text-stone-400">今日消息数</span>
+        </div>
+      )
+    },
+    {
+      key: 'llmUsage',
+      title: 'LLM额度',
+      width: 220,
+      render: row => {
+        const quota = row.usage?.llm;
+        if (!quota?.enabled) {
+          return <span class="text-stone-400">未启用</span>;
+        }
+        return (
+          <div class="flex flex-col gap-1 text-xs">
+            <span>{Number(quota.usedTokens || 0).toLocaleString()} / {Number(quota.limitTokens || 0).toLocaleString()}</span>
+            <span class="text-stone-400">剩余 {Number(quota.remainingTokens || 0).toLocaleString()} · {quota.requestCount} 次</span>
+          </div>
+        );
+      }
+    },
+    {
+      key: 'embeddingUsage',
+      title: 'Embedding额度',
+      width: 220,
+      render: row => {
+        const quota = row.usage?.embedding;
+        if (!quota?.enabled) {
+          return <span class="text-stone-400">未启用</span>;
+        }
+        return (
+          <div class="flex flex-col gap-1 text-xs">
+            <span>{Number(quota.usedTokens || 0).toLocaleString()} / {Number(quota.limitTokens || 0).toLocaleString()}</span>
+            <span class="text-stone-400">剩余 {Number(quota.remainingTokens || 0).toLocaleString()} · {quota.requestCount} 次</span>
+          </div>
+        );
+      }
     },
     {
       key: 'operate',
@@ -78,27 +113,19 @@ const { columns, columnChecks, data, getData, loading, mobilePagination, searchP
 
 const visible = ref(false);
 const editingData = ref<Api.User.Item | null>(null);
+
 function handleOrgTag(row: Api.User.Item) {
   editingData.value = row;
   visible.value = true;
 }
-
-// async function setPrimaryOrgTag(userId: string, primaryOrg: string) {
-//   loading.value = true;
-//   const { error } = await request({ url: 'users/primary-org', method: 'PUT', data: { primaryOrg, userId } });
-//   if (!error) {
-//     window.$message?.success('操作成功');
-//     await getData();
-//   }
-//   loading.value = false;
-// }
 </script>
 
 <template>
-  <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden lt-sm:overflow-auto">
+  <div class="min-h-500px flex-col-stretch gap-16px overflow-auto">
     <Teleport defer to="#header-extra">
       <UserSearch v-model:model="searchParams" @reset="resetSearchParams" @search="getData" />
     </Teleport>
+
     <NCard title="用户列表" :bordered="false" size="small" class="sm:flex-1-hidden card-wrapper">
       <template #header-extra>
         <TableHeaderOperation v-model:columns="columnChecks" :addable="false" :loading="loading" @refresh="getData" />
@@ -108,16 +135,17 @@ function handleOrgTag(row: Api.User.Item) {
         :data="data"
         size="small"
         :flex-height="!appStore.isMobile"
-        :scroll-x="962"
+        :scroll-x="1400"
         :loading="loading"
         remote
-        :row-key="row => row.id"
+        :row-key="row => row.userId"
         :pagination="mobilePagination"
         class="sm:h-full"
       />
     </NCard>
+
     <OrgTagSettingDialog v-model:visible="visible" :row-data="editingData!" @submitted="getData" />
   </div>
 </template>
 
-<style scoped></style>
+<style scoped lang="scss"></style>

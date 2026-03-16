@@ -164,8 +164,11 @@ const local: App.I18n.Schema = {
     'iframe-page': 'Iframe',
     chat: 'Chat Assistant',
     'chat-history': 'Chat History',
+    'invite-code': 'Invite Codes',
     'knowledge-base': 'Knowledge Base',
+    'model-provider': 'Model Providers',
     'org-tag': 'Organization Tag',
+    'usage-monitor': 'Usage Monitor',
     user: 'User Management',
     'personal-center': 'Personal Center'
   },
@@ -180,6 +183,7 @@ const local: App.I18n.Schema = {
         codePlaceholder: 'Please enter verification code',
         passwordPlaceholder: 'Please enter password',
         confirmPasswordPlaceholder: 'Please enter password again',
+        inviteCodePlaceholder: 'Please enter invite code',
         codeLogin: 'Verification code login',
         confirm: 'Confirm',
         back: 'Back',
@@ -189,7 +193,7 @@ const local: App.I18n.Schema = {
       },
       pwdLogin: {
         title: 'Password Login',
-        rememberMe: 'Remember me',
+        rememberMe: 'Remember username and password',
         forgetPassword: 'Forget password?',
         register: 'Register',
         otherAccountLogin: 'Other Account Login',
@@ -207,9 +211,11 @@ const local: App.I18n.Schema = {
       },
       register: {
         title: 'Register',
-        agreement: 'I have read and agree to',
+        agreement: 'By registering, you agree to our',
         protocol: '《User Agreement》',
-        policy: '《Privacy Policy》'
+        and: 'and',
+        policy: '《Privacy Policy》',
+        inviteCodeTip: 'This site is invite-only. Contact an administrator for a valid invite code.'
       },
       resetPwd: {
         title: 'Reset Password'
@@ -231,7 +237,7 @@ const local: App.I18n.Schema = {
     },
     pwd: {
       required: 'Please enter password',
-      invalid: '6-18 characters, including letters, numbers, and underscores'
+      invalid: '6-18 characters and must include letters and numbers'
     },
     confirmPwd: {
       required: 'Please enter password again',

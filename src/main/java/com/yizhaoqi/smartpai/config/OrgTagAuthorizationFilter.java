@@ -60,8 +60,11 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
             if (path.matches(".*/upload/chunk.*") || 
                 path.matches(".*/upload/merge.*") || 
                 path.matches(".*/documents/uploads.*") ||
+                path.matches(".*/documents/accessible.*") ||
+                path.matches(".*/documents/page-preview.*") ||
                 path.matches(".*/search/hybrid.*") ||
-                (path.matches(".*/documents/[a-fA-F0-9]{32}.*") && "DELETE".equals(request.getMethod()))) {
+                (path.matches(".*/documents/[a-fA-F0-9]{32}.*") &&
+                        ("DELETE".equals(request.getMethod()) || "POST".equals(request.getMethod())))) {
                 
                 String operation = "未知操作";
                 if (path.contains("/chunk")) {
@@ -70,10 +73,16 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
                     operation = "合并分片";
                 } else if (path.contains("/uploads")) {
                     operation = "获取用户文档";
+                } else if (path.contains("/accessible")) {
+                    operation = "获取可访问文档";
+                } else if (path.contains("/page-preview")) {
+                    operation = "获取 PDF 单页预览";
                 } else if (path.contains("/search/hybrid")) {
                     operation = "混合检索";
                 } else if ("DELETE".equals(request.getMethod()) && path.matches(".*/documents/[a-fA-F0-9]{32}.*")) {
                     operation = "删除文档";
+                } else if ("POST".equals(request.getMethod()) && path.matches(".*/documents/[a-fA-F0-9]{32}/reindex.*")) {
+                    operation = "重建文档索引";
                 }
                 
                 logger.info("处理{}请求: {}", operation, path);
@@ -83,10 +92,12 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
                 if (token != null) {
                     String userId = jwtUtils.extractUserIdFromToken(token);
                     String role = jwtUtils.extractRoleFromToken(token);
+                    String orgTags = jwtUtils.extractOrgTagsFromToken(token);
                     if (userId != null) {
                         request.setAttribute("userId", userId);
                         request.setAttribute("role", role);
-                        logger.debug("为{}请求设置userId属性: {}, role: {}", operation, userId, role);
+                        request.setAttribute("orgTags", orgTags);
+                        logger.debug("为{}请求设置userId属性: {}, role: {}, orgTags: {}", operation, userId, role, orgTags);
                     } else {
                         logger.warn("{}请求中无法从token提取userId", operation);
                     }
@@ -256,7 +267,7 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
         logger.debug("尝试获取资源信息，资源ID: {}", resourceId);
         
         // 尝试从文件上传表中获取资源信息
-        Optional<FileUpload> fileUpload = fileUploadRepository.findByFileMd5(resourceId);
+        Optional<FileUpload> fileUpload = fileUploadRepository.findFirstByFileMd5OrderByCreatedAtDesc(resourceId);
         if (fileUpload.isPresent()) {
             FileUpload file = fileUpload.get();
             ResourceInfo info = new ResourceInfo(

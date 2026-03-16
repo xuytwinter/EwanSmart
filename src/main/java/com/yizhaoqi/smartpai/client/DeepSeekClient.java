@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.yizhaoqi.smartpai.config.AiProperties;
+import com.yizhaoqi.smartpai.service.UsageQuotaService;
 
 @Service
 public class DeepSeekClient {
@@ -22,12 +23,15 @@ public class DeepSeekClient {
     private final String apiKey;
     private final String model;
     private final AiProperties aiProperties;
+    private final UsageQuotaService usageQuotaService;
+    private final ObjectMapper objectMapper;
     private static final Logger logger = LoggerFactory.getLogger(DeepSeekClient.class);
     
     public DeepSeekClient(@Value("${deepseek.api.url}") String apiUrl,
                          @Value("${deepseek.api.key}") String apiKey,
                          @Value("${deepseek.api.model}") String model,
-                         AiProperties aiProperties) {
+                         AiProperties aiProperties,
+                         UsageQuotaService usageQuotaService) {
         WebClient.Builder builder = WebClient.builder().baseUrl(apiUrl);
         
         // 只有当 API key 不为空时才添加 Authorization header
@@ -39,26 +43,47 @@ public class DeepSeekClient {
         this.apiKey = apiKey;
         this.model = model;
         this.aiProperties = aiProperties;
+        this.usageQuotaService = usageQuotaService;
+        this.objectMapper = new ObjectMapper();
     }
     
-    public void streamResponse(String userMessage, 
+    public void streamResponse(String requesterId,
+                             String userMessage,
                              String context,
                              List<Map<String, String>> history,
                              Consumer<String> onChunk,
                              Consumer<Throwable> onError) {
         
         Map<String, Object> request = buildRequest(userMessage, context, history);
+        @SuppressWarnings("unchecked")
+        List<Map<String, String>> messages = (List<Map<String, String>>) request.get("messages");
+        int estimatedPromptTokens = usageQuotaService.estimateChatTokens(messages);
+        int maxCompletionTokens = aiProperties.getGeneration().getMaxTokens() != null
+                ? aiProperties.getGeneration().getMaxTokens()
+                : 2000;
+        UsageQuotaService.TokenReservation reservation = usageQuotaService.reserveLlmTokens(
+                requesterId, estimatedPromptTokens, maxCompletionTokens);
+        StreamUsageTracker usageTracker = new StreamUsageTracker(reservation, estimatedPromptTokens);
         
-        webClient.post()
-                .uri("/chat/completions")
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(request)
-                .retrieve()
-                .bodyToFlux(String.class)
-                .subscribe(
-                    chunk -> processChunk(chunk, onChunk),
-                    onError
-                );
+        try {
+            webClient.post()
+                    .uri("/chat/completions")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToFlux(String.class)
+                    .subscribe(
+                        chunk -> processChunk(chunk, usageTracker, onChunk),
+                        error -> {
+                            settleUsage(usageTracker);
+                            onError.accept(error);
+                        },
+                        () -> settleUsage(usageTracker)
+                    );
+        } catch (Exception e) {
+            usageQuotaService.abortReservation(reservation);
+            throw e;
+        }
     }
     
     private Map<String, Object> buildRequest(String userMessage, 
@@ -73,6 +98,7 @@ public class DeepSeekClient {
         request.put("model", model);
         request.put("messages", buildMessages(userMessage, context, history));
         request.put("stream", true);
+        request.put("stream_options", Map.of("include_usage", true));
         // 生成参数
         AiProperties.Generation gen = aiProperties.getGeneration();
         if (gen.getTemperature() != null) {
@@ -135,28 +161,90 @@ public class DeepSeekClient {
         return messages;
     }
     
-    private void processChunk(String chunk, Consumer<String> onChunk) {
+    private void processChunk(String rawChunk, StreamUsageTracker usageTracker, Consumer<String> onChunk) {
         try {
-            // 检查是否是结束标记
-            if ("[DONE]".equals(chunk)) {
-                logger.debug("对话结束");
-                return;
-            }
-            
-            // 直接解析 JSON
-            ObjectMapper mapper = new ObjectMapper();
-            JsonNode node = mapper.readTree(chunk);
-            String content = node.path("choices")
-                               .path(0)
-                               .path("delta")
-                               .path("content")
-                               .asText("");
-            
-            if (!content.isEmpty()) {
-                onChunk.accept(content);
+            for (String chunk : extractPayloads(rawChunk)) {
+                if ("[DONE]".equals(chunk)) {
+                    logger.debug("对话结束");
+                    continue;
+                }
+
+                JsonNode node = objectMapper.readTree(chunk);
+                JsonNode usageNode = node.path("usage");
+                if (usageNode.isObject()) {
+                    usageTracker.promptTokens = usageNode.path("prompt_tokens").asInt(usageTracker.promptTokens);
+                    usageTracker.completionTokens = usageNode.path("completion_tokens").asInt(usageTracker.completionTokens);
+                }
+
+                String content = node.path("choices")
+                        .path(0)
+                        .path("delta")
+                        .path("content")
+                        .asText("");
+
+                if (!content.isEmpty()) {
+                    usageTracker.responseContent.append(content);
+                    onChunk.accept(content);
+                }
             }
         } catch (Exception e) {
             logger.error("处理数据块时出错: {}", e.getMessage(), e);
         }
     }
-} 
+
+    private List<String> extractPayloads(String rawChunk) {
+        List<String> payloads = new ArrayList<>();
+        if (rawChunk == null || rawChunk.isBlank()) {
+            return payloads;
+        }
+
+        String trimmed = rawChunk.trim();
+        for (String line : trimmed.split("\\r?\\n")) {
+            String payload = line.trim();
+            if (payload.isEmpty() || payload.startsWith(":")) {
+                continue;
+            }
+            if (payload.startsWith("data:")) {
+                payload = payload.substring(5).trim();
+            }
+            if (!payload.isEmpty()) {
+                payloads.add(payload);
+            }
+        }
+
+        if (payloads.isEmpty()) {
+            payloads.add(trimmed);
+        }
+        return payloads;
+    }
+
+    private void settleUsage(StreamUsageTracker usageTracker) {
+        if (usageTracker == null || usageTracker.settled) {
+            return;
+        }
+
+        usageTracker.settled = true;
+        int actualPromptTokens = usageTracker.promptTokens > 0
+                ? usageTracker.promptTokens
+                : usageTracker.estimatedPromptTokens;
+        int actualCompletionTokens = usageTracker.completionTokens > 0
+                ? usageTracker.completionTokens
+                : usageQuotaService.estimateTextTokens(usageTracker.responseContent.toString());
+
+        usageQuotaService.settleReservation(usageTracker.reservation, actualPromptTokens + actualCompletionTokens);
+    }
+
+    private static final class StreamUsageTracker {
+        private final UsageQuotaService.TokenReservation reservation;
+        private final int estimatedPromptTokens;
+        private final StringBuilder responseContent = new StringBuilder();
+        private volatile int promptTokens;
+        private volatile int completionTokens;
+        private volatile boolean settled;
+
+        private StreamUsageTracker(UsageQuotaService.TokenReservation reservation, int estimatedPromptTokens) {
+            this.reservation = reservation;
+            this.estimatedPromptTokens = estimatedPromptTokens;
+        }
+    }
+}

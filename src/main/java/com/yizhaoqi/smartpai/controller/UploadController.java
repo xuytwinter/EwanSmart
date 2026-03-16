@@ -1,10 +1,13 @@
 package com.yizhaoqi.smartpai.controller;
 
 import com.yizhaoqi.smartpai.config.KafkaConfig;
+import com.yizhaoqi.smartpai.exception.CustomException;
 import com.yizhaoqi.smartpai.model.FileProcessingTask;
 import com.yizhaoqi.smartpai.model.FileUpload;
+import com.yizhaoqi.smartpai.model.OrganizationTag;
 import com.yizhaoqi.smartpai.repository.FileUploadRepository;
 import com.yizhaoqi.smartpai.service.FileTypeValidationService;
+import com.yizhaoqi.smartpai.service.ParseService;
 import com.yizhaoqi.smartpai.service.UploadService;
 import com.yizhaoqi.smartpai.service.UserService;
 import com.yizhaoqi.smartpai.utils.LogUtils;
@@ -27,6 +30,8 @@ import java.util.Set;
 @RequestMapping("/api/v1/upload")
 public class UploadController {
 
+    private static final long DEFAULT_CHUNK_SIZE_BYTES = 5L * 1024 * 1024L;
+
     @Autowired
     private UploadService uploadService;
 
@@ -44,6 +49,9 @@ public class UploadController {
     
     @Autowired
     private FileTypeValidationService fileTypeValidationService;
+
+    @Autowired
+    private ParseService parseService;
 
     public UploadController(UploadService uploadService, KafkaTemplate<String, Object> kafkaTemplate) {
         this.uploadService = uploadService;
@@ -106,22 +114,44 @@ public class UploadController {
             LogUtils.logBusiness("UPLOAD_CHUNK", userId, "接收到分片上传请求: fileMd5=%s, chunkIndex=%d, fileName=%s, fileType=%s, contentType=%s, fileSize=%d, totalSize=%d, orgTag=%s, isPublic=%s", 
                     fileMd5, chunkIndex, fileName, fileType, contentType, file.getSize(), totalSize, orgTag, isPublic);
         
-        // 如果未指定组织标签，则获取用户的主组织标签
-        if (orgTag == null || orgTag.isEmpty()) {
-            try {
+            // 如果未指定组织标签，则获取用户的主组织标签
+            if (orgTag == null || orgTag.isEmpty()) {
+                try {
                     LogUtils.logBusiness("UPLOAD_CHUNK", userId, "组织标签未指定，尝试获取用户主组织标签: fileName=%s", fileName);
-                String primaryOrg = userService.getUserPrimaryOrg(userId);
-                orgTag = primaryOrg;
+                    String primaryOrg = userService.getUserPrimaryOrg(userId);
+                    orgTag = primaryOrg;
                     LogUtils.logBusiness("UPLOAD_CHUNK", userId, "成功获取用户主组织标签: fileName=%s, orgTag=%s", fileName, orgTag);
-            } catch (Exception e) {
+                } catch (Exception e) {
                     LogUtils.logBusinessError("UPLOAD_CHUNK", userId, "获取用户主组织标签失败: fileName=%s", e, fileName);
                     monitor.end("获取主组织标签失败: " + e.getMessage());
-                Map<String, Object> errorResponse = new HashMap<>();
-                errorResponse.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
-                errorResponse.put("message", "获取用户主组织标签失败: " + e.getMessage());
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+                    Map<String, Object> errorResponse = new HashMap<>();
+                    errorResponse.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
+                    errorResponse.put("message", "获取用户主组织标签失败: " + e.getMessage());
+                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+                }
             }
-        }
+
+            if (!userService.isAdminUser(userId)) {
+                OrganizationTag uploadOrg = userService.getOrganizationTag(orgTag);
+                Long uploadMaxSizeBytes = uploadOrg.getUploadMaxSizeBytes();
+                long estimatedUploadedBytes = (long) chunkIndex * DEFAULT_CHUNK_SIZE_BYTES + file.getSize();
+                boolean exceedsLimit = uploadMaxSizeBytes != null
+                        && uploadMaxSizeBytes > 0
+                        && (totalSize > uploadMaxSizeBytes || estimatedUploadedBytes > uploadMaxSizeBytes);
+                if (exceedsLimit) {
+                    LogUtils.logUserOperation(userId, "UPLOAD_CHUNK", fileName, "FAILED_SIZE_LIMIT_EXCEEDED");
+                    monitor.end("分片上传失败: 文件超过组织上传大小限制");
+
+                    Map<String, Object> errorResponse = new HashMap<>();
+                    errorResponse.put("code", HttpStatus.PAYLOAD_TOO_LARGE.value());
+                    errorResponse.put("message", "当前组织限制非管理员上传文件不超过 " + formatSize(uploadMaxSizeBytes)
+                            + "，当前文件大小为 " + formatSize(totalSize));
+                    errorResponse.put("limitBytes", uploadMaxSizeBytes);
+                    errorResponse.put("fileSizeBytes", totalSize);
+                    errorResponse.put("orgTag", orgTag);
+                    return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(errorResponse);
+                }
+            }
         
             LogUtils.logFileOperation(userId, "UPLOAD_CHUNK", fileName, fileMd5, "PROCESSING");
         
@@ -147,6 +177,13 @@ public class UploadController {
             response.put("data", data);
             
             return ResponseEntity.ok(response);
+        } catch (CustomException e) {
+            LogUtils.logBusinessError("UPLOAD_CHUNK", userId, "分片上传失败: fileMd5=%s, fileName=%s, chunkIndex=%d", e, fileMd5, fileName, chunkIndex);
+            monitor.end("分片上传失败: " + e.getMessage());
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("code", e.getStatus().value());
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(e.getStatus()).body(errorResponse);
         } catch (Exception e) {
             String fileType = getFileType(fileName);
             LogUtils.logBusinessError("UPLOAD_CHUNK", userId, "分片上传失败: fileMd5=%s, fileName=%s, fileType=%s, chunkIndex=%d", e, fileMd5, fileName, fileType, chunkIndex);
@@ -172,7 +209,7 @@ public class UploadController {
             String fileName = "unknown";
             String fileType = "unknown";
             try {
-                Optional<FileUpload> fileUpload = fileUploadRepository.findByFileMd5(fileMd5);
+                Optional<FileUpload> fileUpload = fileUploadRepository.findFirstByFileMd5OrderByCreatedAtDesc(fileMd5);
                 if (fileUpload.isPresent()) {
                     fileName = fileUpload.get().getFileName();
                     fileType = getFileType(fileName);
@@ -237,7 +274,7 @@ public class UploadController {
             
             // 检查文件完整性和权限
             LogUtils.logBusiness("MERGE_FILE", userId, "检查文件记录和权限: fileMd5=%s, fileName=%s", request.fileMd5(), request.fileName());
-            FileUpload fileUpload = fileUploadRepository.findByFileMd5AndUserId(request.fileMd5(), userId)
+            FileUpload fileUpload = fileUploadRepository.findFirstByFileMd5AndUserIdOrderByCreatedAtDesc(request.fileMd5(), userId)
                     .orElseThrow(() -> {
                         LogUtils.logUserOperation(userId, "MERGE_FILE", request.fileMd5(), "FAILED_FILE_NOT_FOUND");
                         return new RuntimeException("文件记录不存在");
@@ -277,6 +314,31 @@ public class UploadController {
             String objectUrl = uploadService.mergeChunks(request.fileMd5(), request.fileName(), userId);
             LogUtils.logFileOperation(userId, "MERGE", request.fileName(), request.fileMd5(), "SUCCESS");
 
+            ParseService.EmbeddingEstimate embeddingEstimate = null;
+            try (io.minio.GetObjectResponse mergedFileStream = uploadService.getMergedFileStream(request.fileMd5())) {
+                embeddingEstimate = parseService.estimateEmbeddingUsage(mergedFileStream);
+                fileUpload.setEstimatedEmbeddingTokens(embeddingEstimate.estimatedTokens());
+                fileUpload.setEstimatedChunkCount(embeddingEstimate.estimatedChunkCount());
+                fileUploadRepository.save(fileUpload);
+                LogUtils.logBusiness(
+                        "MERGE_FILE",
+                        userId,
+                        "文档 Embedding 预估完成: fileMd5=%s, estimatedTokens=%d, estimatedChunkCount=%d",
+                        request.fileMd5(),
+                        embeddingEstimate.estimatedTokens(),
+                        embeddingEstimate.estimatedChunkCount()
+                );
+            } catch (Exception estimateException) {
+                LogUtils.logBusinessError(
+                        "MERGE_FILE",
+                        userId,
+                        "文档 Embedding 预估失败: fileMd5=%s, fileName=%s",
+                        estimateException,
+                        request.fileMd5(),
+                        request.fileName()
+                );
+            }
+
             // 发送任务到 Kafka，包含完整的权限信息
             LogUtils.logBusiness("MERGE_FILE", userId, "创建文件处理任务: fileMd5=%s, fileName=%s, fileType=%s, orgTag=%s, isPublic=%s", 
                     request.fileMd5(), request.fileName(), fileType, fileUpload.getOrgTag(), fileUpload.isPublic());
@@ -301,6 +363,10 @@ public class UploadController {
             // 构建数据对象
             Map<String, Object> data = new HashMap<>();
             data.put("object_url", objectUrl);
+            if (embeddingEstimate != null) {
+                data.put("estimatedEmbeddingTokens", embeddingEstimate.estimatedTokens());
+                data.put("estimatedChunkCount", embeddingEstimate.estimatedChunkCount());
+            }
             
             // 构建统一响应格式
             Map<String, Object> response = new HashMap<>();
@@ -336,6 +402,17 @@ public class UploadController {
             return 0.0;
         }
         return (double) uploadedChunks.size() / totalChunks * 100;
+    }
+
+    private String formatSize(long sizeInBytes) {
+        double sizeInMb = sizeInBytes / (1024d * 1024d);
+        if (sizeInMb >= 1024d) {
+            return String.format("%.2f GB", sizeInMb / 1024d);
+        }
+        if (sizeInMb >= 1d) {
+            return String.format("%.2f MB", sizeInMb);
+        }
+        return String.format("%.2f KB", sizeInBytes / 1024d);
     }
 
     /**
@@ -481,4 +558,3 @@ public class UploadController {
         }
     }
 }
-

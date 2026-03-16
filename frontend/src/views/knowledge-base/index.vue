@@ -10,6 +10,7 @@ import UploadDialog from './modules/upload-dialog.vue';
 import SearchDialog from './modules/search-dialog.vue';
 
 const appStore = useAppStore();
+const authStore = useAuthStore();
 
 // 文件预览相关状态
 const previewVisible = ref(false);
@@ -17,7 +18,11 @@ const previewFileName = ref('');
 const previewFileMd5 = ref('');
 
 function apiFn() {
-  return fakePaginationRequest<Api.KnowledgeBase.List>({ url: '/documents/uploads' });
+  return fakePaginationRequest<Api.KnowledgeBase.List>({ url: '/documents/accessible' });
+}
+
+function canManageFile(row: Api.KnowledgeBase.UploadTask) {
+  return authStore.isAdmin || String(row.userId) === String(authStore.userInfo.id);
 }
 
 function renderIcon(fileName: string) {
@@ -31,12 +36,6 @@ function renderIcon(fileName: string) {
 
 // 处理文件预览
 function handleFilePreview(fileName: string, fileMd5: string) {
-  console.log('[知识库] 点击预览按钮:', {
-    fileName,
-    fileMd5,
-    '完整信息': { fileName, fileMd5 }
-  });
-
   previewFileName.value = fileName;
   previewFileMd5.value = fileMd5;
   previewVisible.value = true;
@@ -44,7 +43,6 @@ function handleFilePreview(fileName: string, fileMd5: string) {
 
 // 关闭文件预览
 function closeFilePreview() {
-  console.log('[知识库] 关闭文件预览');
   previewVisible.value = false;
   previewFileName.value = '';
   previewFileMd5.value = '';
@@ -98,6 +96,18 @@ const { columns, columnChecks, data, getData, loading } = useTable({
       render: row => fileSize(row.totalSize)
     },
     {
+      key: 'estimatedEmbeddingTokens',
+      title: '预估向量化',
+      width: 160,
+      render: row => renderEstimatedEmbeddingUsage(row)
+    },
+    {
+      key: 'actualEmbeddingTokens',
+      title: '实际向量化',
+      width: 160,
+      render: row => renderActualEmbeddingUsage(row)
+    },
+    {
       key: 'status',
       title: '上传状态',
       width: 100,
@@ -127,7 +137,7 @@ const { columns, columnChecks, data, getData, loading } = useTable({
       width: 180,
       render: row => (
         <div class="flex gap-4">
-          {renderResumeUploadButton(row)}
+          {canManageFile(row) ? renderResumeUploadButton(row) : null}
           <NButton
             type="primary"
             ghost
@@ -136,16 +146,18 @@ const { columns, columnChecks, data, getData, loading } = useTable({
           >
             预览
           </NButton>
-          <NPopconfirm onPositiveClick={() => handleDelete(row.fileMd5)}>
-            {{
-              default: () => '确认删除当前文件吗？',
-              trigger: () => (
-                <NButton type="error" ghost size="small">
-                  删除
-                </NButton>
-              )
-            }}
-          </NPopconfirm>
+          {canManageFile(row) ? (
+            <NPopconfirm onPositiveClick={() => handleDelete(row.fileMd5)}>
+              {{
+                default: () => '确认删除当前文件吗？',
+                trigger: () => (
+                  <NButton type="error" ghost size="small">
+                    删除
+                  </NButton>
+                )
+              }}
+            </NPopconfirm>
+          ) : null}
         </div>
       )
     }
@@ -158,66 +170,44 @@ onMounted(async () => {
   await getList();
 });
 
+function syncTaskFromServer(target: Api.KnowledgeBase.UploadTask, source: Api.KnowledgeBase.UploadTask) {
+  Object.assign(target, {
+    fileName: source.fileName,
+    totalSize: source.totalSize,
+    status: source.status,
+    userId: source.userId,
+    orgTag: source.orgTag,
+    orgTagName: source.orgTagName,
+    public: source.public,
+    isPublic: source.isPublic,
+    createdAt: source.createdAt,
+    mergedAt: source.mergedAt,
+    estimatedEmbeddingTokens: source.estimatedEmbeddingTokens,
+    estimatedChunkCount: source.estimatedChunkCount,
+    actualEmbeddingTokens: source.actualEmbeddingTokens,
+    actualChunkCount: source.actualChunkCount
+  });
+}
+
 /** 异步获取列表函数 该函数主要用于更新或初始化上传任务列表 它首先调用getData函数获取数据，然后根据获取到的数据状态更新任务列表 */
 async function getList() {
-  console.log('[知识库] 开始获取文件列表');
-
-  // 等待获取最新数据
   await getData();
-
-  console.log('[知识库] 获取到原始数据，数量:', data.value.length);
-  data.value.forEach((item, index) => {
-    console.log(`[知识库] 原始数据[${index}]:`, {
-      fileName: item.fileName,
-      fileMd5: item.fileMd5,
-      status: item.status
-    });
-  });
 
   if (data.value.length === 0) {
     tasks.value = [];
     return;
   }
 
-  // 遍历获取到的数据，以处理每个项目
-  data.value.forEach((item, dataIndex) => {
-    // 检查项目状态是否为已完成
-    if (item.status === UploadStatus.Completed) {
-      // 查找任务列表中是否有匹配的文件MD5
-      const index = tasks.value.findIndex(task => task.fileMd5 === item.fileMd5);
-      // 如果找到匹配项，则更新其状态
-      if (index !== -1) {
-        tasks.value[index].status = UploadStatus.Completed;
-        console.log(`[知识库] 更新现有任务[${index}]:`, {
-          fileName: item.fileName,
-          fileMd5: item.fileMd5
-        });
-      } else {
-        // 如果没有找到匹配项，则将该项目添加到任务列表中
-        tasks.value.push(item);
-        console.log(`[知识库] 添加新任务[${tasks.value.length - 1}]:`, {
-          fileName: item.fileName,
-          fileMd5: item.fileMd5
-        });
-      }
+  data.value.forEach(item => {
+    const index = tasks.value.findIndex(task => task.fileMd5 === item.fileMd5);
+    if (index !== -1) {
+      syncTaskFromServer(tasks.value[index], item);
+    } else if (item.status === UploadStatus.Completed) {
+      tasks.value.push(item);
     } else if (!tasks.value.some(task => task.fileMd5 === item.fileMd5)) {
-      // 如果项目状态不是已完成，并且任务列表中没有相同的文件MD5，则将该项目的状态设置为中断，并添加到任务列表中
       item.status = UploadStatus.Break;
       tasks.value.push(item);
-      console.log(`[知识库] 添加中断任务[${tasks.value.length - 1}]:`, {
-        fileName: item.fileName,
-        fileMd5: item.fileMd5
-      });
     }
-  });
-
-  console.log('[知识库] 任务列表处理完成，总数:', tasks.value.length);
-  tasks.value.forEach((task, index) => {
-    console.log(`[知识库] 最终任务[${index}]:`, {
-      fileName: task.fileName,
-      fileMd5: task.fileMd5,
-      status: task.status
-    });
   });
 }
 
@@ -263,6 +253,36 @@ function renderStatus(status: UploadStatus, percentage: number) {
   if (status === UploadStatus.Completed) return <NTag type="success">已完成</NTag>;
   else if (status === UploadStatus.Break) return <NTag type="error">上传中断</NTag>;
   return <NProgress percentage={percentage} processing />;
+}
+
+function renderEstimatedEmbeddingUsage(row: Api.KnowledgeBase.UploadTask) {
+  if (!row.estimatedEmbeddingTokens) {
+    return <span class="text-xs text-stone-400">-</span>;
+  }
+
+  const estimatedTokenLabel = Number(row.estimatedEmbeddingTokens).toLocaleString();
+  const estimatedChunkLabel = Number(row.estimatedChunkCount || 0).toLocaleString();
+  return (
+    <div class="text-xs leading-5 text-stone-600">
+      <div>{estimatedTokenLabel} Tokens</div>
+      <div class="text-stone-400">{estimatedChunkLabel} 个切片</div>
+    </div>
+  );
+}
+
+function renderActualEmbeddingUsage(row: Api.KnowledgeBase.UploadTask) {
+  if (!row.actualEmbeddingTokens) {
+    return <span class="text-xs text-stone-400">-</span>;
+  }
+
+  const actualTokenLabel = Number(row.actualEmbeddingTokens).toLocaleString();
+  const actualChunkLabel = Number(row.actualChunkCount || 0).toLocaleString();
+  return (
+    <div class="text-xs leading-5 text-emerald-700">
+      <div>{actualTokenLabel} Tokens</div>
+      <div class="text-stone-400">{actualChunkLabel} 个切片</div>
+    </div>
+  );
 }
 
 // #region 文件续传
@@ -358,13 +378,15 @@ async function onBeforeUpload(
     <SearchDialog v-model:visible="searchVisible" />
     
     <!-- 文件预览弹窗 -->
-    <NModal v-model:show="previewVisible" preset="card" title="文件预览" style="width: 80%; max-width: 1000px;">
-      <FilePreview
-        :file-name="previewFileName"
-        :file-md5="previewFileMd5"
-        :visible="previewVisible"
-        @close="closeFilePreview"
-      />
+    <NModal v-model:show="previewVisible" class="document-preview-modal" :auto-focus="false">
+      <div class="document-preview-modal-shell">
+        <FilePreview
+          :file-name="previewFileName"
+          :file-md5="previewFileMd5"
+          :visible="previewVisible"
+          @close="closeFilePreview"
+        />
+      </div>
     </NModal>
   </div>
 </template>
@@ -378,5 +400,15 @@ async function onBeforeUpload(
   .n-progress-icon.n-progress-icon--as-text {
     white-space: nowrap;
   }
+}
+
+:deep(.document-preview-modal) {
+  width: min(96vw, 1320px);
+}
+
+.document-preview-modal-shell {
+  overflow: hidden;
+  border-radius: 32px;
+  box-shadow: 0 36px 120px rgba(15, 23, 42, 0.28);
 }
 </style>

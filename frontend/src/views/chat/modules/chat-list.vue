@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { NScrollbar } from 'naive-ui';
-import { VueMarkdownItProvider } from 'vue-markdown-shiki';
+import { VueMarkdownItProvider } from '@/vendor/vue-markdown-shiki';
 import ChatMessage from './chat-message.vue';
 
 defineOptions({
@@ -25,6 +25,16 @@ function scrollToBottom() {
 }
 
 const range = ref<[number, number]>([dayjs().subtract(7, 'day').valueOf(), dayjs().add(1, 'day').valueOf()]);
+
+function getRetrievalQueryFallback(index: number) {
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const candidate = list.value[i];
+    if (candidate?.role === 'user') {
+      return candidate.content || '';
+    }
+  }
+  return '';
+}
 
 const params = computed(() => {
   return {
@@ -68,7 +78,13 @@ onMounted(() => {
       </Teleport>
       <NSpin :show="loading">
         <VueMarkdownItProvider>
-          <ChatMessage v-for="(item, index) in list" :key="index" :msg="item" :session-id="sessionId" />
+          <ChatMessage
+            v-for="(item, index) in list"
+            :key="index"
+            :msg="item"
+            :session-id="sessionId"
+            :retrieval-query-fallback="getRetrievalQueryFallback(index)"
+          />
         </VueMarkdownItProvider>
       </NSpin>
     </NScrollbar>

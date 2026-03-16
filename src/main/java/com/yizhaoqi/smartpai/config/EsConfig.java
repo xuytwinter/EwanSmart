@@ -38,6 +38,9 @@ public class EsConfig {
     @Value("${elasticsearch.password:changeme}")
     private String password;
 
+    @Value("${elasticsearch.insecure-trust-all-certificates:true}")
+    private boolean insecureTrustAllCertificates;
+
     @Bean
     public ElasticsearchClient elasticsearchClient() {
         // 创建低级客户端
@@ -48,15 +51,17 @@ public class EsConfig {
             BasicCredentialsProvider credsProvider = new BasicCredentialsProvider();
             credsProvider.setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(username, password));
             builder.setHttpClientConfigCallback(httpClientBuilder -> {
-                // 忽略 TLS 证书（仅限开发环境）
-                try {
-                    SSLContext sslContext = SSLContexts.custom()
-                            .loadTrustMaterial(null, (X509Certificate[] chain, String authType) -> true)
-                            .build();
-                    httpClientBuilder.setSSLContext(sslContext);
-                    httpClientBuilder.setSSLHostnameVerifier(NoopHostnameVerifier.INSTANCE);
-                } catch (Exception e) {
-                    // ignore
+                if ("https".equalsIgnoreCase(scheme) && insecureTrustAllCertificates) {
+                    // 忽略 TLS 证书（仅限开发环境）
+                    try {
+                        SSLContext sslContext = SSLContexts.custom()
+                                .loadTrustMaterial(null, (X509Certificate[] chain, String authType) -> true)
+                                .build();
+                        httpClientBuilder.setSSLContext(sslContext);
+                        httpClientBuilder.setSSLHostnameVerifier(NoopHostnameVerifier.INSTANCE);
+                    } catch (Exception e) {
+                        // ignore
+                    }
                 }
                 return httpClientBuilder.setDefaultCredentialsProvider(credsProvider);
             });

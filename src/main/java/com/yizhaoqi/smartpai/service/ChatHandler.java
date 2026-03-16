@@ -3,11 +3,13 @@ package com.yizhaoqi.smartpai.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.yizhaoqi.smartpai.client.DeepSeekClient;
 import com.yizhaoqi.smartpai.entity.SearchResult;
+import com.yizhaoqi.smartpai.exception.RateLimitExceededException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -20,6 +22,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * 聊天处理服务
@@ -31,9 +34,14 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ChatHandler {
     
     private static final Logger logger = LoggerFactory.getLogger(ChatHandler.class);
+    private static final int MAX_CONTEXT_SNIPPET_LEN = 300;
+    private static final int MAX_MATCHED_CHUNK_LEN = 800;
+    private static final int MAX_EVIDENCE_SNIPPET_LEN = 160;
     private final RedisTemplate<String, String> redisTemplate;
     private final HybridSearchService searchService;
-    private final DeepSeekClient deepSeekClient;
+    private final LlmProviderRouter llmProviderRouter;
+    private final RateLimitService rateLimitService;
+    private final ThreadPoolTaskExecutor chatMonitorExecutor;
     private final ObjectMapper objectMapper;
     
     // 用于存储每个会话的完整响应
@@ -42,21 +50,27 @@ public class ChatHandler {
     private final Map<String, CompletableFuture<String>> responseFutures = new ConcurrentHashMap<>();
     // 停止标志 - 简单方案
     private final Map<String, Boolean> stopFlags = new ConcurrentHashMap<>();
-    // 用于存储每个会话的引用映射：sessionId -> {referenceNumber -> fileMd5}
-    private final Map<String, Map<Integer, String>> sessionReferenceMappings = new ConcurrentHashMap<>();
+    // 用于存储每个会话的引用映射：sessionId -> {referenceNumber -> detail}
+    private final Map<String, Map<Integer, ReferenceInfo>> sessionReferenceMappings = new ConcurrentHashMap<>();
 
     public ChatHandler(RedisTemplate<String, String> redisTemplate,
                       HybridSearchService searchService,
-                      DeepSeekClient deepSeekClient) {
+                      LlmProviderRouter llmProviderRouter,
+                      RateLimitService rateLimitService,
+                      @Qualifier("chatMonitorExecutor") ThreadPoolTaskExecutor chatMonitorExecutor) {
         this.redisTemplate = redisTemplate;
         this.searchService = searchService;
-        this.deepSeekClient = deepSeekClient;
+        this.llmProviderRouter = llmProviderRouter;
+        this.rateLimitService = rateLimitService;
+        this.chatMonitorExecutor = chatMonitorExecutor;
         this.objectMapper = new ObjectMapper();
     }
 
     public void processMessage(String userId, String userMessage, WebSocketSession session) {
         logger.info("开始处理消息，用户ID: {}, 会话ID: {}", userId, session.getId());
         try {
+            rateLimitService.checkChatByUser(userId);
+
             // 1. 获取或创建会话 ID
             String conversationId = getOrCreateConversationId(userId);
             logger.info("会话ID: {}, 用户ID: {}", conversationId, userId);
@@ -76,11 +90,11 @@ public class ChatHandler {
             logger.debug("搜索结果数量: {}", searchResults.size());
             
             // 4. 构建上下文
-            String context = buildContext(searchResults, session.getId());
+            String context = buildContext(searchResults, session.getId(), userMessage);
             
-            // 5. 调用 DeepSeek API 并处理流式响应
-            logger.info("调用DeepSeek API生成回复");
-            deepSeekClient.streamResponse(userMessage, context, history, 
+            // 5. 调用活动 LLM Provider 并处理流式响应
+            logger.info("调用活动 LLM Provider 生成回复");
+            llmProviderRouter.streamResponse(userId, userMessage, context, history,
                 chunk -> {
                     // 累积响应内容
                     StringBuilder responseBuilder = responseBuilders.get(session.getId());
@@ -99,127 +113,84 @@ public class ChatHandler {
                     responseBuilders.remove(session.getId());
                     responseFutures.remove(session.getId());
                 });
+
+            // 6. 后台任务检查并标记响应完成
+            submitCompletionMonitor(userId, userMessage, conversationId, session, responseFuture);
             
-            // 6. 启动一个后台任务检查并标记响应完成
-            new Thread(() -> {
+        } catch (RateLimitExceededException e) {
+            sendRateLimitMessage(session, e);
+            cleanupSessionState(session.getId(), null);
+        } catch (Exception e) {
+            logger.error("处理消息错误: {}", e.getMessage(), e);
+            handleError(session, e);
+            cleanupSessionState(session.getId(), e);
+        }
+    }
+
+    private void submitCompletionMonitor(String userId, String userMessage, String conversationId, WebSocketSession session,
+                                         CompletableFuture<String> responseFuture) {
+        try {
+            chatMonitorExecutor.execute(() -> {
                 try {
-                    // 等待最多30秒，给API足够的响应时间
-                    Thread.sleep(3000); // 先等待3秒钟，让API有时间开始响应
-                    
-                    // 获取当前累积的响应内容
+                    Thread.sleep(3000);
                     StringBuilder responseBuilder = responseBuilders.get(session.getId());
-                    
-                    // 如果响应构建器存在并且已有内容，认为响应已完成
-                    if (responseBuilder != null) {
-                        // 记录最后2秒的响应变化，检测是否停止增长
-                        String lastResponse = responseBuilder.toString();
-                        int lastLength = lastResponse.length();
-                        
-                        Thread.sleep(2000); // 再等待2秒
-                        
-                        // 再次检查是否有新内容
-                        if (responseBuilder.length() == lastLength) {
-                            // 没有新内容，可以认为响应已完成
-                            responseFuture.complete(responseBuilder.toString());
-                            logger.info("DeepSeek响应已完成，长度: {}", responseBuilder.length());
-                            
-                            // 发送响应完成通知
-                            sendCompletionNotification(session);
-                            
-                            // 更新对话历史
-                            String completeResponse = responseBuilder.toString();
-                            updateConversationHistory(conversationId, userMessage, completeResponse);
-                            
-                            // 输出对话存储信息以便调试
-                            String redisKey = "user:" + userId + ":current_conversation";
-                            logger.info("对话存储信息 - Redis键: {}, 值: {}", redisKey, conversationId);
-                            
-                            // 清理会话响应构建器
-                            responseBuilders.remove(session.getId());
-                            responseFutures.remove(session.getId());
-                            logger.info("消息处理完成，用户ID: {}", userId);
-                        } else {
-                            // 仍有新内容，继续等待
-                            logger.debug("响应仍在继续，等待完成...");
-                            // 再等待最多25秒
-                            for (int i = 0; i < 5; i++) {
-                                Thread.sleep(5000);
-                                if (responseBuilder != null) {
-                                    lastLength = responseBuilder.length();
-                                    // 再次检查2秒内是否有新内容
-                                    Thread.sleep(2000);
-                                    if (responseBuilder.length() == lastLength) {
-                                        // 没有新内容，可以认为响应已完成
-                                        responseFuture.complete(responseBuilder.toString());
-                                        
-                                        // 发送响应完成通知
-                                        sendCompletionNotification(session);
-                                        
-                                        // 更新对话历史
-                                        String completeResponse = responseBuilder.toString();
-                                        updateConversationHistory(conversationId, userMessage, completeResponse);
-                                        
-                                        // 输出对话存储信息以便调试
-                                        String redisKey = "user:" + userId + ":current_conversation";
-                                        logger.info("对话存储信息 - Redis键: {}, 值: {}", redisKey, conversationId);
-                                        
-                                        // 清理会话响应构建器
-                                        responseBuilders.remove(session.getId());
-                                        responseFutures.remove(session.getId());
-                                        logger.info("消息处理完成，用户ID: {}", userId);
-                                        return;
-                                    }
-                                }
-                            }
-                            
-                            // 如果经过多次检查仍未完成，强制完成
-                            if (!responseFuture.isDone()) {
-                                responseFuture.complete(responseBuilder.toString());
-                                
-                                // 发送响应完成通知
-                                sendCompletionNotification(session);
-                                
-                                // 更新对话历史
-                                String completeResponse = responseBuilder.toString();
-                                updateConversationHistory(conversationId, userMessage, completeResponse);
-                                
-                                // 输出对话存储信息以便调试
-                                String redisKey = "user:" + userId + ":current_conversation";
-                                logger.info("对话存储信息 - Redis键: {}, 值: {}", redisKey, conversationId);
-                                
-                                // 清理会话响应构建器
-                                responseBuilders.remove(session.getId());
-                                responseFutures.remove(session.getId());
-                                logger.info("消息处理强制完成，用户ID: {}", userId);
-                            }
-                        }
-                    } else {
-                        logger.warn("响应构建器为空，可能出现了错误，会话ID: {}", session.getId());
+                    if (responseBuilder == null) {
                         RuntimeException exception = new RuntimeException("响应构建器为空");
                         responseFuture.completeExceptionally(exception);
-                        // 发送错误消息
                         handleError(session, exception);
+                        cleanupSessionState(session.getId(), exception);
+                        return;
+                    }
+
+                    int lastLength = responseBuilder.length();
+                    Thread.sleep(2000);
+                    if (responseBuilder.length() == lastLength) {
+                        finalizeResponse(userId, userMessage, conversationId, session, responseFuture, responseBuilder);
+                        return;
+                    }
+
+                    for (int i = 0; i < 5; i++) {
+                        Thread.sleep(5000);
+                        lastLength = responseBuilder.length();
+                        Thread.sleep(2000);
+                        if (responseBuilder.length() == lastLength) {
+                            finalizeResponse(userId, userMessage, conversationId, session, responseFuture, responseBuilder);
+                            return;
+                        }
+                    }
+
+                    if (!responseFuture.isDone()) {
+                        finalizeResponse(userId, userMessage, conversationId, session, responseFuture, responseBuilder);
                     }
                 } catch (Exception e) {
                     logger.error("检查响应完成时出错: {}", e.getMessage(), e);
                     responseFuture.completeExceptionally(e);
-                    
-                    // 清理会话响应构建器
-                    responseBuilders.remove(session.getId());
-                    responseFutures.remove(session.getId());
+                    cleanupSessionState(session.getId(), e);
                 }
-            }).start();
-            
-        } catch (Exception e) {
-            logger.error("处理消息错误: {}", e.getMessage(), e);
-            handleError(session, e);
-            // 清理会话响应构建器
-            responseBuilders.remove(session.getId());
-            // 清理响应future
-            CompletableFuture<String> future = responseFutures.remove(session.getId());
-            if (future != null && !future.isDone()) {
-                future.completeExceptionally(e);
-            }
+            });
+        } catch (RejectedExecutionException ex) {
+            logger.warn("聊天监控线程池已满，会话ID: {}", session.getId());
+            handleError(session, new RuntimeException("系统繁忙，请稍后重试"));
+            cleanupSessionState(session.getId(), ex);
+        }
+    }
+
+    private void finalizeResponse(String userId, String userMessage, String conversationId, WebSocketSession session,
+                                  CompletableFuture<String> responseFuture, StringBuilder responseBuilder) {
+        String completeResponse = responseBuilder.toString();
+        responseFuture.complete(completeResponse);
+        sendCompletionNotification(session);
+        updateConversationHistory(conversationId, userMessage, completeResponse, sessionReferenceMappings.get(session.getId()));
+        logger.info("对话存储信息 - Redis键: {}, 值: {}", "user:" + userId + ":current_conversation", conversationId);
+        cleanupSessionState(session.getId(), null);
+        logger.info("消息处理完成，用户ID: {}", userId);
+    }
+
+    private void cleanupSessionState(String sessionId, Throwable throwable) {
+        responseBuilders.remove(sessionId);
+        CompletableFuture<String> future = responseFutures.remove(sessionId);
+        if (throwable != null && future != null && !future.isDone()) {
+            future.completeExceptionally(throwable);
         }
     }
 
@@ -239,6 +210,22 @@ public class ChatHandler {
     }
 
     private List<Map<String, String>> getConversationHistory(String conversationId) {
+        List<Map<String, Object>> records = getConversationHistoryRecords(conversationId);
+        List<Map<String, String>> history = new ArrayList<>();
+        for (Map<String, Object> message : records) {
+            Map<String, String> normalized = new HashMap<>();
+            normalized.put("role", String.valueOf(message.getOrDefault("role", "")));
+            normalized.put("content", String.valueOf(message.getOrDefault("content", "")));
+            Object timestamp = message.get("timestamp");
+            if (timestamp != null) {
+                normalized.put("timestamp", String.valueOf(timestamp));
+            }
+            history.add(normalized);
+        }
+        return history;
+    }
+
+    private List<Map<String, Object>> getConversationHistoryRecords(String conversationId) {
         String key = "conversation:" + conversationId;
         String json = redisTemplate.opsForValue().get(key);
         try {
@@ -246,8 +233,8 @@ public class ChatHandler {
                 logger.debug("会话 {} 没有历史记录", conversationId);
                 return new ArrayList<>();
             }
-            
-            List<Map<String, String>> history = objectMapper.readValue(json, new TypeReference<List<Map<String, String>>>() {});
+
+            List<Map<String, Object>> history = objectMapper.readValue(json, new TypeReference<List<Map<String, Object>>>() {});
             logger.debug("读取到会话 {} 的 {} 条历史记录", conversationId, history.size());
             return history;
         } catch (JsonProcessingException e) {
@@ -256,25 +243,29 @@ public class ChatHandler {
         }
     }
 
-    private void updateConversationHistory(String conversationId, String userMessage, String response) {
+    private void updateConversationHistory(String conversationId, String userMessage, String response,
+                                           Map<Integer, ReferenceInfo> referenceMapping) {
         String key = "conversation:" + conversationId;
-        List<Map<String, String>> history = getConversationHistory(conversationId);
+        List<Map<String, Object>> history = getConversationHistoryRecords(conversationId);
         
         // 获取当前时间戳
         String currentTimestamp = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
         
         // 添加用户消息（带时间戳）
-        Map<String, String> userMsgMap = new HashMap<>();
+        Map<String, Object> userMsgMap = new HashMap<>();
         userMsgMap.put("role", "user");
         userMsgMap.put("content", userMessage);
         userMsgMap.put("timestamp", currentTimestamp);
         history.add(userMsgMap);
-        
+
         // 添加助手回复（带时间戳）
-        Map<String, String> assistantMsgMap = new HashMap<>();
+        Map<String, Object> assistantMsgMap = new HashMap<>();
         assistantMsgMap.put("role", "assistant");
         assistantMsgMap.put("content", response);
         assistantMsgMap.put("timestamp", currentTimestamp);
+        if (referenceMapping != null && !referenceMapping.isEmpty()) {
+            assistantMsgMap.put("referenceMappings", toSerializableReferenceMappings(referenceMapping));
+        }
         history.add(assistantMsgMap);
         
         // 限制历史记录长度，保留最近的20条消息
@@ -291,36 +282,62 @@ public class ChatHandler {
         }
     }
 
-    private String buildContext(List<SearchResult> searchResults, String sessionId) {
+    private Map<String, Map<String, Object>> toSerializableReferenceMappings(Map<Integer, ReferenceInfo> referenceMapping) {
+        Map<String, Map<String, Object>> serialized = new HashMap<>();
+        for (Map.Entry<Integer, ReferenceInfo> entry : referenceMapping.entrySet()) {
+            ReferenceInfo detail = entry.getValue();
+            Map<String, Object> item = new HashMap<>();
+            item.put("fileMd5", detail.fileMd5());
+            item.put("fileName", detail.fileName());
+            item.put("pageNumber", detail.pageNumber());
+            item.put("anchorText", detail.anchorText());
+            item.put("retrievalMode", detail.retrievalMode());
+            item.put("retrievalLabel", detail.retrievalLabel());
+            item.put("retrievalQuery", detail.retrievalQuery());
+            item.put("matchedChunkText", detail.matchedChunkText());
+            item.put("evidenceSnippet", detail.evidenceSnippet());
+            item.put("score", detail.score());
+            item.put("chunkId", detail.chunkId());
+            serialized.put(String.valueOf(entry.getKey()), item);
+        }
+        return serialized;
+    }
+
+    private String buildContext(List<SearchResult> searchResults, String sessionId, String userMessage) {
         if (searchResults == null || searchResults.isEmpty()) {
-            // 返回空字符串，让 DeepSeekClient 按"无检索结果"逻辑处理
+            // 返回空字符串，让 LLM provider 按"无检索结果"逻辑处理
             return "";
         }
 
         // 创建当前会话的引用映射
-        Map<Integer, String> referenceMapping = new HashMap<>();
+        Map<Integer, ReferenceInfo> referenceMapping = new HashMap<>();
 
-        final int MAX_SNIPPET_LEN = 300; // 单段最长字符数，超出截断
         StringBuilder context = new StringBuilder();
         for (int i = 0; i < searchResults.size(); i++) {
             SearchResult result = searchResults.get(i);
             String snippet = result.getTextContent();
-            if (snippet.length() > MAX_SNIPPET_LEN) {
-                snippet = snippet.substring(0, MAX_SNIPPET_LEN) + "…";
+            if (snippet.length() > MAX_CONTEXT_SNIPPET_LEN) {
+                snippet = snippet.substring(0, MAX_CONTEXT_SNIPPET_LEN) + "…";
             }
             String fileLabel = result.getFileName() != null ? result.getFileName() : "unknown";
             String fileMd5 = result.getFileMd5();
 
-            // 格式：[1] (test1.txt | MD5:abc123def456) 文件内容...
-            // 这样AI和用户都能通过MD5区分同名文件
-            context.append(String.format("[%d] (%s | MD5:%s) %s\n", i + 1, fileLabel, fileMd5, snippet));
+            // 格式：[1] (test1.txt | 第5页) 文件内容... 或 [1] (test1.txt) 文件内容...
+            // 有页码时显示页码，方便AI引用
+            Integer pageNum = result.getPageNumber();
+            if (pageNum != null && pageNum > 0) {
+                context.append(String.format("[%d] (%s | 第%d页) %s\n", i + 1, fileLabel, pageNum, snippet));
+            } else {
+                context.append(String.format("[%d] (%s) %s\n", i + 1, fileLabel, snippet));
+            }
 
             // 保存引用编号到MD5的映射
             if (fileMd5 != null) {
-                referenceMapping.put(i + 1, fileMd5);
+                ReferenceInfo detail = buildReferenceInfo(result, fileLabel, userMessage);
+                referenceMapping.put(i + 1, detail);
                 // 详细日志：记录每个引用编号的映射关系
-                logger.info("引用映射: sessionId={}, 引用编号#{}={}, 文件名={}, MD5={}",
-                    sessionId, i + 1, fileLabel, fileMd5);
+                logger.info("引用映射: sessionId={}, 引用编号#{}={}, 文件名={}, MD5={}, page={}, retrievalMode={}, chunkId={}",
+                    sessionId, i + 1, fileLabel, fileMd5, result.getPageNumber(), detail.retrievalMode(), detail.chunkId());
             }
         }
 
@@ -381,6 +398,19 @@ public class ChatHandler {
         }
     }
 
+    private void sendRateLimitMessage(WebSocketSession session, RateLimitExceededException exception) {
+        try {
+            Map<String, Object> response = Map.of(
+                    "code", 429,
+                    "message", exception.getMessage(),
+                    "retryAfterSeconds", exception.getRetryAfterSeconds()
+            );
+            session.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
+        } catch (Exception e) {
+            logger.error("发送限流消息失败: {}", e.getMessage(), e);
+        }
+    }
+
     /**
      * 停止响应
      */
@@ -409,15 +439,19 @@ public class ChatHandler {
         }
 
         // 清理停止标志（延迟清理，避免影响当前响应）
-        new Thread(() -> {
-            try {
-                Thread.sleep(2000); // 等待2秒
-                stopFlags.remove(sessionId);
-                logger.debug("已清理停止标志，会话ID: {}", sessionId);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }).start();
+        try {
+            chatMonitorExecutor.execute(() -> {
+                try {
+                    Thread.sleep(2000);
+                    stopFlags.remove(sessionId);
+                    logger.debug("已清理停止标志，会话ID: {}", sessionId);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+        } catch (RejectedExecutionException ignore) {
+            stopFlags.remove(sessionId);
+        }
     }
 
     /**
@@ -428,9 +462,14 @@ public class ChatHandler {
      * @return 文件MD5，如果找不到则返回null
      */
     public String getReferenceMd5(String sessionId, int referenceNumber) {
+        ReferenceInfo detail = getReferenceDetail(sessionId, referenceNumber);
+        return detail != null ? detail.fileMd5() : null;
+    }
+
+    public ReferenceInfo getReferenceDetail(String sessionId, int referenceNumber) {
         logger.info("查询引用MD5: sessionId={}, referenceNumber=#{}", sessionId, referenceNumber);
 
-        Map<Integer, String> referenceMapping = sessionReferenceMappings.get(sessionId);
+        Map<Integer, ReferenceInfo> referenceMapping = sessionReferenceMappings.get(sessionId);
         if (referenceMapping == null) {
             logger.error("未找到会话 {} 的引用映射，当前所有会话: {}", sessionId, sessionReferenceMappings.keySet());
             return null;
@@ -438,14 +477,82 @@ public class ChatHandler {
 
         logger.info("会话 {} 的引用映射内容: {}", sessionId, referenceMapping);
 
-        String fileMd5 = referenceMapping.get(referenceNumber);
-        if (fileMd5 == null) {
+        ReferenceInfo detail = referenceMapping.get(referenceNumber);
+        if (detail == null) {
             logger.error("会话 {} 中未找到引用编号 #{}, 可用的引用编号: {}", sessionId, referenceNumber, referenceMapping.keySet());
             return null;
         }
 
-        logger.info("成功找到引用映射: sessionId={}, referenceNumber=#{}, fileMd5={}", sessionId, referenceNumber, fileMd5);
-        return fileMd5;
+        logger.info("成功找到引用映射: sessionId={}, referenceNumber=#{}, fileMd5={}, pageNumber={}",
+                sessionId, referenceNumber, detail.fileMd5(), detail.pageNumber());
+        return detail;
+    }
+
+    private ReferenceInfo buildReferenceInfo(SearchResult result, String fileLabel, String userMessage) {
+        String matchedChunkText = trimToMaxLength(
+                result.getMatchedChunkText() != null ? result.getMatchedChunkText() : result.getTextContent(),
+                MAX_MATCHED_CHUNK_LEN
+        );
+        String evidenceSnippet = buildEvidenceSnippet(userMessage, result.getAnchorText(), matchedChunkText);
+
+        return new ReferenceInfo(
+                result.getFileMd5(),
+                fileLabel,
+                result.getPageNumber(),
+                result.getAnchorText(),
+                result.getRetrievalMode(),
+                buildRetrievalLabel(result.getRetrievalMode()),
+                normalizeEvidenceText(userMessage),
+                matchedChunkText,
+                evidenceSnippet,
+                result.getScore(),
+                result.getChunkId()
+        );
+    }
+
+    private String buildRetrievalLabel(String retrievalMode) {
+        if ("TEXT_ONLY".equalsIgnoreCase(retrievalMode)) {
+            return "关键词召回";
+        }
+        return "混合召回（语义相关 + 关键词命中）";
+    }
+
+    private String buildEvidenceSnippet(String userMessage, String anchorText, String matchedChunkText) {
+        String normalizedAnchorText = normalizeEvidenceText(anchorText);
+        if (!normalizedAnchorText.isBlank()) {
+            return trimToMaxLength(normalizedAnchorText, MAX_EVIDENCE_SNIPPET_LEN);
+        }
+
+        String normalizedMatchedChunk = normalizeEvidenceText(matchedChunkText);
+        if (normalizedMatchedChunk.isBlank()) {
+            String normalizedUserMessage = normalizeEvidenceText(userMessage);
+            if (!normalizedUserMessage.isBlank()) {
+                return trimToMaxLength(normalizedUserMessage, MAX_EVIDENCE_SNIPPET_LEN);
+            }
+            return "";
+        }
+
+        String[] sentences = normalizedMatchedChunk.split("(?<=[。！？!?；;])");
+        for (String sentence : sentences) {
+            String trimmedSentence = sentence.trim();
+            if (trimmedSentence.length() >= 12) {
+                return trimToMaxLength(trimmedSentence, MAX_EVIDENCE_SNIPPET_LEN);
+            }
+        }
+
+        return trimToMaxLength(normalizedMatchedChunk, MAX_EVIDENCE_SNIPPET_LEN);
+    }
+
+    private String trimToMaxLength(String value, int maxLength) {
+        String normalized = normalizeEvidenceText(value);
+        if (normalized.length() <= maxLength) {
+            return normalized;
+        }
+        return normalized.substring(0, maxLength) + "…";
+    }
+
+    private String normalizeEvidenceText(String value) {
+        return value == null ? "" : value.replaceAll("\\s+", " ").trim();
     }
 
     /**
@@ -454,9 +561,24 @@ public class ChatHandler {
      * @param sessionId WebSocket会话ID
      */
     public void clearSessionReferenceMapping(String sessionId) {
-        Map<Integer, String> removed = sessionReferenceMappings.remove(sessionId);
+        Map<Integer, ReferenceInfo> removed = sessionReferenceMappings.remove(sessionId);
         if (removed != null) {
             logger.info("清理会话 {} 的引用映射，共 {} 条", sessionId, removed.size());
         }
+    }
+
+    public record ReferenceInfo(
+            String fileMd5,
+            String fileName,
+            Integer pageNumber,
+            String anchorText,
+            String retrievalMode,
+            String retrievalLabel,
+            String retrievalQuery,
+            String matchedChunkText,
+            String evidenceSnippet,
+            Double score,
+            Integer chunkId
+    ) {
     }
 }

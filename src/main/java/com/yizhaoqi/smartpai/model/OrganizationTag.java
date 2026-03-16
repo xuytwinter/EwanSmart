@@ -24,6 +24,9 @@ public class OrganizationTag {
     @Column(name = "parent_tag", length = 255)
     private String parentTag; // 父标签ID
 
+    @Column(name = "upload_max_size_bytes")
+    private Long uploadMaxSizeBytes; // 非管理员上传文件大小上限，null 表示不限制
+
     @ManyToOne
     @JoinColumn(name = "created_by", nullable = false)
     private User createdBy; // 创建者ID

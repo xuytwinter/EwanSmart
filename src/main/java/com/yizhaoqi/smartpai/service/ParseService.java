@@ -2,6 +2,8 @@ package com.yizhaoqi.smartpai.service;
 
 import com.yizhaoqi.smartpai.model.DocumentVector;
 import com.yizhaoqi.smartpai.repository.DocumentVectorRepository;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.tika.exception.TikaException;
 import org.apache.tika.metadata.Metadata;
 import org.apache.tika.parser.ParseContext;
@@ -15,8 +17,13 @@ import org.springframework.stereotype.Service;
 import org.xml.sax.SAXException;
 
 import java.io.*;
+import java.text.Normalizer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import com.hankcs.hanlp.seg.common.Term;
 import com.hankcs.hanlp.tokenizer.StandardTokenizer;
 
@@ -24,9 +31,15 @@ import com.hankcs.hanlp.tokenizer.StandardTokenizer;
 public class ParseService {
 
     private static final Logger logger = LoggerFactory.getLogger(ParseService.class);
+    private static final int PDF_BOUNDARY_SCAN_LINES = 3;
+    private static final int PDF_BOILERPLATE_MIN_LENGTH = 4;
+    private static final int PDF_BOILERPLATE_MAX_LENGTH = 120;
 
     @Autowired
     private DocumentVectorRepository documentVectorRepository;
+
+    @Autowired
+    private UsageQuotaService usageQuotaService;
 
     @Value("${file.parsing.chunk-size}")
     private int chunkSize;
@@ -64,6 +77,12 @@ public class ParseService {
         checkMemoryThreshold();
 
         try (BufferedInputStream bufferedStream = new BufferedInputStream(fileStream, bufferSize)) {
+            if (isPdfDocument(bufferedStream)) {
+                parsePdfAndSave(fileMd5, bufferedStream, userId, orgTag, isPublic);
+                logger.info("PDF 文件页级解析和入库完成，fileMd5: {}", fileMd5);
+                return;
+            }
+
             // 创建一个流式处理器，它会在内部处理父块的切分和子块的保存
             StreamingContentHandler handler = new StreamingContentHandler(fileMd5, userId, orgTag, isPublic);
             Metadata metadata = new Metadata();
@@ -88,6 +107,27 @@ public class ParseService {
     public void parseAndSave(String fileMd5, InputStream fileStream) throws IOException, TikaException {
         // 使用默认值调用新方法
         parseAndSave(fileMd5, fileStream, "unknown", "DEFAULT", false);
+    }
+
+    public EmbeddingEstimate estimateEmbeddingUsage(InputStream fileStream) throws IOException, TikaException {
+        logger.info("开始估算文档 Embedding Token");
+        checkMemoryThreshold();
+
+        try (BufferedInputStream bufferedStream = new BufferedInputStream(fileStream, bufferSize)) {
+            if (isPdfDocument(bufferedStream)) {
+                return estimatePdfEmbeddingUsage(bufferedStream);
+            }
+
+            StreamingEstimateHandler handler = new StreamingEstimateHandler();
+            Metadata metadata = new Metadata();
+            ParseContext context = new ParseContext();
+            AutoDetectParser parser = new AutoDetectParser();
+            parser.parse(bufferedStream, handler, metadata, context);
+            return handler.snapshot();
+        } catch (SAXException e) {
+            logger.error("文档 Embedding Token 估算失败", e);
+            throw new RuntimeException("文档 Embedding Token 估算失败", e);
+        }
     }
 
     private void checkMemoryThreshold() {
@@ -159,10 +199,48 @@ public class ParseService {
             List<String> childChunks = ParseService.this.splitTextIntoChunksWithSemantics(parentChunkText, chunkSize);
 
             // 2. 将子切片批量保存到数据库
-            this.savedChunkCount = ParseService.this.saveChildChunks(fileMd5, childChunks, userId, orgTag, isPublic, this.savedChunkCount);
+            this.savedChunkCount = ParseService.this.saveChildChunks(
+                    fileMd5, childChunks, userId, orgTag, isPublic, this.savedChunkCount, null
+            );
 
             // 3. 清空缓冲区，为下一个父块做准备
             buffer.setLength(0);
+        }
+    }
+
+    private class StreamingEstimateHandler extends BodyContentHandler {
+        private final StringBuilder buffer = new StringBuilder();
+        private long estimatedTokens = 0L;
+        private int estimatedChunkCount = 0;
+
+        private StreamingEstimateHandler() {
+            super(-1);
+        }
+
+        @Override
+        public void characters(char[] ch, int start, int length) {
+            buffer.append(ch, start, length);
+            if (buffer.length() >= parentChunkSize) {
+                processParentChunk();
+            }
+        }
+
+        @Override
+        public void endDocument() {
+            if (buffer.length() > 0) {
+                processParentChunk();
+            }
+        }
+
+        private void processParentChunk() {
+            List<String> childChunks = ParseService.this.splitTextIntoChunksWithSemantics(buffer.toString(), chunkSize);
+            estimatedChunkCount += childChunks.size();
+            estimatedTokens += usageQuotaService.estimateEmbeddingTokens(childChunks);
+            buffer.setLength(0);
+        }
+
+        private EmbeddingEstimate snapshot() {
+            return new EmbeddingEstimate(estimatedTokens, estimatedChunkCount);
         }
     }
 
@@ -178,7 +256,7 @@ public class ParseService {
      * @return 保存后总的分片数量
      */
     private int saveChildChunks(String fileMd5, List<String> chunks,
-            String userId, String orgTag, boolean isPublic, int startingChunkId) {
+            String userId, String orgTag, boolean isPublic, int startingChunkId, Integer pageNumber) {
         int currentChunkId = startingChunkId;
         for (String chunk : chunks) {
             currentChunkId++;
@@ -186,6 +264,8 @@ public class ParseService {
             vector.setFileMd5(fileMd5);
             vector.setChunkId(currentChunkId);
             vector.setTextContent(chunk);
+            vector.setPageNumber(pageNumber);
+            vector.setAnchorText(buildAnchorText(chunk));
             vector.setUserId(userId);
             vector.setOrgTag(orgTag);
             vector.setPublic(isPublic);
@@ -193,6 +273,225 @@ public class ParseService {
         }
         logger.info("成功保存 {} 个子切片到数据库", chunks.size());
         return currentChunkId;
+    }
+
+    private void parsePdfAndSave(String fileMd5, InputStream fileStream, String userId, String orgTag, boolean isPublic) throws IOException {
+        try (PDDocument document = PDDocument.load(fileStream)) {
+            int savedChunkCount = 0;
+
+            List<String> cleanedPageTexts = extractCleanPdfPageTexts(document);
+            for (int pageNumber = 1; pageNumber <= cleanedPageTexts.size(); pageNumber++) {
+                String pageText = cleanedPageTexts.get(pageNumber - 1);
+                if (pageText == null || pageText.isBlank()) {
+                    continue;
+                }
+
+                List<String> childChunks = splitTextIntoChunksWithSemantics(pageText, chunkSize);
+                savedChunkCount = saveChildChunks(fileMd5, childChunks, userId, orgTag, isPublic, savedChunkCount, pageNumber);
+            }
+        }
+    }
+
+    private EmbeddingEstimate estimatePdfEmbeddingUsage(InputStream fileStream) throws IOException {
+        try (PDDocument document = PDDocument.load(fileStream)) {
+            long estimatedTokens = 0L;
+            int estimatedChunkCount = 0;
+
+            List<String> cleanedPageTexts = extractCleanPdfPageTexts(document);
+            for (String pageText : cleanedPageTexts) {
+                if (pageText == null || pageText.isBlank()) {
+                    continue;
+                }
+
+                List<String> childChunks = splitTextIntoChunksWithSemantics(pageText, chunkSize);
+                estimatedChunkCount += childChunks.size();
+                estimatedTokens += usageQuotaService.estimateEmbeddingTokens(childChunks);
+            }
+
+            return new EmbeddingEstimate(estimatedTokens, estimatedChunkCount);
+        }
+    }
+
+    private List<String> extractCleanPdfPageTexts(PDDocument document) throws IOException {
+        PDFTextStripper stripper = new PDFTextStripper();
+        List<List<String>> rawPageLines = new ArrayList<>();
+
+        for (int pageNumber = 1; pageNumber <= document.getNumberOfPages(); pageNumber++) {
+            stripper.setStartPage(pageNumber);
+            stripper.setEndPage(pageNumber);
+            String pageText = stripper.getText(document);
+            rawPageLines.add(splitPdfLines(pageText));
+        }
+
+        Map<String, Integer> topLineCounts = collectBoundaryLineCounts(rawPageLines, true);
+        Map<String, Integer> bottomLineCounts = collectBoundaryLineCounts(rawPageLines, false);
+        int repeatedThreshold = Math.max(2, Math.min(3, document.getNumberOfPages()));
+
+        List<String> cleanedPages = new ArrayList<>(rawPageLines.size());
+        for (int pageIndex = 0; pageIndex < rawPageLines.size(); pageIndex++) {
+            List<String> cleanedLines = removePdfBoilerplateLines(
+                    rawPageLines.get(pageIndex),
+                    topLineCounts,
+                    bottomLineCounts,
+                    repeatedThreshold
+            );
+            String cleanedText = String.join("\n", cleanedLines).trim();
+            cleanedPages.add(cleanedText);
+        }
+
+        return cleanedPages;
+    }
+
+    private List<String> splitPdfLines(String pageText) {
+        if (pageText == null || pageText.isBlank()) {
+            return new ArrayList<>();
+        }
+
+        String[] lines = pageText.split("\\R");
+        List<String> result = new ArrayList<>(lines.length);
+        for (String line : lines) {
+            result.add(line == null ? "" : line.strip());
+        }
+        return result;
+    }
+
+    private Map<String, Integer> collectBoundaryLineCounts(List<List<String>> pageLines, boolean topBoundary) {
+        Map<String, Integer> counts = new HashMap<>();
+
+        for (List<String> lines : pageLines) {
+            List<String> boundaryLines = topBoundary
+                    ? firstMeaningfulLines(lines, PDF_BOUNDARY_SCAN_LINES)
+                    : lastMeaningfulLines(lines, PDF_BOUNDARY_SCAN_LINES);
+
+            for (String line : boundaryLines) {
+                String key = normalizePdfBoundaryLine(line);
+                if (key == null) {
+                    continue;
+                }
+                counts.merge(key, 1, Integer::sum);
+            }
+        }
+
+        return counts;
+    }
+
+    private List<String> firstMeaningfulLines(List<String> lines, int maxCount) {
+        List<String> result = new ArrayList<>(maxCount);
+        for (String line : lines) {
+            if (line == null || line.isBlank()) {
+                continue;
+            }
+            result.add(line);
+            if (result.size() >= maxCount) {
+                break;
+            }
+        }
+        return result;
+    }
+
+    private List<String> lastMeaningfulLines(List<String> lines, int maxCount) {
+        List<String> result = new ArrayList<>(maxCount);
+        for (int index = lines.size() - 1; index >= 0; index--) {
+            String line = lines.get(index);
+            if (line == null || line.isBlank()) {
+                continue;
+            }
+            result.add(0, line);
+            if (result.size() >= maxCount) {
+                break;
+            }
+        }
+        return result;
+    }
+
+    private List<String> removePdfBoilerplateLines(
+            List<String> lines,
+            Map<String, Integer> topLineCounts,
+            Map<String, Integer> bottomLineCounts,
+            int repeatedThreshold) {
+
+        int start = 0;
+        int remainingTopChecks = PDF_BOUNDARY_SCAN_LINES;
+        while (start < lines.size() && remainingTopChecks > 0) {
+            String line = lines.get(start);
+            if (line == null || line.isBlank()) {
+                start++;
+                continue;
+            }
+
+            String key = normalizePdfBoundaryLine(line);
+            if (key == null || topLineCounts.getOrDefault(key, 0) < repeatedThreshold) {
+                break;
+            }
+
+            logger.debug("过滤 PDF 页眉文本: {}", line);
+            start++;
+            remainingTopChecks--;
+        }
+
+        int end = lines.size() - 1;
+        int remainingBottomChecks = PDF_BOUNDARY_SCAN_LINES;
+        while (end >= start && remainingBottomChecks > 0) {
+            String line = lines.get(end);
+            if (line == null || line.isBlank()) {
+                end--;
+                continue;
+            }
+
+            String key = normalizePdfBoundaryLine(line);
+            if (key == null || bottomLineCounts.getOrDefault(key, 0) < repeatedThreshold) {
+                break;
+            }
+
+            logger.debug("过滤 PDF 页脚文本: {}", line);
+            end--;
+            remainingBottomChecks--;
+        }
+
+        List<String> cleanedLines = new ArrayList<>();
+        for (int index = start; index <= end; index++) {
+            cleanedLines.add(lines.get(index));
+        }
+        return cleanedLines;
+    }
+
+    private String normalizePdfBoundaryLine(String line) {
+        if (line == null) {
+            return null;
+        }
+
+        String normalized = Normalizer.normalize(line, Normalizer.Form.NFKC)
+                .replace('\u00A0', ' ')
+                .replaceAll("\\s+", " ")
+                .replaceAll("\\d+", "#")
+                .trim()
+                .toLowerCase(Locale.ROOT);
+
+        if (normalized.length() < PDF_BOILERPLATE_MIN_LENGTH || normalized.length() > PDF_BOILERPLATE_MAX_LENGTH) {
+            return null;
+        }
+
+        return normalized;
+    }
+
+    private boolean isPdfDocument(BufferedInputStream stream) throws IOException {
+        stream.mark(bufferSize);
+        byte[] header = stream.readNBytes(5);
+        stream.reset();
+        return header.length == 5 && "%PDF-".equals(new String(header, StandardCharsets.US_ASCII));
+    }
+
+    private String buildAnchorText(String chunk) {
+        if (chunk == null || chunk.isBlank()) {
+            return null;
+        }
+
+        String normalized = chunk.replaceAll("\\s+", " ").trim();
+        int maxLength = 120;
+        if (normalized.length() <= maxLength) {
+            return normalized;
+        }
+        return normalized.substring(0, maxLength) + "…";
     }
 
     /**
@@ -342,5 +641,8 @@ public class ParseService {
         }
 
         return chunks;
+    }
+
+    public record EmbeddingEstimate(long estimatedTokens, int estimatedChunkCount) {
     }
 }

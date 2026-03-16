@@ -53,7 +53,7 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
 
   async function mergeFile(task: Api.KnowledgeBase.UploadTask) {
     try {
-      const { error } = await request({
+      const { error, data } = await request<Api.KnowledgeBase.MergeResult>({
         url: '/upload/merge',
         method: 'POST',
         data: { fileMd5: task.fileMd5, fileName: task.fileName }
@@ -63,6 +63,14 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
       // 更新任务状态为已完成
       const index = tasks.value.findIndex(t => t.fileMd5 === task.fileMd5);
       tasks.value[index].status = UploadStatus.Completed;
+      tasks.value[index].estimatedEmbeddingTokens = data?.estimatedEmbeddingTokens;
+      tasks.value[index].estimatedChunkCount = data?.estimatedChunkCount;
+
+      if (data?.estimatedEmbeddingTokens) {
+        const tokenLabel = Number(data.estimatedEmbeddingTokens).toLocaleString();
+        const chunkLabel = Number(data.estimatedChunkCount || 0).toLocaleString();
+        window.$message?.success(`上传完成，预计向量化消耗 ${tokenLabel} Tokens（${chunkLabel} 个切片）`);
+      }
       return true;
     } catch {
       return false;
@@ -108,6 +116,7 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
       fileMd5: md5,
       fileName: file.name,
       totalSize: file.size,
+      public: form.isPublic,
       isPublic: form.isPublic,
       uploadedChunks: [],
       progress: 0,

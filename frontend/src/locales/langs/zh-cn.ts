@@ -164,8 +164,11 @@ const local: App.I18n.Schema = {
     'iframe-page': '外链页面',
     chat: '聊天助手',
     'chat-history': '聊天记录',
+    'invite-code': '邀请码管理',
     'knowledge-base': '知识库',
+    'model-provider': '模型配置',
     'org-tag': '组织标签',
+    'usage-monitor': '用量监控',
     user: '用户管理',
     'personal-center': '个人中心'
   },
@@ -180,6 +183,7 @@ const local: App.I18n.Schema = {
         codePlaceholder: '请输入验证码',
         passwordPlaceholder: '请输入密码',
         confirmPasswordPlaceholder: '请再次输入密码',
+        inviteCodePlaceholder: '请输入邀请码',
         codeLogin: '验证码登录',
         confirm: '确定',
         back: '返回',
@@ -189,7 +193,7 @@ const local: App.I18n.Schema = {
       },
       pwdLogin: {
         title: '密码登录',
-        rememberMe: '记住我',
+        rememberMe: '记住用户名和密码',
         forgetPassword: '忘记密码？',
         register: '注册账号',
         otherAccountLogin: '其他账号登录',
@@ -207,9 +211,11 @@ const local: App.I18n.Schema = {
       },
       register: {
         title: '注册账号',
-        agreement: '我已经仔细阅读并接受',
+        agreement: '注册即代表已阅读并同意我们的',
         protocol: '《用户协议》',
-        policy: '《隐私权政策》'
+        and: '和',
+        policy: '《隐私权政策》',
+        inviteCodeTip: '当前站点采用邀请码注册，请联系管理员获取有效邀请码。'
       },
       resetPwd: {
         title: '重置密码'
@@ -231,7 +237,7 @@ const local: App.I18n.Schema = {
     },
     pwd: {
       required: '请输入密码',
-      invalid: '密码格式不正确，6-18位字符，包含字母、数字、下划线'
+      invalid: '密码格式不正确，6-18位字符，必须包含字母和数字'
     },
     confirmPwd: {
       required: '请输入确认密码',

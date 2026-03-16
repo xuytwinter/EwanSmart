@@ -76,6 +76,18 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
+    name: 'invite-code',
+    path: '/invite-code',
+    component: 'layout.base$view.invite-code',
+    meta: {
+      title: 'invite-code',
+      i18nKey: 'route.invite-code',
+      icon: 'solar:key-minimalistic-square-line-duotone',
+      roles: ['ADMIN'],
+      order: 6
+    }
+  },
+  {
     name: 'knowledge-base',
     path: '/knowledge-base',
     component: 'layout.base$view.knowledge-base',
@@ -99,6 +111,18 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
+    name: 'model-provider',
+    path: '/model-provider',
+    component: 'layout.base$view.model-provider',
+    meta: {
+      title: 'model-provider',
+      i18nKey: 'route.model-provider',
+      icon: 'solar:tuning-square-line-duotone',
+      roles: ['ADMIN'],
+      order: 5
+    }
+  },
+  {
     name: 'org-tag',
     path: '/org-tag',
     component: 'layout.base$view.org-tag',
@@ -118,6 +142,18 @@ export const generatedRoutes: GeneratedRoute[] = [
       title: 'personal-center',
       i18nKey: 'route.personal-center',
       icon: 'solar:people-nearby-line-duotone',
+      order: 7
+    }
+  },
+  {
+    name: 'usage-monitor',
+    path: '/usage-monitor',
+    component: 'layout.base$view.usage-monitor',
+    meta: {
+      title: 'usage-monitor',
+      i18nKey: 'route.usage-monitor',
+      icon: 'solar:chart-2-line-duotone',
+      roles: ['ADMIN'],
       order: 6
     }
   },
@@ -128,9 +164,8 @@ export const generatedRoutes: GeneratedRoute[] = [
     meta: {
       title: 'user',
       i18nKey: 'route.user',
-      icon: 'solar:user-line-duotone',
-      roles: ['ADMIN'],
-      order: 5
+      icon: 'solar:users-group-two-rounded-line-duotone',
+      roles: ['ADMIN']
     }
   }
 ];

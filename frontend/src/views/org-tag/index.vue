@@ -24,6 +24,12 @@ const { columns, columnChecks, data, loading, getData } = useTable({
       }
     },
     {
+      key: 'uploadMaxSizeMb',
+      title: '非Admin上传上限',
+      width: 160,
+      render: row => (row.uploadMaxSizeMb ? `${row.uploadMaxSizeMb} MB` : '不限制')
+    },
+    {
       key: 'operate',
       title: '操作',
       width: 240,

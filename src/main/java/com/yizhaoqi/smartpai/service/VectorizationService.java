@@ -37,6 +37,14 @@ public class VectorizationService {
      * @param isPublic 是否公开
      */
     public void vectorize(String fileMd5, String userId, String orgTag, boolean isPublic) {
+        vectorizeWithUsage(fileMd5, userId, orgTag, isPublic, userId);
+    }
+
+    public void vectorize(String fileMd5, String userId, String orgTag, boolean isPublic, String requesterId) {
+        vectorizeWithUsage(fileMd5, userId, orgTag, isPublic, requesterId);
+    }
+
+    public VectorizationUsageResult vectorizeWithUsage(String fileMd5, String userId, String orgTag, boolean isPublic, String requesterId) {
         try {
             logger.info("开始向量化文件，fileMd5: {}, userId: {}, orgTag: {}, isPublic: {}", 
                        fileMd5, userId, orgTag, isPublic);
@@ -45,7 +53,7 @@ public class VectorizationService {
             List<TextChunk> chunks = fetchTextChunks(fileMd5);
             if (chunks == null || chunks.isEmpty()) {
                 logger.warn("未找到分块内容，fileMd5: {}", fileMd5);
-                return;
+                return new VectorizationUsageResult(0, 0, embeddingClient.currentModelVersion());
             }
 
             // 提取文本内容
@@ -54,7 +62,12 @@ public class VectorizationService {
                     .toList();
 
             // 调用外部模型生成向量
-            List<float[]> vectors = embeddingClient.embed(texts);
+            EmbeddingClient.EmbeddingUsageResult embeddingResult = embeddingClient.embedWithUsage(
+                    texts,
+                    requesterId,
+                    EmbeddingClient.UsageType.UPLOAD
+            );
+            List<float[]> vectors = embeddingResult.vectors();
 
             // 构建 Elasticsearch 文档并存储
             List<EsDocument> esDocuments = IntStream.range(0, chunks.size())
@@ -63,8 +76,10 @@ public class VectorizationService {
                             fileMd5,
                             chunks.get(i).getChunkId(),
                             chunks.get(i).getContent(),
+                            chunks.get(i).getPageNumber(),
+                            chunks.get(i).getAnchorText(),
                             vectors.get(i),
-                            "deepseek-embed", // 更新为 DeepSeek 的模型版本
+                            embeddingResult.modelVersion(),
                             userId,
                             orgTag,
                             isPublic
@@ -74,6 +89,11 @@ public class VectorizationService {
             elasticsearchService.bulkIndex(esDocuments); // 批量存储到 Elasticsearch
 
             logger.info("向量化完成，fileMd5: {}", fileMd5);
+            return new VectorizationUsageResult(
+                    embeddingResult.totalTokens(),
+                    chunks.size(),
+                    embeddingResult.modelVersion()
+            );
         } catch (Exception e) {
             logger.error("向量化失败，fileMd5: {}", fileMd5, e);
             throw new RuntimeException("向量化失败", e);
@@ -95,8 +115,13 @@ public class VectorizationService {
         return vectors.stream()
                 .map(vector -> new TextChunk(
                         vector.getChunkId(),
-                        vector.getTextContent()
+                        vector.getTextContent(),
+                        vector.getPageNumber(),
+                        vector.getAnchorText()
                 ))
                 .toList();
+    }
+
+    public record VectorizationUsageResult(int actualEmbeddingTokens, int actualChunkCount, String modelVersion) {
     }
 }

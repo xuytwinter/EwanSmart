@@ -12,15 +12,21 @@ import java.util.Set;
 
 @Repository
 public interface FileUploadRepository extends JpaRepository<FileUpload, Long> {
-    Optional<FileUpload> findByFileMd5(String fileMd5);
+    Optional<FileUpload> findFirstByFileMd5OrderByCreatedAtDesc(String fileMd5);
 
-    Optional<FileUpload> findByFileMd5AndUserId(String fileMd5, String userId);
+    List<FileUpload> findAllByFileMd5(String fileMd5);
 
-    Optional<FileUpload> findByFileMd5AndIsPublicTrue(String fileMd5);
+    List<FileUpload> findAllByFileMd5AndUserIdOrderByCreatedAtDesc(String fileMd5, String userId);
 
-    Optional<FileUpload> findByFileNameAndIsPublicTrue(String fileName);
+    Optional<FileUpload> findFirstByFileMd5AndUserIdOrderByCreatedAtDesc(String fileMd5, String userId);
+
+    Optional<FileUpload> findFirstByFileMd5AndIsPublicTrueOrderByCreatedAtDesc(String fileMd5);
+
+    Optional<FileUpload> findFirstByFileNameAndIsPublicTrueOrderByCreatedAtDesc(String fileName);
     
     long countByFileMd5(String fileMd5);
+
+    long countByFileMd5AndUserId(String fileMd5, String userId);
     
     void deleteByFileMd5(String fileMd5);
     
@@ -61,6 +67,8 @@ public interface FileUploadRepository extends JpaRepository<FileUpload, Long> {
      * @return 用户上传的文件列表
      */
     List<FileUpload> findByUserId(String userId);
+
+    List<FileUpload> findByUserIdAndFileNameOrderByCreatedAtDesc(String userId, String fileName);
 
     List<FileUpload> findByFileMd5In(List<String> md5List);
 }

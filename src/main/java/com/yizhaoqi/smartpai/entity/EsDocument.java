@@ -14,6 +14,8 @@ public class EsDocument {
     private String fileMd5;        // 文件指纹
     private Integer chunkId;       // 文本分块序号
     private String textContent;    // 文本内容
+    private Integer pageNumber;    // PDF 页码
+    private String anchorText;     // 页内定位锚点
     private float[] vector;        // 向量数据（768维）
     private String modelVersion;   // 向量生成模型版本
     private String userId;         // 上传用户ID
@@ -29,13 +31,16 @@ public class EsDocument {
     /**
      * 完整构造函数，包含权限字段
      */
-    public EsDocument(String id, String fileMd5, int chunkId, String content, 
+    public EsDocument(String id, String fileMd5, int chunkId, String content,
+                     Integer pageNumber, String anchorText,
                      float[] vector, String modelVersion, 
                      String userId, String orgTag, boolean isPublic) {
         this.id = id;
         this.fileMd5 = fileMd5;
         this.chunkId = chunkId;
         this.textContent = content;
+        this.pageNumber = pageNumber;
+        this.anchorText = anchorText;
         this.vector = vector;
         this.modelVersion = modelVersion;
         this.userId = userId;

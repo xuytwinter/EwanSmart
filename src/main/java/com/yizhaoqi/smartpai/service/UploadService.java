@@ -1,11 +1,14 @@
 package com.yizhaoqi.smartpai.service;
 
+import com.yizhaoqi.smartpai.config.MinioConfig;
 import com.yizhaoqi.smartpai.model.ChunkInfo;
 import com.yizhaoqi.smartpai.model.FileUpload;
 import com.yizhaoqi.smartpai.repository.ChunkInfoRepository;
 import com.yizhaoqi.smartpai.repository.FileUploadRepository;
+import io.micrometer.common.util.StringUtils;
 import io.minio.*;
 import io.minio.http.Method;
+import io.minio.GetObjectResponse;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,6 +22,7 @@ import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -45,7 +49,7 @@ public class UploadService {
     private ChunkInfoRepository chunkInfoRepository;
 
     @Autowired
-    private String minioPublicUrl; // 注入 MinIO 的公共访问地址
+    private MinioConfig minioConfig;
 
     /**
      * 上传文件分片
@@ -71,7 +75,7 @@ public class UploadService {
         
         try {
             // 检查 file_upload 表中是否存在该 file_md5
-            boolean fileExists = fileUploadRepository.findByFileMd5AndUserId(fileMd5, userId).isPresent();
+            boolean fileExists = fileUploadRepository.findFirstByFileMd5AndUserIdOrderByCreatedAtDesc(fileMd5, userId).isPresent();
             logger.debug("检查文件记录是否存在 => fileMd5: {}, fileName: {}, fileType: {}, exists: {}", fileMd5, fileName, fileType, fileExists);
             
             if (!fileExists) {
@@ -477,7 +481,7 @@ public class UploadService {
     public int getTotalChunks(String fileMd5, String userId) {
         logger.info("计算文件总分片数 => fileMd5: {}, userId: {}", fileMd5, userId);
         try {
-            Optional<FileUpload> fileUpload = fileUploadRepository.findByFileMd5AndUserId(fileMd5, userId);
+            Optional<FileUpload> fileUpload = fileUploadRepository.findFirstByFileMd5AndUserIdOrderByCreatedAtDesc(fileMd5, userId);
             
             if (fileUpload.isEmpty()) {
                 logger.warn("文件记录不存在，无法计算分片数 => fileMd5: {}, userId: {}", fileMd5, userId);
@@ -632,7 +636,7 @@ public class UploadService {
 
                 // 更新文件状态
                 logger.info("更新文件状态为已完成 => fileMd5: {}, fileName: {}, fileType: {}, userId: {}", fileMd5, fileName, fileType, userId);
-                FileUpload fileUpload = fileUploadRepository.findByFileMd5AndUserId(fileMd5, userId)
+                FileUpload fileUpload = fileUploadRepository.findFirstByFileMd5AndUserIdOrderByCreatedAtDesc(fileMd5, userId)
                         .orElseThrow(() -> {
                             logger.error("更新文件状态失败，文件记录不存在 => fileMd5: {}, fileName: {}", fileMd5, fileName);
                             return new RuntimeException("文件记录不存在: " + fileMd5);
@@ -665,5 +669,26 @@ public class UploadService {
                       fileMd5, fileName, fileType, e.getClass().getName(), e.getMessage(), e);
             throw new RuntimeException("文件合并失败: " + e.getMessage(), e);
         }
+    }
+
+    public GetObjectResponse getMergedFileStream(String fileMd5) throws Exception {
+        return minioClient.getObject(
+                GetObjectArgs.builder()
+                        .bucket("uploads")
+                        .object("merged/" + fileMd5)
+                        .build()
+        );
+    }
+
+    /**
+     * 转换为公开 URL
+     * @param minioUrl
+     * @return
+     */
+    public String transToPublicUrl(String minioUrl) {
+        if (StringUtils.isBlank(minioUrl) || Objects.equals(minioConfig.getEndpoint(), minioConfig.getPublicUrl())) {
+            return minioUrl;
+        }
+        return minioUrl.replaceFirst(minioConfig.getEndpoint(), minioConfig.getPublicUrl());
     }
 }

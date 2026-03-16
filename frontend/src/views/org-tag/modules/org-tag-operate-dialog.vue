@@ -16,6 +16,7 @@ const emit = defineEmits<{ submitted: [] }>();
 
 const visible = defineModel<boolean>('visible', { default: false });
 const loading = ref(false);
+const editingTagId = ref('');
 const { formRef, validate, restoreValidation } = useNaiveForm();
 const { defaultRequiredRule } = useFormRules();
 
@@ -35,30 +36,25 @@ function createDefaultModel(): Api.OrgTag.Item {
     tagId: '',
     name: '',
     description: '',
-    parentTag: null
+    parentTag: null,
+    uploadMaxSizeBytes: null,
+    uploadMaxSizeMb: null
   };
 }
 
 const rules = ref<FormRules>({
-  tagId: [
-    defaultRequiredRule,
-    {
-      validator(_, value) {
-        return !value.startsWith('PRIVATE_');
-      },
-      message: '标签Id不能以PRIVATE_开头',
-      trigger: 'blur'
-    }
-  ],
   name: defaultRequiredRule,
   description: defaultRequiredRule
 });
 
 async function handleUpdateModelWhenEdit() {
   model.value = createDefaultModel();
+  editingTagId.value = '';
 
-  if (props.operateType === 'edit') model.value = props.rowData;
-  else if (props.operateType === 'addChild') model.value.parentTag = props.rowData.tagId!;
+  if (props.operateType === 'edit') {
+    model.value = props.rowData;
+    editingTagId.value = props.rowData.tagId;
+  } else if (props.operateType === 'addChild') model.value.parentTag = props.rowData.tagId!;
 }
 
 function close() {
@@ -68,10 +64,18 @@ function close() {
 async function handleSubmit() {
   await validate();
   loading.value = true;
+
+  const payload = {
+    name: model.value.name,
+    description: model.value.description,
+    parentTag: model.value.parentTag,
+    uploadMaxSizeMb: model.value.uploadMaxSizeMb
+  };
+
   let res: FlatResponseData;
   if (props.operateType === 'edit')
-    res = await request({ url: `/admin/org-tags/${model.value.tagId}`, method: 'PUT', data: model.value });
-  else res = await request({ url: '/admin/org-tags', method: 'POST', data: model.value });
+    res = await request({ url: `/admin/org-tags/${editingTagId.value}`, method: 'PUT', data: payload });
+  else res = await request({ url: '/admin/org-tags', method: 'POST', data: payload });
   if (!res.error) {
     window.$message?.success('操作成功');
     close();
@@ -99,8 +103,11 @@ watch(visible, () => {
     @positive-click="handleSubmit"
   >
     <NForm ref="formRef" :model="model" :rules="rules" label-placement="left" :label-width="100" mt-10>
-      <NFormItem label="标签Id" path="tagId">
-        <NInput v-model:value="model.tagId" placeholder="请输入标签Id" maxlength="60" />
+      <NFormItem v-if="operateType === 'edit'" label="标签Id">
+        <NInput v-model:value="model.tagId" disabled />
+      </NFormItem>
+      <NFormItem v-else label="标签Id">
+        <NInput value="自动生成" disabled />
       </NFormItem>
       <NFormItem label="标签名称" path="name">
         <NInput v-model:value="model.name" placeholder="请输入标签名称" maxlength="60" />
@@ -117,6 +124,16 @@ watch(visible, () => {
           clearable
           show-count
           :autosize="{ minRows: 3, maxRows: 10 }"
+        />
+      </NFormItem>
+      <NFormItem label="上传上限(MB)" path="uploadMaxSizeMb">
+        <NInputNumber
+          v-model:value="model.uploadMaxSizeMb"
+          placeholder="为空表示不限制"
+          clearable
+          :min="1"
+          :precision="0"
+          class="w-full"
         />
       </NFormItem>
     </NForm>

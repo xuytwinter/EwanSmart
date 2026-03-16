@@ -2,9 +2,10 @@ package com.yizhaoqi.smartpai.consumer;
 
 import com.yizhaoqi.smartpai.config.KafkaConfig;
 import com.yizhaoqi.smartpai.model.FileProcessingTask;
+import com.yizhaoqi.smartpai.model.FileUpload;
+import com.yizhaoqi.smartpai.repository.FileUploadRepository;
 import com.yizhaoqi.smartpai.service.ParseService;
 import com.yizhaoqi.smartpai.service.VectorizationService;
-import io.minio.MinioClient;
 import io.minio.errors.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,13 +24,19 @@ public class FileProcessingConsumer {
 
     private final ParseService parseService;
     private final VectorizationService vectorizationService;
+    private final FileUploadRepository fileUploadRepository;
     @Autowired
     private KafkaConfig kafkaConfig;
 
 
-    public FileProcessingConsumer(ParseService parseService, VectorizationService vectorizationService) {
+    public FileProcessingConsumer(
+            ParseService parseService,
+            VectorizationService vectorizationService,
+            FileUploadRepository fileUploadRepository
+    ) {
         this.parseService = parseService;
         this.vectorizationService = vectorizationService;
+        this.fileUploadRepository = fileUploadRepository;
     }
 
     @KafkaListener(topics = "#{kafkaConfig.getFileProcessingTopic()}", groupId = "#{kafkaConfig.getFileProcessingGroupId()}")
@@ -58,8 +65,14 @@ public class FileProcessingConsumer {
             log.info("文件解析完成，fileMd5: {}", task.getFileMd5());
 
             // 向量化处理
-            vectorizationService.vectorize(task.getFileMd5(), 
-                    task.getUserId(), task.getOrgTag(), task.isPublic());
+            VectorizationService.VectorizationUsageResult vectorizationResult = vectorizationService.vectorizeWithUsage(
+                    task.getFileMd5(),
+                    task.getUserId(),
+                    task.getOrgTag(),
+                    task.isPublic(),
+                    task.getUserId()
+            );
+            updateActualEmbeddingUsage(task, vectorizationResult);
             log.info("向量化完成，fileMd5: {}", task.getFileMd5());
         } catch (Exception e) {
             log.error("Error processing task: {}", task, e);
@@ -125,5 +138,26 @@ public class FileProcessingConsumer {
             log.error("Error downloading file from storage: {}", filePath, e);
             return null; // 或者抛出异常
         }
+    }
+
+    private void updateActualEmbeddingUsage(
+            FileProcessingTask task,
+            VectorizationService.VectorizationUsageResult vectorizationResult
+    ) {
+        if (task == null || vectorizationResult == null || task.getFileMd5() == null || task.getUserId() == null) {
+            return;
+        }
+
+        FileUpload fileUpload = fileUploadRepository
+                .findFirstByFileMd5AndUserIdOrderByCreatedAtDesc(task.getFileMd5(), task.getUserId())
+                .orElse(null);
+        if (fileUpload == null) {
+            log.warn("回写实际 Embedding 用量失败，未找到文件记录: fileMd5={}, userId={}", task.getFileMd5(), task.getUserId());
+            return;
+        }
+
+        fileUpload.setActualEmbeddingTokens((long) vectorizationResult.actualEmbeddingTokens());
+        fileUpload.setActualChunkCount(vectorizationResult.actualChunkCount());
+        fileUploadRepository.save(fileUpload);
     }
 }

@@ -2,10 +2,12 @@ package com.yizhaoqi.smartpai.controller;
 
 import com.yizhaoqi.smartpai.handler.ChatWebSocketHandler;
 import com.yizhaoqi.smartpai.service.ChatHandler;
+import com.yizhaoqi.smartpai.utils.JwtUtils;
 import com.yizhaoqi.smartpai.utils.LogUtils;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.socket.TextMessage;
@@ -20,9 +22,11 @@ import java.util.Map;
 public class ChatController extends TextWebSocketHandler {
 
     private final ChatHandler chatHandler;
+    private final JwtUtils jwtUtils;
 
-    public ChatController(ChatHandler chatHandler) {
+    public ChatController(ChatHandler chatHandler, JwtUtils jwtUtils) {
         this.chatHandler = chatHandler;
+        this.jwtUtils = jwtUtils;
     }
 
     @Override
@@ -50,8 +54,16 @@ public class ChatController extends TextWebSocketHandler {
      * 获取WebSocket停止指令Token
      */
     @GetMapping("/websocket-token")
-    public ResponseEntity<?> getWebSocketToken() {
+    public ResponseEntity<?> getWebSocketToken(@RequestHeader("Authorization") String token) {
         try {
+            if (token == null || !token.startsWith("Bearer ")) {
+                return ResponseEntity.status(401).body(Map.of("code", 401, "message", "Invalid token", "data", null));
+            }
+            String jwtToken = token.replace("Bearer ", "");
+            if (!jwtUtils.validateToken(jwtToken)) {
+                return ResponseEntity.status(401).body(Map.of("code", 401, "message", "Invalid token", "data", null));
+            }
+
             String cmdToken = ChatWebSocketHandler.getInternalCmdToken();
             
             // 检查token是否有效

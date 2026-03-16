@@ -25,11 +25,15 @@ public class WebClientConfig {
                 .maxInMemorySize(16 * 1024 * 1024)) // 16MB
             .build();
 
-        return WebClient.builder()
-            .baseUrl(apiUrl)
-            .exchangeStrategies(strategies)
-            .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
-            .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-            .build();
+        WebClient.Builder builder = WebClient.builder()
+                .baseUrl(apiUrl)
+                .exchangeStrategies(strategies)
+                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
+
+        if (apiKey != null && !apiKey.isBlank()) {
+            builder.defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey);
+        }
+
+        return builder.build();
     }
-} 
+}

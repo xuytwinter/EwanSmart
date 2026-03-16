@@ -1,13 +1,16 @@
 <script setup lang="ts">
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { nextTick } from 'vue';
-import { VueMarkdownIt } from 'vue-markdown-shiki';
 import { formatDate } from '@/utils/common';
+import { router } from '@/router';
+import { request } from '@/service/request';
+import { VueMarkdownIt } from '@/vendor/vue-markdown-shiki';
 defineOptions({ name: 'ChatMessage' });
 
 const props = defineProps<{
   msg: Api.Chat.Message,
-  sessionId?: string
+  sessionId?: string,
+  retrievalQueryFallback?: string
 }>();
 
 const authStore = useAuthStore();
@@ -20,61 +23,114 @@ function handleCopy(content: string) {
 const chatStore = useChatStore();
 
 // 存储文件名和对应的事件处理
-const sourceFiles = ref<Array<{fileName: string, id: string, referenceNumber: number, fileMd5?: string}>>([]);
+const sourceFiles = ref<Array<{fileName: string, id: string, referenceNumber: number, fileMd5?: string, pageNumber?: number}>>([]);
+const bareUrlPattern = /https?:\/\/[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+/g;
+
+function splitTrailingUrlPunctuation(rawUrl: string) {
+  let url = rawUrl;
+  let trailing = '';
+
+  while (url) {
+    const lastChar = url.at(-1);
+    if (!lastChar) break;
+
+    if (/[，。！？；：、,.!?;:]/.test(lastChar)) {
+      trailing = `${lastChar}${trailing}`;
+      url = url.slice(0, -1);
+      continue;
+    }
+
+    if (lastChar === ')' || lastChar === '）') {
+      const openingChar = lastChar === ')' ? '(' : '（';
+      const closingChar = lastChar;
+      const openingCount = (url.match(new RegExp(`\\${openingChar}`, 'g')) || []).length;
+      const closingCount = (url.match(new RegExp(`\\${closingChar}`, 'g')) || []).length;
+
+      if (closingCount > openingCount) {
+        trailing = `${lastChar}${trailing}`;
+        url = url.slice(0, -1);
+        continue;
+      }
+    }
+
+    break;
+  }
+
+  return { url, trailing };
+}
+
+function normalizeBareUrls(text: string) {
+  return text.replace(bareUrlPattern, (match, offset: number, source: string) => {
+    const previousChar = source[offset - 1] || '';
+    const previousTwoChars = source.slice(Math.max(0, offset - 2), offset);
+    const previousTenChars = source.slice(Math.max(0, offset - 10), offset).toLowerCase();
+
+    if (previousChar === '<' || previousTwoChars === '](' || /(?:href|src)=["']?$/.test(previousTenChars)) {
+      return match;
+    }
+
+    const { url, trailing } = splitTrailingUrlPunctuation(match);
+    return url ? `<${url}>${trailing}` : match;
+  });
+}
+
+function createSourceLink(
+  sourceNum: string,
+  fileName: string,
+  extras?: { fileMd5?: string; pageNumber?: number; displayName?: string }
+): string {
+  const linkClass = 'source-file-link';
+  const trimmedFileName = fileName.trim();
+  const fileId = `source-file-${sourceFiles.value.length}`;
+  const referenceNumber = parseInt(sourceNum, 10);
+
+  sourceFiles.value.push({
+    fileName: trimmedFileName,
+    id: fileId,
+    referenceNumber,
+    fileMd5: extras?.fileMd5,
+    pageNumber: extras?.pageNumber
+  });
+
+  return `来源#${sourceNum}: <span class="${linkClass}" data-file-id="${fileId}">${extras?.displayName || trimmedFileName}</span>`;
+}
 
 // 处理来源文件链接的函数
 function processSourceLinks(text: string): string {
   // 重置来源文件列表，避免重复
   sourceFiles.value = [];
 
-  // 新格式：匹配 (来源#数字: 文件名 | MD5:xxx) 的正则表达式，兼容全角括号
-  // 格式示例：(来源#1: test.txt | MD5:abc123) 或 (来源#1: test.txt|MD5:abc123)
-  const newSourcePattern = /([\(（])来源#(\d+):\s*([^|\n\r（）]+?)\s*\|\s*MD5:\s*([a-fA-F0-9]+)([\)）])/g;
+  // 支持单个来源，也支持一个括号里包含多个来源：
+  // (来源#1: test.pdf | 第5页; 来源#2: other.pdf | 第8页)
+  const entryBoundary = '(?=\\s*(?:[;；,，、。！？!?\\)）]|$))';
+  const pagePattern = new RegExp(
+    `来源#(\\d+):\\s*([^|;；,，、。！？!?\\n\\r]+?)\\s*\\|\\s*第(\\d+)页${entryBoundary}`,
+    'g'
+  );
+  const md5Pattern = new RegExp(
+    `来源#(\\d+):\\s*([^|;；,，、。！？!?\\n\\r]+?)\\s*\\|\\s*MD5:\\s*([a-fA-F0-9]+)${entryBoundary}`,
+    'g'
+  );
+  const simplePattern = new RegExp(
+    `来源#(\\d+):\\s*([^<>\\n\\r|;；,，、。！？!?]+?)${entryBoundary}`,
+    'g'
+  );
 
-  // 先处理新格式（包含MD5）
-  let processedText = text.replace(newSourcePattern, (_match, leftParen, sourceNum, fileName, fileMd5, rightParen) => {
-    const linkClass = 'source-file-link';
-    const trimmedFileName = fileName.trim();
-    const trimmedMd5 = fileMd5.trim();
-    const fileId = `source-file-${sourceFiles.value.length}`;
-    const referenceNumber = parseInt(sourceNum, 10);
-
-    // 存储文件信息（包含文件名和MD5）
-    sourceFiles.value.push({
-      fileName: trimmedFileName,
-      id: fileId,
-      referenceNumber,
-      fileMd5: trimmedMd5
+  let processedText = text.replace(pagePattern, (_match, sourceNum, fileName, pageNum) => {
+    return createSourceLink(sourceNum, fileName, {
+      pageNumber: parseInt(pageNum, 10),
+      displayName: `${fileName.trim()} (第${pageNum}页)`
     });
-
-    const lp = leftParen === '(' ? '(' : '（';
-    const rp = rightParen === ')' ? ')' : '）';
-
-    // 显示格式：来源#1: test.txt | MD5:abc...
-    return `${lp}来源#${sourceNum}: <span class="${linkClass}" data-file-id="${fileId}">${trimmedFileName} | MD5:${trimmedMd5.substring(0, 8)}...</span>${rp}`;
   });
 
-  // 旧格式：匹配 (来源#数字: 文件名) 的正则表达式，兼容全角括号和无括号格式
-  // 用于向后兼容旧的引用格式
-  const oldSourcePattern = /([\(（])来源#(\d+):\s*([^\n\r（）]+?)([\)）])/g;
-
-  processedText = processedText.replace(oldSourcePattern, (_match, leftParen, sourceNum, fileName, rightParen) => {
-    const linkClass = 'source-file-link';
-    const trimmedFileName = fileName.trim();
-    const fileId = `source-file-${sourceFiles.value.length}`;
-    const referenceNumber = parseInt(sourceNum, 10);
-
-    // 存储文件信息（旧格式，没有MD5）
-    sourceFiles.value.push({
-      fileName: trimmedFileName,
-      id: fileId,
-      referenceNumber
+  processedText = processedText.replace(md5Pattern, (_match, sourceNum, fileName, fileMd5) => {
+    return createSourceLink(sourceNum, fileName, {
+      fileMd5: fileMd5.trim()
     });
+  });
 
-    const lp = leftParen || '';
-    const rp = rightParen || '';
-
-    return `${lp}来源#${sourceNum}: <span class="${linkClass}" data-file-id="${fileId}">${trimmedFileName}</span>${rp}`;
+  processedText = processedText.replace(simplePattern, (_match, sourceNum, fileName) => {
+    return createSourceLink(sourceNum, fileName);
   });
 
   return processedText;
@@ -86,11 +142,53 @@ const content = computed(() => {
 
   // 只对助手消息处理来源链接
   if (props.msg.role === 'assistant') {
-    return processSourceLinks(rawContent);
+    return normalizeBareUrls(processSourceLinks(rawContent));
   }
 
   return rawContent;
 });
+
+function extractContextAnchorText(target: HTMLElement) {
+  const scope = target.closest('li, p, blockquote, td, th');
+  const rawText = scope?.textContent?.replace(/\s+/g, ' ').trim() || '';
+  if (!rawText) return '';
+
+  const beforeCitation = rawText.split(/(?:\(|（)?来源#\d+:/)[0] || rawText;
+  return beforeCitation
+    .replace(/^\s*\d+\.\s*/, '')
+    .replace(/[（(]\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function openReferencePreviewPage(payload: {
+  retrievalMode?: Api.Chat.ReferenceEvidence['retrievalMode'];
+  retrievalLabel?: string | null;
+  retrievalQuery?: string | null;
+  evidenceSnippet?: string | null;
+  matchedChunkText?: string | null;
+  score?: number | null;
+  chunkId?: number | null;
+  fileName: string;
+  fileMd5?: string | null;
+  pageNumber?: number | null;
+  anchorText?: string | null;
+  sessionId?: string;
+  referenceNumber: number;
+}) {
+  const previewKey = `reference-preview:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+  localStorage.setItem(previewKey, JSON.stringify(payload));
+
+  const routeLocation = router.resolve({
+    path: '/chat',
+    query: {
+      preview: 'reference',
+      previewKey
+    }
+  });
+
+  window.open(routeLocation.href, '_blank', 'noopener,noreferrer');
+}
 
 // 处理内容点击事件（事件委托）
 function handleContentClick(event: MouseEvent) {
@@ -102,10 +200,12 @@ function handleContentClick(event: MouseEvent) {
     if (fileId) {
       const file = sourceFiles.value.find(f => f.id === fileId);
       if (file) {
+        const contextAnchorText = extractContextAnchorText(target);
         handleSourceFileClick({
           fileName: file.fileName,
           referenceNumber: file.referenceNumber,
-          fileMd5: file.fileMd5
+          fileMd5: file.fileMd5,
+          anchorText: contextAnchorText
         });
       }
     }
@@ -113,95 +213,76 @@ function handleContentClick(event: MouseEvent) {
 }
 
 // 处理来源文件点击事件
-async function handleSourceFileClick(fileInfo: { fileName: string, referenceNumber: number, fileMd5?: string }) {
-  const { fileName, referenceNumber, fileMd5: extractedMd5 } = fileInfo;
-  console.log('点击了来源文件:', fileName, '引用编号:', referenceNumber, '提取的MD5:', extractedMd5, '会话ID:', props.sessionId);
+async function handleSourceFileClick(fileInfo: {
+  fileName: string;
+  referenceNumber: number;
+  fileMd5?: string;
+  anchorText?: string;
+}) {
+  const { fileName, referenceNumber, fileMd5: extractedMd5, anchorText: clickedAnchorText } = fileInfo;
+  const persistedDetail = props.msg.referenceMappings?.[String(referenceNumber)] || props.msg.referenceMappings?.[referenceNumber];
+  const referenceSessionId = props.msg.conversationId || props.sessionId;
+  console.log('点击了来源文件:', fileName, '引用编号:', referenceNumber, '提取的MD5:', extractedMd5, '会话ID:', referenceSessionId);
 
   try {
-    window.$message?.loading(`正在获取文件下载链接: ${fileName}`, {
-      duration: 0,
-      closable: false
-    });
+    let detail: Api.Document.ReferenceDetailResponse | null = null;
+    const fallbackRetrievalQuery = props.retrievalQueryFallback || '';
 
-    let targetMd5 = null;
-
-    // 方案1：优先使用从引用中直接提取的MD5
-    if (extractedMd5) {
-      console.log('使用从引用中提取的MD5:', extractedMd5);
-      targetMd5 = extractedMd5;
-    }
-    // 方案2：如果没有提取到MD5，则通过后端API查询
-    else if (props.sessionId) {
+    if (referenceSessionId && (!persistedDetail?.retrievalQuery || !persistedDetail?.matchedChunkText || !persistedDetail?.evidenceSnippet)) {
       try {
-        console.log('步骤1: 通过API查询引用MD5', { sessionId: props.sessionId, referenceNumber });
-        const { error: md5Error, data: md5Data } = await request<Api.Document.ReferenceMd5Response>({
-          url: 'documents/reference-md5',
+        const { error: detailError, data: detailData } = await request<Api.Document.ReferenceDetailResponse>({
+          url: 'documents/reference-detail',
           params: {
-            sessionId: props.sessionId,
+            sessionId: referenceSessionId,
             referenceNumber: referenceNumber.toString()
           },
           baseURL: '/proxy-api'
         });
 
-        console.log('引用MD5查询结果:', { error: md5Error, data: md5Data });
-
-        if (!md5Error && md5Data?.fileMd5) {
-          targetMd5 = md5Data.fileMd5;
+        if (!detailError && detailData?.fileMd5) {
+          detail = detailData;
         }
-      } catch (md5Err) {
-        console.warn('通过API查询MD5失败:', md5Err);
+      } catch (detailErr) {
+        console.warn('通过API查询引用详情失败:', detailErr);
       }
     }
 
-    // 如果获取到了MD5，使用MD5精确下载
-    if (targetMd5) {
-      console.log('步骤2: 使用MD5下载文件', targetMd5);
-      const { error: downloadError, data: downloadData } = await request<Api.Document.DownloadResponse>({
-        url: 'documents/download-by-md5',
-        params: {
-          fileMd5: targetMd5,
-          token: authStore.token
-        },
-        baseURL: '/proxy-api'
+    if (persistedDetail?.fileMd5 && !detail) {
+      openReferencePreviewPage({
+        fileName: persistedDetail.fileName || fileName,
+        fileMd5: persistedDetail.fileMd5,
+        pageNumber: persistedDetail.pageNumber,
+        anchorText: persistedDetail.anchorText || clickedAnchorText || '',
+        retrievalMode: persistedDetail.retrievalMode,
+        retrievalLabel: persistedDetail.retrievalLabel,
+        retrievalQuery: persistedDetail.retrievalQuery || fallbackRetrievalQuery,
+        evidenceSnippet: persistedDetail.evidenceSnippet,
+        matchedChunkText: persistedDetail.matchedChunkText,
+        score: persistedDetail.score,
+        chunkId: persistedDetail.chunkId,
+        sessionId: referenceSessionId,
+        referenceNumber
       });
-
-      console.log('文件下载结果:', { error: downloadError, data: downloadData });
-
-      window.$message?.destroyAll();
-
-      if (!downloadError && downloadData?.downloadUrl) {
-        window.open(downloadData.downloadUrl, '_blank');
-        window.$message?.success(`文件下载链接已打开: ${downloadData.fileName || fileName}`);
-        return;
-      }
-    }
-
-    // 降级方案：使用文件名下载（向后兼容）
-    console.log('降级方案: 使用文件名下载', fileName);
-    const { error, data } = await request<Api.Document.DownloadResponse>({
-      url: 'documents/download',
-      params: {
-        fileName: fileName,
-        token: authStore.token
-      },
-      baseURL: '/proxy-api'
-    });
-
-    window.$message?.destroyAll();
-
-    if (error) {
-      window.$message?.error(`文件下载失败: ${error.response?.data?.message || '未知错误'}`);
       return;
     }
 
-    if (data?.downloadUrl) {
-      window.open(data.downloadUrl, '_blank');
-      window.$message?.success(`文件下载链接已打开: ${data.fileName || fileName}`);
-    } else {
-      window.$message?.error('未能获取到下载链接');
-    }
+    const targetMd5 = detail?.fileMd5 || extractedMd5 || null;
+    openReferencePreviewPage({
+      fileName: detail?.fileName || fileName,
+      fileMd5: targetMd5,
+      pageNumber: detail?.pageNumber,
+      anchorText: detail?.anchorText || clickedAnchorText || '',
+      retrievalMode: detail?.retrievalMode,
+      retrievalLabel: detail?.retrievalLabel,
+      retrievalQuery: detail?.retrievalQuery || fallbackRetrievalQuery,
+      evidenceSnippet: detail?.evidenceSnippet,
+      matchedChunkText: detail?.matchedChunkText,
+      score: detail?.score,
+      chunkId: detail?.chunkId,
+      sessionId: referenceSessionId,
+      referenceNumber
+    });
   } catch (err) {
-    window.$message?.destroyAll();
     console.error('文件下载失败:', err);
     window.$message?.error(`文件下载失败: ${fileName}`);
   }
@@ -231,7 +312,9 @@ async function handleSourceFileClick(fileInfo: { fileName: string, referenceNumb
     <NText v-if="msg.status === 'pending'">
       <icon-eos-icons:three-dots-loading class="ml-12 mt-2 text-8" />
     </NText>
-    <NText v-else-if="msg.status === 'error'" class="ml-12 mt-2 italic">服务器繁忙，请稍后再试</NText>
+    <NText v-else-if="msg.status === 'error'" class="ml-12 mt-2 italic color-#d03050">
+      {{ msg.content || '服务器繁忙，请稍后再试' }}
+    </NText>
     <div v-else-if="msg.role === 'assistant'" class="mt-2 pl-12" @click="handleContentClick">
       <VueMarkdownIt :content="content" />
     </div>

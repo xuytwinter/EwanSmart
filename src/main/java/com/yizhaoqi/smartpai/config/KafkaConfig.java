@@ -4,10 +4,12 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.apache.kafka.clients.admin.NewTopic;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.core.*;
+import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.support.serializer.JsonDeserializer;
 import org.springframework.kafka.support.serializer.JsonSerializer;
 import org.apache.kafka.common.TopicPartition;
@@ -31,6 +33,12 @@ public class KafkaConfig {
     @Value("${spring.kafka.topic.dlt}")
     private String fileProcessingDltTopic;
 
+    @Value("${spring.kafka.topic.partitions:1}")
+    private int topicPartitions;
+
+    @Value("${spring.kafka.topic.replication-factor:1}")
+    private short topicReplicationFactor;
+
     @Value("${spring.kafka.consumer.group-id}")
     private String fileProcessingGroupId;
 
@@ -47,6 +55,22 @@ public class KafkaConfig {
 
     public String getFileProcessingGroupId() {
         return fileProcessingGroupId;
+    }
+
+    @Bean
+    public NewTopic fileProcessingNewTopic() {
+        return TopicBuilder.name(fileProcessingTopic)
+                .partitions(topicPartitions)
+                .replicas(topicReplicationFactor)
+                .build();
+    }
+
+    @Bean
+    public NewTopic fileProcessingDltNewTopic() {
+        return TopicBuilder.name(fileProcessingDltTopic)
+                .partitions(topicPartitions)
+                .replicas(topicReplicationFactor)
+                .build();
     }
 
     @Bean
