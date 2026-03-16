@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "rate-limit")
 public class RateLimitProperties {
 
-    private final WindowLimit register = new WindowLimit(5, 3600);
+    private final WindowLimit register = new WindowLimit(20, 600);
     private final WindowLimit login = new WindowLimit(30, 60);
     private final WindowLimit chatMessage = new WindowLimit(30, 60);
     private final TokenBudgetLimit llmGlobalToken = new TokenBudgetLimit(120_000L, 60L, 8_000_000L, 86400L);

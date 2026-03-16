@@ -20,6 +20,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/v1/users")
@@ -126,11 +127,36 @@ public class UserController {
     }
 
     private String resolveClientIp(HttpServletRequest request) {
-        String xff = request.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) {
-            return xff.split(",")[0].trim();
+        return firstUsableIp(
+                request.getHeader("CF-Connecting-IP"),
+                request.getHeader("True-Client-IP"),
+                extractForwardedForIp(request.getHeader("X-Forwarded-For")),
+                request.getHeader("X-Real-IP"),
+                request.getHeader("Proxy-Client-IP"),
+                request.getHeader("WL-Proxy-Client-IP"),
+                request.getRemoteAddr()
+        ).orElse("unknown");
+    }
+
+    private String extractForwardedForIp(String xForwardedFor) {
+        if (xForwardedFor == null || xForwardedFor.isBlank()) {
+            return null;
         }
-        return request.getRemoteAddr();
+        return Arrays.stream(xForwardedFor.split(","))
+                .map(String::trim)
+                .filter(this::isUsableIp)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private Optional<String> firstUsableIp(String... candidates) {
+        return Arrays.stream(candidates)
+                .filter(this::isUsableIp)
+                .findFirst();
+    }
+
+    private boolean isUsableIp(String ip) {
+        return ip != null && !ip.isBlank() && !"unknown".equalsIgnoreCase(ip);
     }
 
     // 获取当前用户信息

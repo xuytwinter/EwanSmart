@@ -92,8 +92,8 @@ app:
 rate-limit:
   # Redis 限流，用于保护登录、注册、聊天、LLM 和向量接口
   register:
-    max: ${RATE_LIMIT_REGISTER_MAX:5}
-    window-seconds: ${RATE_LIMIT_REGISTER_WINDOW_SECONDS:3600}
+    max: ${RATE_LIMIT_REGISTER_MAX:20}
+    window-seconds: ${RATE_LIMIT_REGISTER_WINDOW_SECONDS:600}
   login:
     max: ${RATE_LIMIT_LOGIN_MAX:30}
     window-seconds: ${RATE_LIMIT_LOGIN_WINDOW_SECONDS:60}
