@@ -78,3 +78,4 @@ frontend/public/languages
 frontend/public/themes
 src/main/resources/application.yml~
 frontend/AutoClaw.pem
+*.pem
