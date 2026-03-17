@@ -703,81 +703,19 @@ public class UserService {
      * @return 用户列表数据
      */
     public Map<String, Object> getUserList(String keyword, String orgTag, Integer status, int page, int size) {
-        // 页码从1开始，需要转换为从0开始
-        int pageIndex = page > 0 ? page - 1 : 0;
-        // 创建分页请求
-        Pageable pageable = PageRequest.of(pageIndex, size, Sort.by("createdAt").descending());
-        
-        // 获取用户列表
-        Page<User> userPage;
-        
-        if (orgTag != null && !orgTag.isEmpty()) {
-            // 按组织标签过滤用户
-            // 由于我们存储组织标签为逗号分隔的字符串，需要自定义实现
-            // 这里简化处理，获取所有用户后手动过滤
-            List<User> allUsers = userRepository.findAll();
-            List<User> filteredUsers = allUsers.stream()
-                    .filter(user -> {
-                        // 过滤组织标签
-                        if (user.getOrgTags() != null && !user.getOrgTags().isEmpty()) {
-                            Set<String> userTags = new HashSet<>(Arrays.asList(user.getOrgTags().split(",")));
-                            if (!userTags.contains(orgTag)) {
-                                return false;
-                            }
-                        } else {
-                            return false;
-                        }
-                        
-                        // 过滤关键词
-                        if (keyword != null && !keyword.isEmpty()) {
-                            boolean matchesKeyword = user.getUsername().contains(keyword);
-                            if (!matchesKeyword) {
-                                return false;
-                            }
-                        }
-                        
-                        // 过滤状态
-                        if (status != null) {
-                            return user.getRole() == (status == 1 ? User.Role.USER : User.Role.ADMIN);
-                        }
-                        
-                        return true;
-                    })
-                    .collect(Collectors.toList());
-            
-            // 手动分页
-            int start = (int) pageable.getOffset();
-            int end = Math.min((start + pageable.getPageSize()), filteredUsers.size());
-            
-            List<User> pageContent = start < end ? filteredUsers.subList(start, end) : Collections.emptyList();
-            userPage = new PageImpl<>(pageContent, pageable, filteredUsers.size());
-        } else {
-            // 使用 JPA 分页查询（不含组织标签过滤）
-            // 这里假设UserRepository有findByKeywordAndStatus方法，实际中可能需要自定义实现
-            userPage = userRepository.findAll(pageable);
-            
-            // 手动过滤（简化实现）
-            List<User> filteredUsers = userPage.getContent().stream()
-                    .filter(user -> {
-                        // 过滤关键词
-                        if (keyword != null && !keyword.isEmpty()) {
-                            boolean matchesKeyword = user.getUsername().contains(keyword);
-                            if (!matchesKeyword) {
-                                return false;
-                            }
-                        }
-                        
-                        // 过滤状态
-                        if (status != null) {
-                            return user.getRole() == (status == 1 ? User.Role.USER : User.Role.ADMIN);
-                        }
-                        
-                        return true;
-                    })
-                    .collect(Collectors.toList());
-                    
-            userPage = new PageImpl<>(filteredUsers, pageable, filteredUsers.size());
-        }
+        int safePage = Math.max(page, 1);
+        int safeSize = size > 0 ? size : 10;
+        int pageIndex = safePage - 1;
+        Pageable pageable = PageRequest.of(pageIndex, safeSize, Sort.by("createdAt").descending());
+
+        List<User> filteredUsers = userRepository.findAll(Sort.by("createdAt").descending()).stream()
+                .filter(user -> matchesUserListFilters(user, keyword, orgTag, status))
+                .toList();
+
+        int start = Math.min((int) pageable.getOffset(), filteredUsers.size());
+        int end = Math.min(start + pageable.getPageSize(), filteredUsers.size());
+        List<User> pageContent = start < end ? filteredUsers.subList(start, end) : Collections.emptyList();
+        Page<User> userPage = new PageImpl<>(pageContent, pageable, filteredUsers.size());
         
         // 转换为前端需要的格式
         Map<String, UsageQuotaService.UserUsageSnapshot> usageSnapshots = usageQuotaService.getSnapshots(
@@ -830,6 +768,29 @@ public class UserService {
         result.put("number", userPage.getNumber() + 1); // 转换为从1开始的页码
         
         return result;
+    }
+
+    private boolean matchesUserListFilters(User user, String keyword, String orgTag, Integer status) {
+        if (orgTag != null && !orgTag.isEmpty()) {
+            if (user.getOrgTags() == null || user.getOrgTags().isEmpty()) {
+                return false;
+            }
+
+            Set<String> userTags = new HashSet<>(Arrays.asList(user.getOrgTags().split(",")));
+            if (!userTags.contains(orgTag)) {
+                return false;
+            }
+        }
+
+        if (keyword != null && !keyword.isEmpty() && !user.getUsername().contains(keyword)) {
+            return false;
+        }
+
+        if (status != null) {
+            return user.getRole() == (status == 1 ? User.Role.USER : User.Role.ADMIN);
+        }
+
+        return true;
     }
 
     private String resolveOrGenerateTagId(String tagId, String name) {

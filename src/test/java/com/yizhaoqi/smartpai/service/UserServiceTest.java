@@ -14,9 +14,12 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.http.HttpStatus;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -43,6 +46,9 @@ class UserServiceTest {
 
     @Mock
     private InviteCodeService inviteCodeService;
+
+    @Mock
+    private UsageQuotaService usageQuotaService;
 
     @InjectMocks
     private UserService userService;
@@ -212,5 +218,32 @@ class UserServiceTest {
 
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
         assertEquals("上传大小上限不能超过系统全局限制 50 MB", exception.getMessage());
+    }
+
+    @Test
+    void testGetUserListKeepsTotalCountAcrossPages() {
+        List<User> users = java.util.stream.IntStream.rangeClosed(1, 25)
+                .mapToObj(index -> {
+                    User user = new User();
+                    user.setId((long) index);
+                    user.setUsername("user-" + index);
+                    user.setRole(User.Role.USER);
+                    user.setCreatedAt(LocalDateTime.of(2026, 3, 1, 0, 0).minusMinutes(index));
+                    return user;
+                })
+                .toList();
+
+        when(userRepository.findAll(any(Sort.class))).thenReturn(users);
+        when(usageQuotaService.getSnapshots(anyList())).thenReturn(Map.of());
+        when(usageQuotaService.getSnapshot(anyString())).thenReturn(null);
+
+        Map<String, Object> result = userService.getUserList(null, null, null, 2, 10);
+
+        assertEquals(25L, result.get("totalElements"));
+        assertEquals(3, result.get("totalPages"));
+        assertEquals(10, result.get("size"));
+        assertEquals(2, result.get("number"));
+        assertEquals(10, ((List<?>) result.get("content")).size());
+        verify(userRepository).findAll(any(Sort.class));
     }
 }
