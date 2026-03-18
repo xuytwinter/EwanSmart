@@ -215,6 +215,6 @@ wx:
     #商户APIv3密钥
     apiV3Key: ${WX_PAY_API_V3_KEY:Pai******1}
     #支付通知地址
-    payNotifyUrl: ${WX_PAY_NOTIFY_URL:https://smart.paicoding.com/api/wx/payNotify}
+    payNotifyUrl: ${WX_PAY_NOTIFY_URL:https://smart.paicoding.com/api/v1/recharge/pay-callback}
     #退款通知地址
-    refundNotifyUrl: ${WX_PAY_REFUND_NOTIFY_URL:https://smart.paicoding.com/api/wx/refundNotify}
+    refundNotifyUrl: ${WX_PAY_REFUND_NOTIFY_URL:https://smart.paicoding.com/api/v1/recharge/refund-callback}
