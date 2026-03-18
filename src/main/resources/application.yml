@@ -144,6 +144,8 @@ elasticsearch:
   username: ${ELASTICSEARCH_USERNAME:elastic}
   password: ${ELASTICSEARCH_PASSWORD:}
   insecure-trust-all-certificates: ${ELASTICSEARCH_INSECURE_TRUST_ALL_CERTIFICATES:true}
+  init:
+    enabled: ${ELASTICSEARCH_INIT_ENABLE:true}
 
 security:
   # WebSocket 与浏览器跨域白名单，支持 Origin pattern，多个来源用逗号分隔
@@ -195,3 +197,24 @@ ai:
     temperature: ${AI_GENERATION_TEMPERATURE:0.3}
     max-tokens: ${AI_GENERATION_MAX_TOKENS:2000}
     top-p: ${AI_GENERATION_TOP_P:0.9}
+
+# 微信支付相关配置
+wx:
+  pay:
+    # true 表示开启微信支付
+    enable: ${WX_PAY_ENABLE:false}
+    #应用id（小程序id）
+    appId: ${WX_PAY_APP_ID:ww1****3e3}
+    #商户号
+    merchantId: ${WX_PAY_MERCHANT_ID:162****72}
+    #商户API私钥
+    privateKey: ${WX_PAY_PRIVATE_KEY:cert/apiclient_key.pem}
+    #商户证书序列号
+    # openssl x509 -in apiclient_cert.pem -noout -serial
+    merchantSerialNumber: ${WX_PAY_MERCHANT_SERIAL_NUMBER:228065B**********F17C37A}
+    #商户APIv3密钥
+    apiV3Key: ${WX_PAY_API_V3_KEY:Pai******1}
+    #支付通知地址
+    payNotifyUrl: ${WX_PAY_NOTIFY_URL:https://smart.paicoding.com/api/wx/payNotify}
+    #退款通知地址
+    refundNotifyUrl: ${WX_PAY_REFUND_NOTIFY_URL:https://smart.paicoding.com/api/wx/refundNotify}

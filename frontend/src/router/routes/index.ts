@@ -8,7 +8,31 @@ import { transformElegantRoutesToVueRoutes } from '../elegant/transform';
  *
  * @link https://github.com/soybeanjs/elegant-router?tab=readme-ov-file#custom-route
  */
-const customRoutes: CustomRoute[] = [];
+const customRoutes: CustomRoute[] = [
+  {
+    name: 'recharge',
+    path: '/recharge',
+    component: 'layout.base$view.recharge',
+    meta: {
+      title: '余额充值',
+      i18nKey: 'route.recharge',
+      icon: 'solar:wallet-minimalistic-line-duotone',
+      order: 8
+    }
+  },
+  {
+    name: 'recharge-manage',
+    path: '/recharge-manage',
+    component: 'layout.base$view.recharge-manage',
+    meta: {
+      title: '充值管理',
+      i18nKey: 'route.recharge-manage',
+      icon: 'solar:cardholder-holders-line-duotone',
+      roles: ['ADMIN'],
+      order: 9
+    }
+  }
+];
 
 /** create routes when the auth route mode is static */
 export function createStaticRoutes() {

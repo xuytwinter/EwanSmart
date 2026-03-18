@@ -29,6 +29,8 @@ declare module "@elegant-router/types" {
     "model-provider": "/model-provider";
     "org-tag": "/org-tag";
     "personal-center": "/personal-center";
+    "recharge": "/recharge";
+    "recharge-manage": "/recharge-manage";
     "usage-monitor": "/usage-monitor";
     "user": "/user";
   };
@@ -74,6 +76,8 @@ declare module "@elegant-router/types" {
     | "model-provider"
     | "org-tag"
     | "personal-center"
+    | "recharge"
+    | "recharge-manage"
     | "usage-monitor"
     | "user"
   >;
@@ -104,6 +108,8 @@ declare module "@elegant-router/types" {
     | "model-provider"
     | "org-tag"
     | "personal-center"
+    | "recharge-manage"
+    | "recharge"
     | "usage-monitor"
     | "user"
   >;

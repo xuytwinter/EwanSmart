@@ -146,6 +146,28 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
+    name: 'recharge',
+    path: '/recharge',
+    component: 'layout.base$view.recharge',
+    meta: {
+      title: 'recharge',
+      i18nKey: 'route.recharge',
+      icon: 'solar:people-nearby-line-duotone',
+      order: 8
+    }
+  },
+  {
+    name: 'recharge-manage',
+    path: '/recharge-manage',
+    component: 'layout.base$view.recharge-manage',
+    meta: {
+      title: 'recharge-manage',
+      i18nKey: 'route.recharge-manage',
+      icon: 'solar:people-nearby-line-duotone',
+      order: 9
+    }
+  },
+  {
     name: 'usage-monitor',
     path: '/usage-monitor',
     component: 'layout.base$view.usage-monitor',

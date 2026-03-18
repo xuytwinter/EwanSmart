@@ -79,7 +79,7 @@ CREATE TABLE rate_limit_configs (
 
 CREATE TABLE model_provider_configs (
                                         id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '模型配置主键',
-                                        config_scope VARCHAR(32) NOT NULL COMMENT '作用域: llm / embedding',
+                                        config_scope VARCHAR(32) NOT NULL COMMENT '作用域：llm / embedding',
                                         provider_code VARCHAR(64) NOT NULL COMMENT 'provider 标识',
                                         display_name VARCHAR(128) NOT NULL COMMENT '展示名称',
                                         api_style VARCHAR(64) NOT NULL COMMENT '协议风格',
@@ -95,3 +95,44 @@ CREATE TABLE model_provider_configs (
                                         UNIQUE KEY uk_model_provider_scope_code (config_scope, provider_code),
                                         KEY idx_model_provider_scope (config_scope)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='运行时模型 Provider 配置表';
+
+-- 充值套餐表
+CREATE TABLE recharge_packages (
+                                   id INT AUTO_INCREMENT PRIMARY KEY COMMENT '套餐 ID（自增主键）',
+                                   package_name VARCHAR(128) NOT NULL COMMENT '套餐名称',
+                                   package_price BIGINT NOT NULL COMMENT '套餐价格，单位分',
+                                   package_desc TEXT COMMENT '套餐描述',
+                                   package_benefit TEXT COMMENT '套餐权益',
+                                   llm_token INT NOT NULL COMMENT 'LLM token 数量',
+                                   embedding_token INT NOT NULL COMMENT 'Embedding token 数量',
+                                   sort_order INT NOT NULL DEFAULT 10 COMMENT '排序顺序（数字越小越靠前）',
+                                   enabled BOOLEAN NOT NULL DEFAULT TRUE COMMENT '是否启用',
+                                   deleted BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否已删除',
+                                   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='充值套餐表';
+
+-- 充值订单表
+CREATE TABLE recharge_orders (
+                                 id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '订单 ID',
+                                 trade_no VARCHAR(128) NOT NULL UNIQUE COMMENT '业务单号（外部系统唯一）',
+                                 user_id VARCHAR(64) NOT NULL COMMENT '用户 ID（关联 users 表）',
+                                 package_id INT NOT NULL COMMENT '套餐 ID（如果是自定义充值，则为 0）',
+                                 amount BIGINT NOT NULL COMMENT '订单金额，单位分',
+                                 llm_token INT NOT NULL COMMENT 'LLM token 数量',
+                                 embedding_token INT NOT NULL COMMENT 'Embedding token 数量',
+                                 wx_transaction_id VARCHAR(64) NOT NULL COMMENT '微信交易流水号',
+                                 status ENUM('NOT_PAY', 'PAYING', 'SUCCEED', 'FAIL', 'CANCELLED') NOT NULL DEFAULT 'NOT_PAY' COMMENT '订单状态',
+                                 description VARCHAR(255) COMMENT '订单描述',
+                                 pay_time TIMESTAMP NULL COMMENT '支付成功时间',
+                                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                                 INDEX idx_trade_no (trade_no),
+                                 INDEX idx_user_id (user_id),
+                                 INDEX idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='充值订单表';
+
+-- 初始化充值套餐数据
+INSERT INTO recharge_packages (package_name, package_price, package_desc, package_benefit, llm_token, embedding_token, enabled)
+VALUES
+    ('最小金额', 1, '最小支付金额', 'LLM Token: 1000\nEmbedding Token: 1000', 1000, 1000, TRUE);

@@ -79,3 +79,6 @@ frontend/public/themes
 src/main/resources/application.yml~
 frontend/AutoClaw.pem
 *.pem
+
+
+src/main/resources/cert
