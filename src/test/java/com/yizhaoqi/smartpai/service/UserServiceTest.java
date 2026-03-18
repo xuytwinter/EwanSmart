@@ -16,11 +16,15 @@ import org.mockito.MockitoAnnotations;
 import org.springframework.http.HttpStatus;
 import org.springframework.data.domain.Sort;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -71,6 +75,14 @@ class UserServiceTest {
         userService.registerUser("testuser", "password123", null);
 
         verify(userRepository, atLeastOnce()).save(any(User.class));
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository, atLeast(2)).save(userCaptor.capture());
+        User savedUser = userCaptor.getAllValues().get(userCaptor.getAllValues().size() - 1);
+        Set<String> savedOrgTags = new HashSet<>(Arrays.asList(savedUser.getOrgTags().split(",")));
+        assertEquals(Set.of("DEFAULT", "PRIVATE_testuser"), savedOrgTags);
+        assertEquals("PRIVATE_testuser", savedUser.getPrimaryOrg());
+        verify(orgTagCacheService).cacheUserOrgTags("testuser", List.of("DEFAULT", "PRIVATE_testuser"));
+        verify(orgTagCacheService).cacheUserPrimaryOrg("testuser", "PRIVATE_testuser");
         verify(inviteCodeService, never()).consume(anyString(), anyString());
     }
 

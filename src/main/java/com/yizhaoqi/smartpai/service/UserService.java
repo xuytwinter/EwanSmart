@@ -119,8 +119,9 @@ public class UserService {
         String privateTagId = PRIVATE_TAG_PREFIX + username;
         createPrivateOrgTag(privateTagId, username, user);
         
-        // 只分配私人组织标签
-        user.setOrgTags(privateTagId);
+        // 新用户默认拥有系统默认组织和自己的私人组织
+        List<String> assignedOrgTags = List.of(DEFAULT_ORG_TAG, privateTagId);
+        user.setOrgTags(String.join(",", assignedOrgTags));
         
         // 设置私人组织标签为主组织标签
         user.setPrimaryOrg(privateTagId);
@@ -128,10 +129,10 @@ public class UserService {
         userRepository.save(user);
         
         // 缓存组织标签信息
-        orgTagCacheService.cacheUserOrgTags(username, List.of(privateTagId));
+        orgTagCacheService.cacheUserOrgTags(username, assignedOrgTags);
         orgTagCacheService.cacheUserPrimaryOrg(username, privateTagId);
         
-        logger.info("User registered successfully with private organization tag: {}", username);
+        logger.info("User registered successfully with default and private organization tags: {}", username);
     }
 
     private void validateRegistrationPolicy(String username, String inviteCode) {
