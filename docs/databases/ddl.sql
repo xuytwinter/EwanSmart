@@ -136,3 +136,36 @@ CREATE TABLE recharge_orders (
 INSERT INTO recharge_packages (package_name, package_price, package_desc, package_benefit, llm_token, embedding_token, enabled)
 VALUES
     ('最小金额', 1, '最小支付金额', 'LLM Token: 1000\nEmbedding Token: 1000', 1000, 1000, TRUE);
+
+
+-- 创建用户 Token 变动记录表
+CREATE TABLE IF NOT EXISTS `user_token_record` (
+                               `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键 ID',
+                               `user_id` VARCHAR(64) NOT NULL COMMENT '用户 ID',
+                               `record_date` DATE NOT NULL COMMENT '记录日期（按天统计）',
+                               `token_type` VARCHAR(20) NOT NULL COMMENT 'Token 类型：LLM/EMBEDDING',
+                               `change_type` VARCHAR(20) NOT NULL COMMENT '变动类型：INCREASE/CONSUME',
+                                `request_count` BIGINT NOT NULL DEFAULT 0 COMMENT '请求次数（一次充值或对话可能包含多次 API 请求）'
+                               `amount` BIGINT NOT NULL COMMENT '变动数量',
+                               `balance_before` BIGINT DEFAULT NULL COMMENT '变动前的余额',
+                               `balance_after` BIGINT DEFAULT NULL COMMENT '变动后的余额',
+                               `reason` VARCHAR(500) DEFAULT NULL COMMENT '变动原因描述',
+                               `remark` VARCHAR(500) DEFAULT NULL COMMENT '备注信息（订单号、对话 ID 等）',
+                               `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                               PRIMARY KEY (`id`),
+                               INDEX `idx_user_date` (`user_id`, `record_date`),
+                               INDEX `idx_record_date` (`record_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户 Token 变动记录表';
+
+
+CREATE TABLE IF NOT EXISTS `user_daily_chat_count` (
+    `id` BIGINT(20) NOT NULL AUTO_INCREMENT COMMENT '主键 ID',
+    `user_id` VARCHAR(64) NOT NULL COMMENT '用户 ID',
+    `record_date` DATE NOT NULL COMMENT '记录日期',
+    `chat_request_count` BIGINT(20) NOT NULL DEFAULT 0 COMMENT '对话请求次数',
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_user_date` (`user_id`, `record_date`) COMMENT '用户 + 日期唯一索引',
+    INDEX `idx_record_date` (`record_date`) COMMENT '按日期查询索引'
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户每日对话次数记录表';

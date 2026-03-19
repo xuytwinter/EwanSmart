@@ -1,6 +1,18 @@
 <script setup lang="tsx">
 import type { DataTableColumns, FormRules, PaginationProps } from 'naive-ui';
-import { NButton, NInput, NInputNumber, NSwitch, NTag, NPopconfirm, NModal, NForm, NFormItem, NEllipsis } from 'naive-ui';
+import {
+  NButton,
+  NInput,
+  NInputNumber,
+  NSwitch,
+  NTag,
+  NPopconfirm,
+  NModal,
+  NForm,
+  NFormItem,
+  NEllipsis,
+  NCard
+} from 'naive-ui';
 import { ref, reactive, computed, onMounted } from 'vue';
 import { request } from '@/service/request';
 
@@ -306,8 +318,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="p-4">
-    <NCard title="充值套餐管理" :bordered="false" size="large" class="card-wrapper">
+  <div class="min-h-500px flex-col-stretch gap-16px overflow-auto">
+    <NCard title="充值套餐管理" :bordered="false" size="small" class="card-wrapper">
       <template #header-extra>
         <NButton type="primary" @click="handleCreate">新增套餐</NButton>
       </template>

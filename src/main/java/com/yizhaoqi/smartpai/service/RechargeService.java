@@ -30,6 +30,7 @@ public class RechargeService {
     private final WxPayService wxPayService;
     private final RechargePackageRepository packageRepository;
     private final RechargeOrderRepository orderRepository;
+    private final UserTokenService userTokenService;
 
     /**
      * 获取所有启用的充值套餐
@@ -189,7 +190,9 @@ public class RechargeService {
      * 支付成功回调
      */
     private void paySuccessCallback(RechargeOrder rechargeOrder) {
-        // todo 待实现
+        // 增加用户的剩余token数量
+        userTokenService.addLlmTokens(rechargeOrder.getUserId(), rechargeOrder.getLlmToken());
+        userTokenService.addEmbeddingTokens(rechargeOrder.getUserId(), rechargeOrder.getEmbeddingToken());
     }
 
     /**

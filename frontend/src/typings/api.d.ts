@@ -101,6 +101,20 @@ declare namespace Api {
       embedding: UsageQuota;
     }
 
+    interface TokenRecord {
+      id: number;
+      recordDate: string;
+      tokenType: 'LLM' | 'EMBEDDING';
+      changeType: 'INCREASE' | 'CONSUME';
+      amount: number;
+      balanceBefore: number | null;
+      balanceAfter: number | null;
+      reason: string;
+      remark: string | null;
+      requestCount: number;
+      createdAt: string;
+    }
+
     type SearchParams = CommonType.RecordNullable<
       Common.CommonSearchParams & {
         keyword: string;

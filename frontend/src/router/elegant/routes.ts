@@ -152,7 +152,7 @@ export const generatedRoutes: GeneratedRoute[] = [
     meta: {
       title: 'recharge',
       i18nKey: 'route.recharge',
-      icon: 'solar:people-nearby-line-duotone',
+      icon: 'solar:airbuds-case-charge-broken',
       order: 8
     }
   },
@@ -163,7 +163,8 @@ export const generatedRoutes: GeneratedRoute[] = [
     meta: {
       title: 'recharge-manage',
       i18nKey: 'route.recharge-manage',
-      icon: 'solar:people-nearby-line-duotone',
+      icon: 'solar:shop-minimalistic-broken',
+      roles: ['ADMIN'],
       order: 9
     }
   },
