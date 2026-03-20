@@ -21,6 +21,11 @@ public interface RechargePackageRepository extends JpaRepository<RechargePackage
     List<RechargePackage> findAllByEnabledTrueAndDeletedFalseOrderBySortOrderAsc();
 
     /**
+     * 查询面向用户展示的启用套餐，排除内部最小金额基准套餐。
+     */
+    List<RechargePackage> findAllByEnabledTrueAndDeletedFalseAndPackagePriceGreaterThanOrderBySortOrderAsc(Long price);
+
+    /**
      * 查询所有套餐（包含禁用，不包含已删除）
      */
     List<RechargePackage> findAllByDeletedFalseOrderBySortOrderAsc();

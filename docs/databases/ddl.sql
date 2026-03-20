@@ -133,9 +133,15 @@ CREATE TABLE recharge_orders (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='充值订单表';
 
 -- 初始化充值套餐数据
-INSERT INTO recharge_packages (package_name, package_price, package_desc, package_benefit, llm_token, embedding_token, enabled)
+-- 说明：
+-- 1. 保留 1 分钱内部基准套餐，用于自定义充值时按比例折算 Token，不对前台用户展示。
+-- 2. 默认三档套餐基于 2026-03-20 的 DeepSeek / 阿里百炼官方价格做保守估算，兼顾吸引力和利润空间。
+INSERT INTO recharge_packages (package_name, package_price, package_desc, package_benefit, llm_token, embedding_token, sort_order, enabled)
 VALUES
-    ('最小金额', 1, '最小支付金额', 'LLM Token: 1000\nEmbedding Token: 1000', 1000, 1000, TRUE);
+    ('内部基准', 1, '自定义充值折算基准，不对外展示', 'LLM Token: 2,500\nEmbedding Token: 1,000', 2500, 1000, 999, TRUE),
+    ('体验版', 990, '适合轻度体验、日常问答和少量知识库上传。', 'LLM Token：250 万\nEmbedding Token：100 万\n支持微信支付充值\n余额到账后可直接使用', 2500000, 1000000, 10, TRUE),
+    ('进阶版', 1990, '适合持续问答、资料整理和中等规模知识库构建。', 'LLM Token：550 万\nEmbedding Token：250 万\n支持微信支付充值\n余额到账后可直接使用', 5500000, 2500000, 20, TRUE),
+    ('旗舰版', 4990, '适合高频问答、团队共享资料和较大规模知识库场景。', 'LLM Token：1400 万\nEmbedding Token：600 万\n支持微信支付充值\n余额到账后可直接使用', 14000000, 6000000, 30, TRUE);
 
 
 -- 创建用户 Token 变动记录表

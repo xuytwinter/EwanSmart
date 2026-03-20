@@ -16,6 +16,8 @@ import {
 import { ref, reactive, computed, onMounted } from 'vue';
 import { request } from '@/service/request';
 
+const TOKEN_UNIT = 10000;
+
 interface RechargePackage {
   id: number;
   packageName: string;
@@ -36,8 +38,8 @@ interface RechargePackageForm {
   packagePriceYuan: number | null; // 套餐价格（元）
   packageDesc: string;
   packageBenefit: string;
-  llmToken: number | null;
-  embeddingToken: number | null;
+  llmTokenWan: number | null;
+  embeddingTokenWan: number | null;
   enabled: boolean;
   sortOrder: number | null;
 }
@@ -81,7 +83,7 @@ const rules = ref<FormRules>({
       trigger: ['blur', 'change']
     }
   ],
-  llmToken: [
+  llmTokenWan: [
     defaultRequiredRule,
     {
       validator(_, value) {
@@ -91,7 +93,7 @@ const rules = ref<FormRules>({
       trigger: ['blur', 'change']
     }
   ],
-  embeddingToken: [
+  embeddingTokenWan: [
     defaultRequiredRule,
     {
       validator(_, value) {
@@ -109,11 +111,57 @@ function createDefaultModel(): RechargePackageForm {
     packagePriceYuan: null,
     packageDesc: '',
     packageBenefit: '',
-    llmToken: null,
-    embeddingToken: null,
+    llmTokenWan: null,
+    embeddingTokenWan: null,
     enabled: true,
     sortOrder: 0
   };
+}
+
+function formatWanValue(value: number) {
+  const wan = value / TOKEN_UNIT;
+  const hasDecimal = Math.abs(wan - Math.round(wan)) > 0.000001;
+  return wan.toLocaleString('zh-CN', {
+    minimumFractionDigits: hasDecimal ? 2 : 0,
+    maximumFractionDigits: hasDecimal ? 2 : 0
+  });
+}
+
+function formatTokenWan(value: number) {
+  return `${formatWanValue(value)} 万`;
+}
+
+function buildPackageDesc() {
+  const price = model.value.packagePriceYuan ?? 0;
+  const llmTokenWan = model.value.llmTokenWan ?? 0;
+  const embeddingTokenWan = model.value.embeddingTokenWan ?? 0;
+
+  if (price >= 49.9 || llmTokenWan >= 1000 || embeddingTokenWan >= 500) {
+    return '适合高频问答、团队共享资料和较大规模知识库场景。';
+  }
+
+  if (price >= 19.9 || llmTokenWan >= 500 || embeddingTokenWan >= 200) {
+    return '适合持续问答、资料整理和中等规模知识库构建。';
+  }
+
+  return '适合轻度体验、日常问答和少量知识库上传。';
+}
+
+function buildPackageBenefit() {
+  const llmTokenWan = model.value.llmTokenWan ?? 0;
+  const embeddingTokenWan = model.value.embeddingTokenWan ?? 0;
+
+  return [
+    `LLM Token：${llmTokenWan.toLocaleString('zh-CN', { maximumFractionDigits: 2 })} 万`,
+    `Embedding Token：${embeddingTokenWan.toLocaleString('zh-CN', { maximumFractionDigits: 2 })} 万`,
+    '支持微信支付充值',
+    '余额到账后可直接使用'
+  ].join('\n');
+}
+
+function autofillPackageCopy() {
+  model.value.packageDesc = buildPackageDesc();
+  model.value.packageBenefit = buildPackageBenefit();
 }
 
 const isEditing = computed(() => editingId.value !== null);
@@ -142,15 +190,15 @@ const columns = computed<DataTableColumns<RechargePackage>>(() => [
   },
   {
     key: 'llmToken',
-    title: 'LLM Token',
+    title: 'LLM Token（万）',
     width: 120,
-    render: row => row.llmToken.toLocaleString()
+    render: row => formatTokenWan(row.llmToken)
   },
   {
     key: 'embeddingToken',
-    title: 'Embedding Token',
+    title: 'Embedding Token（万）',
     width: 140,
-    render: row => row.embeddingToken.toLocaleString()
+    render: row => formatTokenWan(row.embeddingToken)
   },
   {
     key: 'enabled',
@@ -227,8 +275,8 @@ function handleEdit(row: RechargePackage) {
     packagePriceYuan: row.packagePrice / 100, // 分转元
     packageDesc: row.packageDesc || '',
     packageBenefit: row.packageBenefit || '',
-    llmToken: row.llmToken,
-    embeddingToken: row.embeddingToken,
+    llmTokenWan: row.llmToken / TOKEN_UNIT,
+    embeddingTokenWan: row.embeddingToken / TOKEN_UNIT,
     enabled: row.enabled,
     sortOrder: row.sortOrder
   };
@@ -254,10 +302,14 @@ async function handleSubmit() {
     // 将元转换为分
     const submitData = {
       ...model.value,
-      packagePrice: model.value.packagePriceYuan !== null ? Math.round(model.value.packagePriceYuan * 100) : null
+      packagePrice: model.value.packagePriceYuan !== null ? Math.round(model.value.packagePriceYuan * 100) : null,
+      llmToken: model.value.llmTokenWan !== null ? Math.round(model.value.llmTokenWan * TOKEN_UNIT) : null,
+      embeddingToken: model.value.embeddingTokenWan !== null ? Math.round(model.value.embeddingTokenWan * TOKEN_UNIT) : null
     };
     // 删除 packagePriceYuan 字段，不传递给后端
     delete (submitData as any).packagePriceYuan;
+    delete (submitData as any).llmTokenWan;
+    delete (submitData as any).embeddingTokenWan;
 
     console.log("提交数据:", submitData);
 
@@ -339,8 +391,6 @@ onMounted(() => {
       v-model:show="visible"
       preset="dialog"
       :title="isEditing ? '编辑充值套餐' : '新增充值套餐'"
-      :positive-text="null"
-      :negative-text="null"
       :show-icon="false"
       class="w-600px!"
     >
@@ -368,38 +418,45 @@ onMounted(() => {
             type="text"
           />
         </NFormItem>
-        <NFormItem label="LLM Token 数量" path="llmToken">
+        <NFormItem label="LLM Token（万）" path="llmTokenWan">
           <NInputNumber
-            v-model:value="model.llmToken"
+            v-model:value="model.llmTokenWan"
             :min="0"
-            :step="100"
-            placeholder="请输入 LLM Token 数量"
+            :step="0.1"
+            :precision="2"
+            placeholder="请输入 LLM Token 数量，单位：万"
             class="w-full"
           />
         </NFormItem>
-        <NFormItem label="Embedding Token 数量" path="embeddingToken">
+        <NFormItem label="Embedding Token（万）" path="embeddingTokenWan">
           <NInputNumber
-            v-model:value="model.embeddingToken"
+            v-model:value="model.embeddingTokenWan"
             :min="0"
-            :step="100"
-            placeholder="请输入 Embedding Token 数量"
+            :step="0.1"
+            :precision="2"
+            placeholder="请输入 Embedding Token 数量，单位：万"
             class="w-full"
           />
         </NFormItem>
         <NFormItem label="套餐描述" path="packageDesc">
-          <NInput
-            v-model:value="model.packageDesc"
-            type="textarea"
-            :rows="3"
-            placeholder="请输入套餐描述"
-          />
+          <div class="w-full flex flex-col gap-2">
+            <NInput
+              v-model:value="model.packageDesc"
+              type="textarea"
+              :rows="3"
+              placeholder="请输入套餐描述"
+            />
+            <div class="flex justify-end">
+              <NButton size="small" secondary @click="autofillPackageCopy">一键生成文案</NButton>
+            </div>
+          </div>
         </NFormItem>
         <NFormItem label="套餐权益" path="packageBenefit">
           <NInput
             v-model:value="model.packageBenefit"
             type="textarea"
             :rows="3"
-            placeholder="请输入套餐权益说明"
+            placeholder="请输入套餐权益说明，支持换行"
           />
         </NFormItem>
         <NFormItem label="排序顺序" path="sortOrder">

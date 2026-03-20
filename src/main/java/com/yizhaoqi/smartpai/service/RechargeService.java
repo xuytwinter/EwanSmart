@@ -36,7 +36,7 @@ public class RechargeService {
      * 获取所有启用的充值套餐
      */
     public List<RechargePackage> getAllPackages() {
-        return packageRepository.findAllByEnabledTrueAndDeletedFalseOrderBySortOrderAsc();
+        return packageRepository.findAllByEnabledTrueAndDeletedFalseAndPackagePriceGreaterThanOrderBySortOrderAsc(1L);
     }
 
     /**
@@ -83,8 +83,8 @@ public class RechargeService {
             amount = customAmount;
             rechargePackage = packageRepository.findByPackagePriceAndEnabledIsTrueAndDeletedFalse(1)
                     .orElseThrow(() -> new CustomException("套餐不存在", HttpStatus.BAD_REQUEST));
-            // 自定义充值暂不赠送 token，按 1:1 比例计算（具体业务可调整）
-            llmToken = amount * rechargePackage.getLlmToken(); // 1 分钱=1 token，可根据业务调整
+            // 自定义充值按内部 1 分钱基准套餐折算 token 数量。
+            llmToken = amount * rechargePackage.getLlmToken();
             embeddingToken = amount * rechargePackage.getEmbeddingToken();
             description = "【派聪明】自定义充值￥" + PriceUtil.toYuanPrice(amount) + "元";
         }

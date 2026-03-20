@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, h } from 'vue';
+import type { DataTableColumns } from 'naive-ui';
 import { NCard, NButton, NInputNumber, NModal, NSpace, NTag, NEmpty, NSpin, NDataTable, NTabs, NTabPane } from 'naive-ui';
 import QRCode from 'qrcode.vue';
 import { fetchRechargePackages, fetchCreateRechargeOrder, fetchRechargeOrderDetail, fetchRechargeOrders } from '@/service/api';
 import { useAuthStore } from '@/store/modules/auth';
 
+const TOKEN_UNIT = 10000;
+
 const authStore = useAuthStore();
 const loading = ref(false);
 const packages = ref<Api.Recharge.Package[]>([]);
 const selectedPackageId = ref<number | null>(null);
-const customAmountYuan = ref<string>(''); // 自定义充值金额（元）
+const customAmountYuan = ref<number | null>(null); // 自定义充值金额（元）
 const isCustomAmount = ref(false);
 
 // 充值记录相关
@@ -26,9 +29,7 @@ const currentTradeNo = ref<string>('');
 // 获取当前订单金额（分）
 const getOrderAmount = computed(() => {
   if (isCustomAmount.value && customAmountYuan.value) {
-    // 将元转换为分
-    const yuan = parseFloat(customAmountYuan.value);
-    return Math.round(yuan * 100);
+    return Math.round(customAmountYuan.value * 100);
   }
   if (selectedPackageId.value) {
     const pkg = packages.value.find(p => p.id === selectedPackageId.value);
@@ -40,9 +41,25 @@ const getOrderAmount = computed(() => {
 // 验证自定义充值金额是否有效
 const isValidCustomAmount = computed(() => {
   if (!isCustomAmount.value || !customAmountYuan.value) return false;
-  const yuan = parseFloat(customAmountYuan.value);
-  return !isNaN(yuan) && yuan >= 0.01;
+  return customAmountYuan.value >= 0.01;
 });
+
+function formatTokenWan(value: number) {
+  const wan = value / TOKEN_UNIT;
+  const hasDecimal = Math.abs(wan - Math.round(wan)) > 0.000001;
+  const formatted = wan.toLocaleString('zh-CN', {
+    minimumFractionDigits: hasDecimal ? 2 : 0,
+    maximumFractionDigits: hasDecimal ? 2 : 0
+  });
+  return `${formatted} 万`;
+}
+
+function packageBenefitLines(content?: string | null) {
+  return (content || '')
+    .split('\n')
+    .map(item => item.trim())
+    .filter(Boolean);
+}
 
 // 获取充值套餐列表
 const getPackages = async () => {
@@ -78,7 +95,7 @@ const handleTabChange = (tab: string) => {
 const selectPackage = (packageId: number) => {
   selectedPackageId.value = packageId;
   isCustomAmount.value = false;
-  customAmountYuan.value = '';
+  customAmountYuan.value = null;
 };
 
 // 选择自定义金额
@@ -128,7 +145,7 @@ const checkPayStatus = async () => {
         window.$message?.success('充值成功！');
         showPayModal.value = false;
         // 刷新用户信息
-        await authStore.getUserInfo();
+        await authStore.initUserInfo();
         // 刷新订单列表
         getOrders();
       } else if (data.status === 'NOT_PAY' || data.status === 'PAYING') {
@@ -168,15 +185,15 @@ const orderColumns = computed<DataTableColumns<Api.Recharge.Order>>(() => [
   },
   {
     key: 'llmToken',
-    title: 'LLM Token',
+    title: 'LLM Token（万）',
     width: 120,
-    render: row => row.llmToken.toLocaleString()
+    render: row => formatTokenWan(row.llmToken)
   },
   {
     key: 'embeddingToken',
-    title: 'Embedding Token',
+    title: 'Embedding Token（万）',
     width: 140,
-    render: row => row.embeddingToken.toLocaleString()
+    render: row => formatTokenWan(row.embeddingToken)
   },
   {
     key: 'status',
@@ -249,17 +266,28 @@ onMounted(() => {
               <div class="flex flex-col gap-2 text-sm">
                 <div class="flex items-center gap-2">
                   <icon-solar:like-bold-duotone class="text-primary" />
-                  <span>LLM Token: <strong>{{ pkg.llmToken.toLocaleString() }}</strong></span>
+                  <span>LLM Token: <strong>{{ formatTokenWan(pkg.llmToken) }}</strong></span>
                 </div>
                 <div class="flex items-center gap-2">
                   <icon-solar:like-bold-duotone class="text-primary" />
-                  <span>Embedding Token: <strong>{{ pkg.embeddingToken.toLocaleString() }}</strong></span>
+                  <span>Embedding Token: <strong>{{ formatTokenWan(pkg.embeddingToken) }}</strong></span>
                 </div>
               </div>
 
               <NEllipsis :line-clamp="2" class="text-sm text-stone-500">
                 {{ pkg.packageDesc }}
               </NEllipsis>
+
+              <div v-if="packageBenefitLines(pkg.packageBenefit).length" class="flex flex-col gap-2 rounded-lg bg-stone-50 p-3 text-sm text-stone-600">
+                <div
+                  v-for="line in packageBenefitLines(pkg.packageBenefit)"
+                  :key="`${pkg.id}-${line}`"
+                  class="flex items-start gap-2"
+                >
+                  <span class="mt-1 h-1.5 w-1.5 rounded-full bg-primary"></span>
+                  <span>{{ line }}</span>
+                </div>
+              </div>
 
               <NButton
                 v-if="selectedPackageId === pkg.id && !isCustomAmount"
@@ -360,8 +388,6 @@ onMounted(() => {
       v-model:show="showPayModal"
       preset="dialog"
       title="扫码支付"
-      :positive-text="null"
-      :negative-text="null"
       :show-icon="false"
       class="w-480px"
     >
