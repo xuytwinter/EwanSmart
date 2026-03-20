@@ -79,4 +79,7 @@ frontend/public/themes
 src/main/resources/application.yml~
 .env
 frontend/paicoding.pem
+frontend/AutoClaw.pem
+*.pem
+src/main/resources/cert
 /.runtime

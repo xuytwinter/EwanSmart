@@ -170,7 +170,9 @@ const local: App.I18n.Schema = {
     'org-tag': '组织标签',
     'usage-monitor': '用量监控',
     user: '用户管理',
-    'personal-center': '个人中心'
+    'personal-center': '个人中心',
+    recharge: '余额充值',
+    'recharge-manage': '充值管理'
   },
   page: {
     login: {

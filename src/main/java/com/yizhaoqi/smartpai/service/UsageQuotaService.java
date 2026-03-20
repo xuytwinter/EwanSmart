@@ -20,7 +20,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 
-@Service
+//@Service
 public class UsageQuotaService {
 
     private static final Logger logger = LoggerFactory.getLogger(UsageQuotaService.class);
@@ -29,8 +29,8 @@ public class UsageQuotaService {
     private static final double CJK_TOKEN_RATIO = 0.95d;
     private static final double OTHER_TOKEN_RATIO = 0.55d;
 
-    private final StringRedisTemplate stringRedisTemplate;
-    private final UsageQuotaProperties properties;
+    protected final StringRedisTemplate stringRedisTemplate;
+    protected final UsageQuotaProperties properties;
 
     public UsageQuotaService(StringRedisTemplate stringRedisTemplate, UsageQuotaProperties properties) {
         this.stringRedisTemplate = stringRedisTemplate;

@@ -170,7 +170,9 @@ const local: App.I18n.Schema = {
     'org-tag': 'Organization Tag',
     'usage-monitor': 'Usage Monitor',
     user: 'User Management',
-    'personal-center': 'Personal Center'
+    'personal-center': 'Personal Center',
+    recharge: 'Recharge',
+    'recharge-manage': 'Recharge Management'
   },
   page: {
     login: {

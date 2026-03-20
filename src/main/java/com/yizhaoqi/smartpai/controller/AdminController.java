@@ -5,8 +5,10 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yizhaoqi.smartpai.exception.CustomException;
 import com.yizhaoqi.smartpai.model.OrganizationTag;
+import com.yizhaoqi.smartpai.model.RechargePackage;
 import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.OrganizationTagRepository;
+import com.yizhaoqi.smartpai.repository.RechargePackageRepository;
 import com.yizhaoqi.smartpai.repository.UserRepository;
 import com.yizhaoqi.smartpai.service.InviteCodeService;
 import com.yizhaoqi.smartpai.service.ModelProviderConfigService;
@@ -66,6 +68,9 @@ public class AdminController {
 
     @Autowired
     private ModelProviderConfigService modelProviderConfigService;
+
+    @Autowired
+    private RechargePackageRepository rechargePackageRepository;
 
     /**
      * 获取所有用户列表
@@ -1007,6 +1012,196 @@ public class AdminController {
             return ResponseEntity.status(500).body(response);
         }
     }
+
+    // ==================== 充值套餐管理相关接口 ====================
+
+    /**
+     * 获取所有充值套餐列表（包含禁用）
+     */
+    @GetMapping("/recharge-packages")
+    public ResponseEntity<?> getAllRechargePackages(@RequestHeader("Authorization") String token) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+        
+        try {
+            LogUtils.logBusiness("ADMIN_GET_RECHARGE_PACKAGES", adminUsername, "管理员开始获取充值套餐列表");
+            
+            List<RechargePackage> packages = rechargePackageRepository.findAllByDeletedFalseOrderBySortOrderAsc();
+            
+            LogUtils.logBusiness("ADMIN_GET_RECHARGE_PACKAGES", adminUsername, 
+                    "成功获取充值套餐列表，套餐数量：%d", packages.size());
+            
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "获取充值套餐列表成功",
+                    "data", packages
+            ));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_GET_RECHARGE_PACKAGES", adminUsername, "获取充值套餐列表失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "获取充值套餐列表失败：" + e.getMessage()));
+        }
+    }
+
+    /**
+     * 创建充值套餐
+     */
+    @PostMapping("/recharge-packages")
+    public ResponseEntity<?> createRechargePackage(
+            @RequestHeader("Authorization") String token,
+            @RequestBody RechargePackageRequest request) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+        
+        try {
+            LogUtils.logBusiness("ADMIN_CREATE_RECHARGE_PACKAGE", adminUsername, 
+                    "管理员开始创建充值套餐：%s", request.packageName());
+            
+            // 验证必填字段
+            if (request.packageName() == null || request.packageName().isBlank()) {
+                throw new CustomException("套餐名称不能为空", HttpStatus.BAD_REQUEST);
+            }
+            if (request.packagePrice() == null || request.packagePrice() <= 0) {
+                throw new CustomException("套餐价格必须大于 0", HttpStatus.BAD_REQUEST);
+            }
+            if (request.llmToken() == null || request.llmToken() < 0) {
+                throw new CustomException("LLM Token 数量不能为负数", HttpStatus.BAD_REQUEST);
+            }
+            if (request.embeddingToken() == null || request.embeddingToken() < 0) {
+                throw new CustomException("Embedding Token 数量不能为负数", HttpStatus.BAD_REQUEST);
+            }
+            
+            RechargePackage pkg = new RechargePackage();
+            pkg.setPackageName(request.packageName());
+            pkg.setPackagePrice(request.packagePrice());
+            pkg.setPackageDesc(request.packageDesc());
+            pkg.setPackageBenefit(request.packageBenefit());
+            pkg.setLlmToken(request.llmToken());
+            pkg.setEmbeddingToken(request.embeddingToken());
+            pkg.setEnabled(request.enabled() != null ? request.enabled() : true);
+            pkg.setSortOrder(request.sortOrder() != null ? request.sortOrder() : 0);
+            pkg.setDeleted(false);
+            
+            pkg = rechargePackageRepository.save(pkg);
+            
+            LogUtils.logBusiness("ADMIN_CREATE_RECHARGE_PACKAGE", adminUsername, 
+                    "成功创建充值套餐，id=%d", pkg.getId());
+            
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "创建充值套餐成功",
+                    "data", pkg
+            ));
+        } catch (CustomException e) {
+            throw e;
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_CREATE_RECHARGE_PACKAGE", adminUsername, "创建充值套餐失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "创建充值套餐失败：" + e.getMessage()));
+        }
+    }
+
+    /**
+     * 更新充值套餐
+     */
+    @PutMapping("/recharge-packages/{id}")
+    public ResponseEntity<?> updateRechargePackage(
+            @RequestHeader("Authorization") String token,
+            @PathVariable Integer id,
+            @RequestBody RechargePackageRequest request) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+        
+        try {
+            LogUtils.logBusiness("ADMIN_UPDATE_RECHARGE_PACKAGE", adminUsername, 
+                    "管理员开始更新充值套餐，id=%d", id);
+            
+            RechargePackage pkg = rechargePackageRepository.findById(id)
+                    .orElseThrow(() -> new CustomException("套餐不存在", HttpStatus.BAD_REQUEST));
+            
+            // 更新字段
+            if (request.packageName() != null) {
+                pkg.setPackageName(request.packageName());
+            }
+            if (request.packagePrice() != null) {
+                pkg.setPackagePrice(request.packagePrice());
+            }
+            if (request.packageDesc() != null) {
+                pkg.setPackageDesc(request.packageDesc());
+            }
+            if (request.packageBenefit() != null) {
+                pkg.setPackageBenefit(request.packageBenefit());
+            }
+            if (request.llmToken() != null) {
+                pkg.setLlmToken(request.llmToken());
+            }
+            if (request.embeddingToken() != null) {
+                pkg.setEmbeddingToken(request.embeddingToken());
+            }
+            if (request.enabled() != null) {
+                pkg.setEnabled(request.enabled());
+            }
+            if (request.sortOrder() != null) {
+                pkg.setSortOrder(request.sortOrder());
+            }
+            
+            pkg.setUpdatedAt(LocalDateTime.now());
+            pkg = rechargePackageRepository.save(pkg);
+            
+            LogUtils.logBusiness("ADMIN_UPDATE_RECHARGE_PACKAGE", adminUsername, 
+                    "成功更新充值套餐，id=%d", id);
+            
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "更新充值套餐成功",
+                    "data", pkg
+            ));
+        } catch (CustomException e) {
+            throw e;
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_UPDATE_RECHARGE_PACKAGE", adminUsername, "更新充值套餐失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "更新充值套餐失败：" + e.getMessage()));
+        }
+    }
+
+    /**
+     * 删除充值套餐（逻辑删除）
+     */
+    @DeleteMapping("/recharge-packages/{id}")
+    public ResponseEntity<?> deleteRechargePackage(
+            @RequestHeader("Authorization") String token,
+            @PathVariable Integer id) {
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+        
+        try {
+            LogUtils.logBusiness("ADMIN_DELETE_RECHARGE_PACKAGE", adminUsername, 
+                    "管理员开始删除充值套餐，id=%d", id);
+            
+            RechargePackage pkg = rechargePackageRepository.findById(id)
+                    .orElseThrow(() -> new CustomException("套餐不存在", HttpStatus.BAD_REQUEST));
+            
+            // 逻辑删除：设置 deleted=true
+            pkg.setDeleted(true);
+            pkg.setUpdatedAt(LocalDateTime.now());
+            rechargePackageRepository.save(pkg);
+            
+            LogUtils.logBusiness("ADMIN_DELETE_RECHARGE_PACKAGE", adminUsername, 
+                    "成功删除充值套餐（逻辑删除），id=%d", id);
+            
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "删除充值套餐成功"
+            ));
+        } catch (CustomException e) {
+            throw e;
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_DELETE_RECHARGE_PACKAGE", adminUsername, "删除充值套餐失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "删除充值套餐失败：" + e.getMessage()));
+        }
+    }
 }
 
 /**
@@ -1030,3 +1225,17 @@ record OrgTagUpdateRequest(String name, String description, String parentTag, Lo
 record CreateInviteCodeRequest(String code, Integer maxUses, LocalDateTime expiresAt, Integer count) {}
 
 record UpdateInviteCodeRequest(String code, Integer maxUses, LocalDateTime expiresAt) {}
+
+/**
+ * 充值套餐请求体
+ */
+record RechargePackageRequest(
+        String packageName,
+        Long packagePrice,
+        String packageDesc,
+        String packageBenefit,
+        Long llmToken,
+        Long embeddingToken,
+        Boolean enabled,
+        Integer sortOrder
+) {}

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed, onMounted, ref, h } from 'vue';
+import { NTag } from 'naive-ui';
 const { userInfo } = storeToRefs(useAuthStore());
 
 const tags = ref<Api.OrgTag.Mine>({
@@ -27,6 +29,16 @@ const usage = ref<Api.User.UsageSnapshot>({
 });
 
 const loading = ref(false);
+
+// Token 记录相关变量
+const tokenRecords = ref<Api.User.TokenRecord[]>([]);
+const tokenRecordLoading = ref(false);
+const pagination = ref({
+  page: 1,
+  pageSize: 10,
+  total: 0,
+  pageCount: 0
+});
 const getPersonalData = async () => {
   loading.value = true;
   const [{ error: orgError, data: orgData }, { error: usageError, data: usageData }] = await Promise.all([
@@ -45,6 +57,9 @@ const getPersonalData = async () => {
   if (!usageError) {
     usage.value = usageData;
   }
+
+  // 获取 Token 记录
+  getTokenRecords();
 
   loading.value = false;
 };
@@ -83,12 +98,116 @@ const setPrimaryOrg = async () => {
   }
   submitLoading.value = false;
 };
+
+// Token 记录相关方法
+const getTokenRecords = async () => {
+  tokenRecordLoading.value = true;
+  try {
+    const { error, data } = await request({
+      url: '/users/token-records',
+      method: 'GET',
+      params: {
+        page: pagination.value.page - 1,
+        size: pagination.value.pageSize
+      }
+    });
+
+    if (!error && data) {
+      tokenRecords.value = data.content || [];
+      pagination.value.total = data.totalElements || 0;
+      pagination.value.pageCount = data.totalPages || 0;
+    }
+  } finally {
+    tokenRecordLoading.value = false;
+  }
+};
+
+const handlePageChange = (page: number) => {
+  pagination.value.page = page;
+  getTokenRecords();
+};
+
+// Token 记录表格列定义
+const tokenRecordColumns = computed(() => [
+  {
+    title: '日期',
+    key: 'recordDate',
+    width: 100,
+    render: (row: Api.User.TokenRecord) => row.recordDate
+  },
+  {
+    title: 'Token 类型',
+    key: 'tokenType',
+    width: 100,
+    render: (row: Api.User.TokenRecord) => {
+      const typeMap: Record<string, { text: string; type: any }> = {
+        LLM: { text: 'LLM', type: 'info' },
+        EMBEDDING: { text: 'Embedding', type: 'success' }
+      };
+      const type = typeMap[row.tokenType] || { text: row.tokenType, type: 'default' };
+      return h(NTag, { type: type.type }, () => type.text);
+    }
+  },
+  {
+    title: '变动类型',
+    key: 'changeType',
+    width: 100,
+    render: (row: Api.User.TokenRecord) => {
+      const typeMap: Record<string, { text: string; type: any }> = {
+        INCREASE: { text: '充值', type: 'success' },
+        CONSUME: { text: '消耗', type: 'warning' }
+      };
+      const type = typeMap[row.changeType] || { text: row.changeType, type: 'default' };
+      return h(NTag, { type: type.type }, () => type.text);
+    }
+  },
+  {
+    title: '变动数量',
+    key: 'amount',
+    width: 120,
+    render: (row: Api.User.TokenRecord) => {
+      const sign = row.changeType === 'INCREASE' ? '+' : '-';
+      return `${sign}${row.amount.toLocaleString()}`;
+    }
+  },
+  {
+    title: '变动前余额',
+    key: 'balanceBefore',
+    width: 120,
+    render: (row: Api.User.TokenRecord) => row.balanceBefore?.toLocaleString() || '-'
+  },
+  {
+    title: '变动后余额',
+    key: 'balanceAfter',
+    width: 120,
+    render: (row: Api.User.TokenRecord) => row.balanceAfter?.toLocaleString() || '-'
+  },
+  {
+    title: '原因',
+    key: 'reason',
+    minWidth: 100,
+    ellipsis: { tooltip: true },
+    render: (row: Api.User.TokenRecord) => row.reason || '-'
+  },
+  {
+    title: '请求次数',
+    key: 'requestCount',
+    width: 80,
+    render: (row: Api.User.TokenRecord) => row.requestCount?.toLocaleString() || '0'
+  },
+  {
+    title: '创建时间',
+    key: 'createdAt',
+    width: 180,
+    render: (row: Api.User.TokenRecord) => new Date(row.createdAt).toLocaleString('zh-CN')
+  }
+]);
 </script>
 
 <template>
   <NSpin :show="loading">
     <div class="flex-cc">
-      <NCard class="min-h-400px min-w-600px w-50vw card-wrapper" :segmented="{ content: true, footer: 'soft' }">
+      <NCard class="min-h-400px min-w-600px w-70vw card-wrapper" :segmented="{ content: true, footer: 'soft' }">
         <template #header>
           <div class="flex items-center gap-4">
             <NAvatar size="large">
@@ -150,6 +269,28 @@ const setPrimaryOrg = async () => {
             </div>
           </div>
         </NScrollbar>
+        <template #footer>
+          <div class="flex flex-col gap-4">
+            <NDivider>Token 变动记录</NDivider>
+            <NSpin :show="tokenRecordLoading">
+              <NDataTable
+                v-if="tokenRecords.length > 0"
+                :columns="tokenRecordColumns"
+                :data="tokenRecords"
+                :loading="tokenRecordLoading"
+                :pagination="{
+                  page: pagination.page,
+                  pageSize: pagination.pageSize,
+                  itemCount: pagination.total,
+                  onChange: handlePageChange
+                }"
+                :scroll-x="1200"
+                size="small"
+              />
+              <NEmpty v-else description="暂无记录" />
+            </NSpin>
+          </div>
+        </template>
       </NCard>
 
       <NModal

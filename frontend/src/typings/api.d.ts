@@ -101,6 +101,20 @@ declare namespace Api {
       embedding: UsageQuota;
     }
 
+    interface TokenRecord {
+      id: number;
+      recordDate: string;
+      tokenType: 'LLM' | 'EMBEDDING';
+      changeType: 'INCREASE' | 'CONSUME';
+      amount: number;
+      balanceBefore: number | null;
+      balanceAfter: number | null;
+      reason: string;
+      remark: string | null;
+      requestCount: number;
+      createdAt: string;
+    }
+
     type SearchParams = CommonType.RecordNullable<
       Common.CommonSearchParams & {
         keyword: string;
@@ -155,6 +169,52 @@ declare namespace Api {
       pages: number;
       current: number;
       size: number;
+    }
+  }
+
+  /**
+   * namespace Recharge
+   *
+   * backend api module: "recharge"
+   */
+  namespace Recharge {
+    /** 充值套餐 */
+    interface Package {
+      id: number;
+      packageName: string;
+      packagePrice: number; // 单位分
+      packageDesc: string;
+      packageBenefit: string;
+      llmToken: number; // LLM token 数量
+      embeddingToken: number; // Embedding token 数量
+      enabled: boolean;
+      createdAt: string;
+      updatedAt: string;
+    }
+
+    /** 订单信息 */
+    interface OrderInfo {
+      outTradeNo: string;
+      appId: string;
+      prePayId: string;
+      expireTime: number;
+    }
+
+    /** 充值订单 */
+    interface Order {
+      id: number;
+      tradeNo: string;
+      userId: string;
+      packageId: number;
+      amount: number; // 单位分
+      llmToken: number; // LLM token 数量
+      embeddingToken: number; // Embedding token 数量
+      wxTransactionId: string;
+      status: 'NOT_PAY' | 'PAYING' | 'SUCCEED' | 'FAIL' | 'CANCELLED';
+      description: string;
+      payTime: string | null;
+      createdAt: string;
+      updatedAt: string;
     }
   }
 

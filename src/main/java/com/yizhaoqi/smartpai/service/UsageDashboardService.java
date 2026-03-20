@@ -2,14 +2,12 @@ package com.yizhaoqi.smartpai.service;
 
 import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.UserRepository;
-import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
-@Service
 public class UsageDashboardService {
 
     private final UserRepository userRepository;
@@ -27,6 +25,7 @@ public class UsageDashboardService {
                 .map(user -> String.valueOf(user.getId()))
                 .toList();
 
+        // fixme 如果用户较多，这里的 snapshots 的获取方案有oom的风险
         Map<String, UsageQuotaService.UserUsageSnapshot> snapshots = usageQuotaService.getSnapshots(userIds);
         List<DailyUsagePoint> trends = usageQuotaService.getDailyAggregates(userIds, normalizedDays).stream()
                 .map(item -> new DailyUsagePoint(
