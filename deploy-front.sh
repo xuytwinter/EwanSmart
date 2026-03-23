@@ -17,7 +17,7 @@ fi
 
 SERVER_HOST="${DEPLOY_SERVER_HOST:-${SERVER_HOST:-}}"
 SERVER_USER="${DEPLOY_SERVER_USER:-${SERVER_USER:-root}}"
-SERVER_KEY="${DEPLOY_SERVER_KEY:-${SERVER_KEY:-$FRONTEND_DIR/paicoding.pem}}"
+SERVER_KEY="${DEPLOY_SERVER_KEY:-${SERVER_KEY:-}}"
 TARGET_DIR="${DEPLOY_TARGET_DIR:-${TARGET_DIR:-/home/www/PaiSmart-Front}}"
 BUILD_CMD="${DEPLOY_BUILD_CMD:-${BUILD_CMD:-pnpm build}}"
 SKIP_BUILD="${DEPLOY_SKIP_BUILD:-${SKIP_BUILD:-0}}"
@@ -57,6 +57,11 @@ fi
 
 if [ -z "$SERVER_HOST" ]; then
   printf 'DEPLOY_SERVER_HOST is required. Set it in %s or export it before running.\n' "$ENV_FILE" >&2
+  exit 1
+fi
+
+if [ -z "$SERVER_KEY" ]; then
+  printf 'DEPLOY_SERVER_KEY is required. Set it in %s or export it before running.\n' "$ENV_FILE" >&2
   exit 1
 fi
 
