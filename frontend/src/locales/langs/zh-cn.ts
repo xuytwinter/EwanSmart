@@ -217,7 +217,7 @@ const local: App.I18n.Schema = {
         protocol: '《用户协议》',
         and: '和',
         policy: '《隐私权政策》',
-        inviteCodeTip: '当前站点采用邀请码注册，请联系管理员获取有效邀请码。'
+        inviteCodeTip: '当前站点采用邀请码注册。还没有邀请码时，可先关注公众号【沉默王二】，后台回复【聪明】领取。'
       },
       resetPwd: {
         title: '重置密码'

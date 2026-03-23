@@ -387,7 +387,7 @@ public class AdminController {
                     adminUsername,
                     request.code(),
                     request.maxUses(),
-                    request.expiresAt(),
+                    null,
                     request.count()
             );
             return ResponseEntity.ok(Map.of("code", 200, "message", "邀请码创建成功", "data", created));
@@ -464,7 +464,7 @@ public class AdminController {
         validateAdmin(adminUsername);
 
         try {
-            var updated = inviteCodeService.update(id, adminUsername, request.code(), request.maxUses(), request.expiresAt());
+            var updated = inviteCodeService.update(id, adminUsername, request.code(), request.maxUses(), null);
             return ResponseEntity.ok(Map.of("code", 200, "message", "邀请码已更新", "data", updated));
         } catch (CustomException e) {
             return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
@@ -1222,9 +1222,9 @@ record AssignOrgTagsRequest(List<String> orgTags) {}
 // 添加组织标签更新请求记录类
 record OrgTagUpdateRequest(String name, String description, String parentTag, Long uploadMaxSizeMb) {}
 
-record CreateInviteCodeRequest(String code, Integer maxUses, LocalDateTime expiresAt, Integer count) {}
+record CreateInviteCodeRequest(String code, Integer maxUses, Integer count) {}
 
-record UpdateInviteCodeRequest(String code, Integer maxUses, LocalDateTime expiresAt) {}
+record UpdateInviteCodeRequest(String code, Integer maxUses) {}
 
 /**
  * 充值套餐请求体

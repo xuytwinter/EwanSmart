@@ -13,10 +13,13 @@ import org.mockito.MockitoAnnotations;
 import org.springframework.http.HttpStatus;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.*;
 
 class InviteCodeServiceTest {
@@ -77,10 +80,12 @@ class InviteCodeServiceTest {
 
         when(userRepository.findByUsername("admin")).thenReturn(Optional.of(admin));
         when(inviteCodeRepository.findByCode(anyString())).thenReturn(Optional.empty());
+        when(inviteCodeRepository.saveAll(anyList())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        inviteCodeService.createInviteCode("admin", null, 1, null);
+        InviteCode inviteCode = inviteCodeService.createInviteCode("admin", null, 1, null);
 
-        verify(inviteCodeRepository, times(1)).save(any(InviteCode.class));
+        assertNull(inviteCode.getExpiresAt());
+        verify(inviteCodeRepository, times(1)).saveAll(anyList());
     }
 
     @Test

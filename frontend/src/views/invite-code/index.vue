@@ -1,6 +1,7 @@
 <script setup lang="tsx">
 import type { DataTableColumns, DataTableRowKey, FormRules, PaginationProps, SelectOption } from 'naive-ui';
 import { NButton, NInput, NInputNumber, NPopconfirm, NTag } from 'naive-ui';
+import { buildInviteCodeShareMessage } from '@/constants/invite-channel';
 import {
   fetchCreateInviteCode,
   fetchDeleteInviteCode,
@@ -15,7 +16,6 @@ interface InviteCodeFormModel {
   code: string;
   count: number | null;
   maxUses: number | null;
-  expiresAt: number | null;
 }
 
 const enabledOptions: SelectOption[] = [
@@ -74,15 +74,6 @@ const rules = ref<FormRules>({
       message: '最大使用次数必须是大于 0 的整数',
       trigger: 'change'
     }
-  ],
-  expiresAt: [
-    {
-      validator(_, value: number | null) {
-        return value === null || value > Date.now();
-      },
-      message: '过期时间必须晚于当前时间',
-      trigger: 'change'
-    }
   ]
 });
 
@@ -125,64 +116,69 @@ const columns = computed<DataTableColumns<Api.InviteCode.Item>>(() => [
   {
     key: 'code',
     title: '邀请码',
-    minWidth: 220,
+    minWidth: 240,
     render: row => (
-      <div class="flex items-center gap-2">
-        <span class="text-3 font-mono">{row.code}</span>
-        <NButton
-          size="tiny"
-          quaternary
-          onClick={() => {
-            navigator.clipboard.writeText(row.code);
-            window.$message?.success('邀请码已复制');
-          }}
-        >
-          复制
-        </NButton>
-        <NButton
-          size="tiny"
-          quaternary
-          onClick={() => {
-            navigator.clipboard.writeText(createInviteShareLink(row.code));
-            window.$message?.success('分享链接已复制');
-          }}
-        >
-          复制分享
-        </NButton>
+      <div class="min-w-0">
+        <div class="truncate text-3.5 leading-5 font-mono">{row.code}</div>
+        <div class="mt-2 flex flex-wrap gap-2">
+          <NButton
+            size="tiny"
+            quaternary
+            onClick={() => {
+              navigator.clipboard.writeText(row.code);
+              window.$message?.success('邀请码已复制');
+            }}
+          >
+            复制
+          </NButton>
+          <NButton
+            size="tiny"
+            quaternary
+            onClick={() => {
+              navigator.clipboard.writeText(createInviteShareLink(row.code));
+              window.$message?.success('注册链接已复制');
+            }}
+          >
+            复制链接
+          </NButton>
+          <NButton
+            size="tiny"
+            quaternary
+            onClick={() => {
+              navigator.clipboard.writeText(buildInviteCodeShareMessage(createInviteShareLink(row.code), row.code));
+              window.$message?.success('邀请话术已复制');
+            }}
+          >
+            复制话术
+          </NButton>
+        </div>
       </div>
     )
   },
   {
     key: 'usage',
     title: '使用情况',
-    width: 140,
+    width: 92,
     render: row => `${row.usedCount}/${row.maxUses}`
   },
   {
     key: 'remaining',
-    title: '剩余次数',
-    width: 100,
+    title: '剩余',
+    width: 76,
     render: row => Math.max(0, row.maxUses - row.usedCount)
-  },
-  {
-    key: 'expiresAt',
-    title: '过期时间',
-    width: 180,
-    render: row => (row.expiresAt ? dayjs(row.expiresAt).format('YYYY-MM-DD HH:mm:ss') : '长期有效')
   },
   {
     key: 'enabled',
     title: '状态',
-    width: 100,
+    width: 84,
     render: row => <NTag type={row.enabled ? 'success' : 'default'}>{row.enabled ? '已启用' : '已禁用'}</NTag>
   },
   {
     key: 'availability',
     title: '可用性',
-    width: 120,
+    width: 92,
     render: row => {
       if (!row.enabled) return <NTag type="default">不可用</NTag>;
-      if (row.expiresAt && dayjs(row.expiresAt).isBefore(dayjs())) return <NTag type="warning">已过期</NTag>;
       if (row.usedCount >= row.maxUses) return <NTag type="error">已耗尽</NTag>;
       return <NTag type="success">可使用</NTag>;
     }
@@ -190,14 +186,14 @@ const columns = computed<DataTableColumns<Api.InviteCode.Item>>(() => [
   {
     key: 'createdBy',
     title: '创建人',
-    width: 120,
+    width: 88,
     render: row => row.createdBy?.username || '-'
   },
   {
     key: 'createdAt',
-    title: '创建时间',
-    width: 180,
-    render: row => dayjs(row.createdAt).format('YYYY-MM-DD HH:mm:ss')
+    title: '创建日期',
+    width: 120,
+    render: row => dayjs(row.createdAt).format('YYYY-MM-DD')
   },
   {
     key: 'operate',
@@ -243,8 +239,7 @@ function createDefaultModel(): InviteCodeFormModel {
   return {
     code: '',
     count: 1,
-    maxUses: 1,
-    expiresAt: dayjs().add(7, 'day').valueOf()
+    maxUses: 1
   };
 }
 
@@ -296,8 +291,7 @@ function openEditDialog(row: Api.InviteCode.Item) {
   model.value = {
     code: row.code,
     count: 1,
-    maxUses: row.maxUses,
-    expiresAt: row.expiresAt ? dayjs(row.expiresAt).valueOf() : null
+    maxUses: row.maxUses
   };
   visible.value = true;
   nextTick(() => {
@@ -310,11 +304,6 @@ function closeDialog() {
   editingId.value = null;
 }
 
-function normalizeDateTime(value: number | null) {
-  if (!value) return null;
-  return dayjs(value).format('YYYY-MM-DDTHH:mm:ss');
-}
-
 async function handleCreate() {
   await validate();
 
@@ -322,7 +311,7 @@ async function handleCreate() {
   const payload = {
     code: model.value.code.trim(),
     maxUses: Number(model.value.maxUses),
-    expiresAt: normalizeDateTime(model.value.expiresAt)
+    expiresAt: null
   };
   const { error } = isEditing.value
     ? await fetchUpdateInviteCode(editingId.value!, payload)
@@ -423,7 +412,7 @@ onMounted(() => {
       </template>
 
       <div class="mb-4 text-13px text-#8a6b43">
-        默认一周后过期。邀请码留空时，后端会自动生成 16 位随机码；批量创建时会连续生成多条随机邀请码。
+        邀请码留空时，后端会自动生成 16 位随机码；批量创建时会连续生成多条随机邀请码，默认长期有效。
       </div>
 
       <div class="min-h-0 sm:flex-1">
@@ -432,7 +421,7 @@ onMounted(() => {
           :data="data"
           size="small"
           :flex-height="!appStore.isMobile"
-          :scroll-x="1240"
+          :scroll-x="1100"
           :loading="loading"
           remote
           :row-key="row => row.id"
@@ -473,15 +462,6 @@ onMounted(() => {
         </NFormItem>
         <NFormItem label="最大使用次数" path="maxUses">
           <NInputNumber v-model:value="model.maxUses" class="w-full" :min="1" :precision="0" placeholder="请输入次数" />
-        </NFormItem>
-        <NFormItem label="过期时间" path="expiresAt">
-          <NDatePicker
-            v-model:value="model.expiresAt"
-            type="datetime"
-            clearable
-            class="w-full"
-            placeholder="默认一周后过期"
-          />
         </NFormItem>
       </NForm>
 

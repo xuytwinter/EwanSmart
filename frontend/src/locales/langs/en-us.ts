@@ -217,7 +217,8 @@ const local: App.I18n.Schema = {
         protocol: '《User Agreement》',
         and: 'and',
         policy: '《Privacy Policy》',
-        inviteCodeTip: 'This site is invite-only. Contact an administrator for a valid invite code.'
+        inviteCodeTip:
+          'This site is invite-only. If you do not have an invite code yet, follow the WeChat official account "沉默王二" and reply with "聪明".'
       },
       resetPwd: {
         title: 'Reset Password'

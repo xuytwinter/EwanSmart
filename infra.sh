@@ -20,7 +20,8 @@ KAFKA_CMD="./start-kafka.sh"
 
 ELASTICSEARCH_DIR="/Users/itwanger/Downloads/elasticsearch-8.10.0"
 ELASTICSEARCH_PORT="9200"
-ELASTICSEARCH_CMD='ES_JAVA_HOME=$JAVA_HOME ES_JAVA_OPTS="-Xms500M -Xmx500M" ./bin/elasticsearch'
+ELASTICSEARCH_SCHEME="${ELASTICSEARCH_SCHEME:-https}"
+ELASTICSEARCH_CMD='ES_JAVA_OPTS="-Xms500M -Xmx500M" ./bin/elasticsearch'
 
 SERVICES=("minio" "kafka" "elasticsearch")
 
@@ -70,7 +71,7 @@ service_pattern() {
     case "$1" in
         minio) echo 'minio server data/' ;;
         kafka) echo 'kafka\.Kafka|start-kafka\.sh' ;;
-        elasticsearch) echo 'org\.elasticsearch\.bootstrap\.Elasticsearch|elasticsearch-8\.10\.0' ;;
+        elasticsearch) echo 'org\.elasticsearch\.bootstrap\.Elasticsearch|org\.elasticsearch\.server|jdk\.module\.main=org\.elasticsearch\.server|elasticsearch-8\.10\.0' ;;
         *) return 1 ;;
     esac
 }
@@ -113,6 +114,94 @@ http_ok() {
     return 1
 }
 
+java_major_version() {
+    local java_bin="$1"
+    local version_line version
+    version_line="$("${java_bin}" -version 2>&1 | head -n 1)"
+    version="$(printf '%s\n' "${version_line}" | sed -E 's/.*version "([^"]+)".*/\1/')"
+
+    if [[ "${version}" == 1.* ]]; then
+        echo "${version#1.}" | cut -d. -f1
+        return 0
+    fi
+
+    echo "${version}" | cut -d. -f1
+}
+
+detect_java_home() {
+    local project_java_version project_java_home
+
+    if [ -f "${ROOT_DIR}/.java-version" ] && command -v jenv > /dev/null 2>&1; then
+        project_java_version="$(tr -d '[:space:]' < "${ROOT_DIR}/.java-version")"
+        if [ -n "${project_java_version}" ]; then
+            project_java_home="$(jenv prefix "${project_java_version}" 2>/dev/null || true)"
+            if [ -n "${project_java_home}" ] && [ -x "${project_java_home}/bin/java" ]; then
+                echo "${project_java_home}"
+                return 0
+            fi
+        fi
+    fi
+
+    if [ -n "${JAVA_HOME:-}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
+        local current_major
+        current_major="$(java_major_version "${JAVA_HOME}/bin/java")"
+        if [ "${current_major}" -ge 17 ]; then
+            echo "${JAVA_HOME}"
+            return 0
+        fi
+    fi
+
+    if command -v /usr/libexec/java_home > /dev/null 2>&1; then
+        local detected_home
+        detected_home="$(/usr/libexec/java_home -v 17+ 2>/dev/null || true)"
+        if [ -n "${detected_home}" ] && [ -x "${detected_home}/bin/java" ]; then
+            echo "${detected_home}"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+elastic_http_status() {
+    local scheme="$1"
+    curl \
+        --silent \
+        --output /dev/null \
+        --write-out '%{http_code}' \
+        --max-time 2 \
+        --insecure \
+        "${scheme}://127.0.0.1:${ELASTICSEARCH_PORT}" 2>/dev/null || true
+}
+
+elastic_health_check() {
+    local status
+
+    if [ "${ELASTICSEARCH_SCHEME}" = "https" ]; then
+        status="$(elastic_http_status "https")"
+        case "${status}" in
+            200|401|403) return 0 ;;
+        esac
+        status="$(elastic_http_status "http")"
+        case "${status}" in
+            200|401|403) return 0 ;;
+        esac
+        port_is_listening "${ELASTICSEARCH_PORT}" && return 0
+        return 1
+    fi
+
+    status="$(elastic_http_status "http")"
+    case "${status}" in
+        200|401|403) return 0 ;;
+    esac
+    status="$(elastic_http_status "https")"
+    case "${status}" in
+        200|401|403) return 0 ;;
+    esac
+    port_is_listening "${ELASTICSEARCH_PORT}" && return 0
+    return 1
+}
+
 http_health_check() {
     local service="$1"
     case "${service}" in
@@ -121,7 +210,7 @@ http_health_check() {
             http_ok "http://127.0.0.1:${MINIO_CONSOLE_PORT}" || return 1
             ;;
         elasticsearch)
-            http_ok "http://127.0.0.1:${ELASTICSEARCH_PORT}" || return 1
+            elastic_health_check || return 1
             ;;
         kafka)
             port_is_listening "${KAFKA_PORT}" || return 1
@@ -199,8 +288,8 @@ validate_service() {
         return 1
     fi
 
-    if [ "${service}" = "elasticsearch" ] && [ -z "${JAVA_HOME:-}" ]; then
-        echo "启动 Elasticsearch 需要先设置 JAVA_HOME"
+    if [ "${service}" = "elasticsearch" ] && ! detect_java_home > /dev/null; then
+        echo "启动 Elasticsearch 需要 Java 17+，但当前未找到可用的 JDK"
         return 1
     fi
 
@@ -225,6 +314,10 @@ start_service() {
     echo "启动 ${service}..."
     (
         cd "${dir}" || exit 1
+        if [ "${service}" = "elasticsearch" ]; then
+            export ES_JAVA_HOME
+            ES_JAVA_HOME="$(detect_java_home)" || exit 1
+        fi
         if command -v setsid > /dev/null 2>&1; then
             nohup setsid bash -lc "${cmd}" >> "${log_path}" 2>&1 < /dev/null &
         else
@@ -338,7 +431,7 @@ show_urls() {
 MinIO API:        http://127.0.0.1:${MINIO_API_PORT}
 MinIO Console:    http://127.0.0.1:${MINIO_CONSOLE_PORT}
 Kafka Broker:     127.0.0.1:${KAFKA_PORT}
-Elasticsearch:    http://127.0.0.1:${ELASTICSEARCH_PORT}
+Elasticsearch:    ${ELASTICSEARCH_SCHEME}://127.0.0.1:${ELASTICSEARCH_PORT}
 EOF
 }
 

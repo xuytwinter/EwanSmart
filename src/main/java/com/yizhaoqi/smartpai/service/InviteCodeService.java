@@ -59,8 +59,8 @@ public class InviteCodeService {
         }
 
         int normalizedMaxUses = maxUses == null || maxUses <= 0 ? 1 : maxUses;
-        LocalDateTime normalizedExpiresAt = expiresAt == null ? LocalDateTime.now().plusDays(7) : expiresAt;
-        if (normalizedExpiresAt.isBefore(LocalDateTime.now())) {
+        LocalDateTime normalizedExpiresAt = expiresAt;
+        if (normalizedExpiresAt != null && normalizedExpiresAt.isBefore(LocalDateTime.now())) {
             throw new CustomException("Invite code expiry must be in the future", HttpStatus.BAD_REQUEST);
         }
 
