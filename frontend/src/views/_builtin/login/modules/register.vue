@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { inviteChannelConfig } from '@/constants/invite-channel';
+import { normalizeBackendMessage } from '@/service/request/shared';
 import { $t } from '@/locales';
 
 defineOptions({
@@ -9,6 +10,13 @@ defineOptions({
 const route = useRoute();
 const { toggleLoginModule } = useRouterPush();
 const { formRef, validate } = useNaiveForm();
+
+const inviteCodeErrorCodes = new Set([
+  'INVITE_CODE_REQUIRED',
+  'INVITE_CODE_INVALID',
+  'INVITE_CODE_EXPIRED',
+  'INVITE_CODE_EXHAUSTED'
+]);
 
 interface FormModel {
   username: string;
@@ -36,15 +44,37 @@ const rules = computed<Record<keyof FormModel, App.Global.FormRule[]>>(() => {
 });
 
 const loading = ref(false);
+const inviteCodeErrorMessage = ref('');
 const inviteChannelKeywords = [...inviteChannelConfig.replyKeywords];
 
+function clearInviteCodeError() {
+  inviteCodeErrorMessage.value = '';
+}
+
+function resolveRegisterError(error: any) {
+  const rawMessage = String(error?.response?.data?.message || error?.message || '');
+  const message = normalizeBackendMessage(rawMessage || '注册失败，请稍后重试');
+
+  return {
+    rawMessage,
+    message
+  };
+}
+
 async function handleSubmit() {
+  clearInviteCodeError();
   await validate();
   loading.value = true;
   const { error } = await fetchRegister(model.username, model.password, model.inviteCode.trim());
   if (!error) {
     window.$message?.success('注册成功');
     toggleLoginModule('pwd-login');
+  } else {
+    const { rawMessage, message } = resolveRegisterError(error);
+
+    if (inviteCodeErrorCodes.has(rawMessage)) {
+      inviteCodeErrorMessage.value = message;
+    }
   }
   loading.value = false;
 }
@@ -69,6 +99,15 @@ watch(
     syncInviteCodeFromQuery(inviteCode);
   },
   { immediate: true }
+);
+
+watch(
+  () => model.inviteCode,
+  () => {
+    if (inviteCodeErrorMessage.value) {
+      clearInviteCodeError();
+    }
+  }
 );
 </script>
 
@@ -166,7 +205,11 @@ watch(
           </template>
         </NInput>
       </NFormItem>
-      <NFormItem path="inviteCode">
+      <NFormItem
+        path="inviteCode"
+        :validation-status="inviteCodeErrorMessage ? 'error' : undefined"
+        :feedback="inviteCodeErrorMessage || undefined"
+      >
         <NInput v-model:value="model.inviteCode" :placeholder="$t('page.login.common.inviteCodePlaceholder')">
           <template #prefix>
             <icon-ant-design:safety-certificate-outlined />

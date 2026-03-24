@@ -4,7 +4,7 @@ import { BACKEND_ERROR_CODE, createFlatRequest } from '@sa/axios';
 import { useAuthStore } from '@/store/modules/auth';
 import { getServiceBaseURL } from '@/utils/service';
 import { $t } from '@/locales';
-import { getAuthorization, handleExpiredRequest, showErrorMsg } from './shared';
+import { getAuthorization, handleExpiredRequest, normalizeBackendMessage, showErrorMsg } from './shared';
 import type { RequestInstanceState } from './type';
 
 const isHttpProxy = import.meta.env.DEV && import.meta.env.VITE_HTTP_PROXY === 'Y';
@@ -107,20 +107,28 @@ function getFlatRequest(options: Partial<RequestOption<App.Service.Response>> = 
 
         if (error.code === 'ERR_CANCELED') return;
 
-        // handle 403 Forbidden error - user needs to login
-        if (error.response?.status === 403) {
-          const authStore = useAuthStore();
-          authStore.resetStore();
-          return;
-        }
-
         let message = error.message;
         let backendErrorCode = '';
+        const backendMessage = error.response?.data?.message;
 
         // get backend error message and code
         if (error.code && BACKEND_ERROR_CODE.split(',').includes(error.code)) {
-          message = error.response?.data?.message || message;
+          message = backendMessage || message;
           backendErrorCode = String(error.response?.data?.code || '');
+        }
+
+        message = normalizeBackendMessage(message);
+
+        // 对需要登录的 403 做兜底处理；带业务文案的 403 继续向用户展示具体错误
+        if (error.response?.status === 403) {
+          const hasAuthorization = Boolean(getAuthorization());
+          const hasBackendMessage = Boolean(backendMessage);
+
+          if (hasAuthorization && !hasBackendMessage) {
+            const authStore = useAuthStore();
+            authStore.resetStore();
+            return;
+          }
         }
 
         // the error message is displayed in the modal

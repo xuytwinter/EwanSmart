@@ -3,11 +3,24 @@ import { localStg } from '@/utils/storage';
 import { fetchRefreshToken } from '../api';
 import type { RequestInstanceState } from './type';
 
+const backendMessageMap: Record<string, string> = {
+  INVITE_CODE_REQUIRED: '请输入邀请码',
+  INVITE_CODE_INVALID: '邀请码不正确，请检查后重试',
+  INVITE_CODE_EXPIRED: '邀请码已过期，请重新获取',
+  INVITE_CODE_EXHAUSTED: '邀请码已失效，请重新获取',
+  REGISTRATION_CLOSED: '当前暂未开放注册',
+  'Username already exists': '用户名已存在'
+};
+
 export function getAuthorization() {
   const token = localStg.get('token');
   const Authorization = token ? `Bearer ${token}` : null;
 
   return Authorization;
+}
+
+export function normalizeBackendMessage(message: string) {
+  return backendMessageMap[message] || message;
 }
 
 /** refresh token */
