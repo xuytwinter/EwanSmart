@@ -15,8 +15,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
@@ -280,24 +278,15 @@ public class DocumentController {
     @GetMapping("/download")
     public ResponseEntity<?> downloadFileByName(
             @RequestParam String fileName,
+            @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestParam(required = false) String token) {
         
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("DOWNLOAD_FILE_BY_NAME");
         try {
             // 验证token并获取用户信息
-            String userId = null;
-            String orgTags = null;
-            
-            if (token != null && !token.trim().isEmpty()) {
-                try {
-                    // 解析JWT token获取用户信息
-                    // 注意：JWT中的sub字段存储用户名，userId字段存储用户ID（但有时可能存储的是用户名）
-                    userId = jwtUtils.extractUsernameFromToken(token);
-                    orgTags = jwtUtils.extractOrgTagsFromToken(token);
-                } catch (Exception e) {
-                    LogUtils.logBusiness("DOWNLOAD_FILE_BY_NAME", "anonymous", "Token解析失败: fileName=%s", fileName);
-                }
-            }
+            RequestAuthContext authContext = resolveRequestAuthContext(authorization, token);
+            String userId = authContext.userId();
+            String orgTags = authContext.orgTags();
             
             LogUtils.logBusiness("DOWNLOAD_FILE_BY_NAME", userId != null ? userId : "anonymous", "接收到文件下载请求: fileName=%s", fileName);
             
@@ -408,40 +397,15 @@ public class DocumentController {
             @RequestParam String fileName,
             @RequestParam(required = false) String fileMd5,
             @RequestParam(required = false) Integer pageNumber,
+            @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestParam(required = false) String token) {
         
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("PREVIEW_FILE_BY_NAME");
         try {
             // 验证token并获取用户信息
-            String userId = null;
-            String orgTags = null;
-            
-            // 优先从Spring Security上下文获取已认证的用户信息
-            try {
-                var authentication = SecurityContextHolder.getContext().getAuthentication();
-                if (authentication != null && authentication.isAuthenticated() 
-                    && authentication.getPrincipal() instanceof UserDetails) {
-                    UserDetails userDetails = (UserDetails) authentication.getPrincipal();
-                    userId = userDetails.getUsername();
-                    // 从userDetails中获取组织标签信息
-                    orgTags = userDetails.getAuthorities().stream()
-                        .map(auth -> auth.getAuthority().replace("ROLE_", ""))
-                        .findFirst()
-                        .orElse(null);
-                }
-            } catch (Exception e) {
-                LogUtils.logBusiness("PREVIEW_FILE_BY_NAME", "anonymous", "Security上下文获取失败: fileName=%s", fileName);
-            }
-            
-            // 如果Security上下文中没有用户信息，尝试从URL参数token中获取
-            if (userId == null && token != null && !token.trim().isEmpty()) {
-                try {
-                    userId = jwtUtils.extractUsernameFromToken(token);
-                    orgTags = jwtUtils.extractOrgTagsFromToken(token);
-                } catch (Exception e) {
-                    LogUtils.logBusiness("PREVIEW_FILE_BY_NAME", "anonymous", "Token解析失败: fileName=%s", fileName);
-                }
-            }
+            RequestAuthContext authContext = resolveRequestAuthContext(authorization, token);
+            String userId = authContext.userId();
+            String orgTags = authContext.orgTags();
             
             LogUtils.logBusiness("PREVIEW_FILE_BY_NAME", userId != null ? userId : "anonymous",
                     "接收到文件预览请求: fileName=%s, fileMd5=%s, pageNumber=%s", fileName, fileMd5, pageNumber);
@@ -648,21 +612,14 @@ public class DocumentController {
     @GetMapping("/download-by-md5")
     public ResponseEntity<?> downloadFileByMd5(
             @RequestParam String fileMd5,
+            @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestParam(required = false) String token) {
 
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("DOWNLOAD_FILE_BY_MD5");
         try {
-            String userId = null;
-            String orgTags = null;
-
-            if (token != null && !token.trim().isEmpty()) {
-                try {
-                    userId = jwtUtils.extractUsernameFromToken(token);
-                    orgTags = jwtUtils.extractOrgTagsFromToken(token);
-                } catch (Exception e) {
-                    LogUtils.logBusiness("DOWNLOAD_FILE_BY_MD5", "anonymous", "Token解析失败: fileMd5=%s", fileMd5);
-                }
-            }
+            RequestAuthContext authContext = resolveRequestAuthContext(authorization, token);
+            String userId = authContext.userId();
+            String orgTags = authContext.orgTags();
 
             LogUtils.logBusiness("DOWNLOAD_FILE_BY_MD5", userId != null ? userId : "anonymous", "接收到文件下载请求: fileMd5=%s", fileMd5);
 
@@ -722,7 +679,8 @@ public class DocumentController {
     @GetMapping("/reference-detail")
     public ResponseEntity<?> getReferenceDetail(
             @RequestParam String sessionId,
-            @RequestParam Integer referenceNumber) {
+            @RequestParam Integer referenceNumber,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
 
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("GET_REFERENCE_DETAIL");
         try {
@@ -736,6 +694,19 @@ public class DocumentController {
                 response.put("code", HttpStatus.NOT_FOUND.value());
                 response.put("message", "未找到对应的文件引用");
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+            }
+
+            RequestAuthContext authContext = resolveRequestAuthContext(authorization, null);
+            if (authContext.userId() != null) {
+                boolean hasAccess = documentService.getAccessibleFiles(authContext.userId(), authContext.orgTags()).stream()
+                        .anyMatch(file -> file.getFileMd5().equals(detail.fileMd5()));
+                if (!hasAccess) {
+                    monitor.end("获取引用详情失败：无权限访问引用文件");
+                    Map<String, Object> response = new HashMap<>();
+                    response.put("code", HttpStatus.FORBIDDEN.value());
+                    response.put("message", "无权限访问该引用文件");
+                    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
+                }
             }
 
             Map<String, Object> data = new HashMap<>();
@@ -846,6 +817,36 @@ public class DocumentController {
 
         return fileName.substring(dotIndex + 1);
     }
+
+    private RequestAuthContext resolveRequestAuthContext(String authorization, String fallbackToken) {
+        String jwtToken = extractBearerToken(authorization);
+        if ((jwtToken == null || jwtToken.isBlank()) && fallbackToken != null && !fallbackToken.isBlank()) {
+            jwtToken = fallbackToken.trim();
+        }
+
+        if (jwtToken == null || jwtToken.isBlank()) {
+            return new RequestAuthContext(null, null);
+        }
+
+        return new RequestAuthContext(
+                jwtUtils.extractUserIdFromToken(jwtToken),
+                jwtUtils.extractOrgTagsFromToken(jwtToken)
+        );
+    }
+
+    private String extractBearerToken(String authorization) {
+        if (authorization == null) {
+            return null;
+        }
+
+        String trimmed = authorization.trim();
+        if (trimmed.startsWith("Bearer ")) {
+            return trimmed.substring(7);
+        }
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private record RequestAuthContext(String userId, String orgTags) {}
     
     /**
      * 根据tagId获取tagName

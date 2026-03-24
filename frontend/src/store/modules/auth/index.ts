@@ -19,14 +19,15 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
   const { loading: loginLoading, startLoading, endLoading } = useLoading();
 
   const token = ref(getToken());
-
-  const userInfo: Api.Auth.UserInfo = reactive({
+  const defaultUserInfo: Api.Auth.UserInfo = {
     id: 0,
     username: '',
     role: 'USER',
     orgTags: [],
     primaryOrg: ''
-  });
+  };
+
+  const userInfo: Api.Auth.UserInfo = reactive({ ...defaultUserInfo });
 
   const isAdmin = computed(() => userInfo.role === 'ADMIN');
 
@@ -42,13 +43,12 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
 
   /** Reset auth store */
   async function resetStore() {
-    const authStore = useAuthStore();
-
     recordUserId();
 
     clearAuthStorage();
-
-    authStore.$reset();
+    token.value = '';
+    Object.assign(userInfo, defaultUserInfo);
+    useChatStore().handleAuthReset();
 
     if (!route.meta.constant) {
       await toLogin();

@@ -142,6 +142,15 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     rawWsClose(code, reason);
   }
 
+  function handleAuthReset() {
+    clearRateLimitCountdown();
+    resetConnectionState();
+    conversationId.value = '';
+    input.value = { message: '' };
+    list.value = [];
+    wsClose(1000, 'auth-reset');
+  }
+
   watch(
     socketUrl,
     url => {
@@ -202,6 +211,7 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     sessionId,
     scrollToBottom,
     clearRateLimitCountdown,
-    startRateLimitCountdown
+    startRateLimitCountdown,
+    handleAuthReset
   };
 });

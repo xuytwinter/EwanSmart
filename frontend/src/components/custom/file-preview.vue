@@ -330,14 +330,12 @@ async function loadPreviewContent() {
   previewType.value = 'text';
 
   try {
-    const token = localStorage.getItem('token');
-
     // 优先使用 MD5 预览（如果存在）
     if (props.fileMd5) {
       console.log('[文件预览] 使用MD5模式预览，请求参数:', {
         fileName: props.fileName,
         fileMd5: props.fileMd5,
-        hasToken: !!token
+        pageNumber: props.pageNumber
       });
 
       const { error: requestError, data } = await request<{
@@ -355,8 +353,7 @@ async function loadPreviewContent() {
         params: {
           fileName: props.fileName,
           fileMd5: props.fileMd5,
-          pageNumber: props.pageNumber,
-          token: token || undefined
+          pageNumber: props.pageNumber
         }
       });
 
@@ -382,7 +379,7 @@ async function loadPreviewContent() {
       // 降级：使用文件名预览（向后兼容）
       console.log('[文件预览] 使用文件名模式预览（降级）, 请求参数:', {
         fileName: props.fileName,
-        hasToken: !!token
+        pageNumber: props.pageNumber
       });
 
       const { error: requestError, data } = await request<{
@@ -399,8 +396,7 @@ async function loadPreviewContent() {
         url: '/documents/preview',
         params: {
           fileName: props.fileName,
-          pageNumber: props.pageNumber,
-          token: token || undefined
+          pageNumber: props.pageNumber
         }
       });
 
@@ -437,8 +433,6 @@ async function downloadFile() {
   downloading.value = true;
 
   try {
-    const token = localStorage.getItem('token');
-
     // 优先使用 MD5 下载（如果存在）
     if (props.fileMd5) {
       const { error: requestError, data } = await request<{
@@ -449,8 +443,7 @@ async function downloadFile() {
       }>({
         url: '/documents/download-by-md5',
         params: {
-          fileMd5: props.fileMd5,
-          token: token || undefined
+          fileMd5: props.fileMd5
         }
       });
 
@@ -475,8 +468,7 @@ async function downloadFile() {
       }>({
         url: '/documents/download',
         params: {
-          fileName: props.fileName,
-          token: token || undefined
+          fileName: props.fileName
         }
       });
 
