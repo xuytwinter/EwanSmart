@@ -15,6 +15,10 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "file_upload")
 public class FileUpload {
+    public static final int STATUS_UPLOADING = 0;
+    public static final int STATUS_COMPLETED = 1;
+    public static final int STATUS_MERGING = 2;
+
     /**
      * 文件的唯一标识符
      * 使用文件的MD5值来唯一确定一个文件
@@ -40,9 +44,9 @@ public class FileUpload {
 
     /**
      * 文件上传的状态
-     * 0表示文件正在上传中，1表示文件上传已完成
+     * 0表示文件正在上传中，1表示文件上传已完成，2表示文件正在合并中
      */
-    private int status; // 0-上传中 1-已完成
+    private int status; // 0-上传中 1-已完成 2-合并中
 
     /**
      * 上传文件的用户的标识符

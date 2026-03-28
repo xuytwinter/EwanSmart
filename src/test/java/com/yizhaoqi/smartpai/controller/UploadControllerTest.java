@@ -1,6 +1,7 @@
 package com.yizhaoqi.smartpai.controller;
 
 import com.yizhaoqi.smartpai.config.KafkaConfig;
+import com.yizhaoqi.smartpai.model.FileUpload;
 import com.yizhaoqi.smartpai.model.OrganizationTag;
 import com.yizhaoqi.smartpai.repository.FileUploadRepository;
 import com.yizhaoqi.smartpai.service.FileTypeValidationService;
@@ -17,6 +18,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -142,5 +144,26 @@ class UploadControllerTest {
 
         assertEquals(413, response.getStatusCode().value());
         verify(uploadService, never()).uploadChunk(anyString(), anyInt(), anyLong(), anyString(), any(), anyString(), anyBoolean(), anyString());
+    }
+
+    @Test
+    void testMergeFileReturnsExistingResultWhenAlreadyCompleted() throws Exception {
+        FileUpload fileUpload = new FileUpload();
+        fileUpload.setFileMd5("md5");
+        fileUpload.setFileName("test.pdf");
+        fileUpload.setUserId("1");
+        fileUpload.setStatus(FileUpload.STATUS_COMPLETED);
+
+        when(fileUploadRepository.findFirstByFileMd5AndUserIdOrderByCreatedAtDesc("md5", "1"))
+                .thenReturn(Optional.of(fileUpload));
+        when(uploadService.generateMergedObjectUrl("md5")).thenReturn("https://example.com/merged/md5");
+
+        var response = uploadController.mergeFile(new UploadController.MergeRequest("md5", "test.pdf"), "1");
+
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals("文件已完成合并", response.getBody().get("message"));
+        assertEquals("https://example.com/merged/md5", ((Map<?, ?>) response.getBody().get("data")).get("object_url"));
+        verify(uploadService, never()).mergeChunks(anyString(), anyString(), anyString());
+        verify(kafkaTemplate, never()).executeInTransaction(any());
     }
 }

@@ -4,6 +4,8 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.env.EnvironmentPostProcessor;
 import org.springframework.core.Ordered;
 import org.springframework.core.env.ConfigurableEnvironment;
+import org.springframework.core.env.MutablePropertySources;
+import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
 
 import java.io.IOException;
@@ -33,12 +35,18 @@ public class DotenvEnvironmentPostProcessor implements EnvironmentPostProcessor,
 
         applyActiveProfiles(environment, properties);
 
-        if (environment.getPropertySources().contains(PROPERTY_SOURCE_NAME)) {
-            environment.getPropertySources().replace(PROPERTY_SOURCE_NAME, new SystemEnvironmentPropertySource(PROPERTY_SOURCE_NAME, properties));
+        SystemEnvironmentPropertySource propertySource = new SystemEnvironmentPropertySource(PROPERTY_SOURCE_NAME, properties);
+        MutablePropertySources propertySources = environment.getPropertySources();
+        if (propertySources.contains(PROPERTY_SOURCE_NAME)) {
+            propertySources.remove(PROPERTY_SOURCE_NAME);
+        }
+
+        if (propertySources.contains(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME)) {
+            propertySources.addAfter(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME, propertySource);
             return;
         }
 
-        environment.getPropertySources().addFirst(new SystemEnvironmentPropertySource(PROPERTY_SOURCE_NAME, properties));
+        propertySources.addLast(propertySource);
     }
 
     @Override

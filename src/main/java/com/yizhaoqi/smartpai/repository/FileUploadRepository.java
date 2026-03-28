@@ -2,9 +2,11 @@ package com.yizhaoqi.smartpai.repository;
 
 import com.yizhaoqi.smartpai.model.FileUpload;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
@@ -71,4 +73,11 @@ public interface FileUploadRepository extends JpaRepository<FileUpload, Long> {
     List<FileUpload> findByUserIdAndFileNameOrderByCreatedAtDesc(String userId, String fileName);
 
     List<FileUpload> findByFileMd5In(List<String> md5List);
+
+    @Transactional
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE FileUpload f SET f.status = :newStatus WHERE f.id = :id AND f.status = :currentStatus")
+    int updateStatusIfCurrent(@Param("id") Long id,
+                              @Param("currentStatus") int currentStatus,
+                              @Param("newStatus") int newStatus);
 }

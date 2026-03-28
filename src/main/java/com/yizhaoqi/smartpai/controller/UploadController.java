@@ -17,7 +17,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -260,7 +259,6 @@ public class UploadController {
      * @param userId 当前用户ID
      * @return 返回包含合并后文件访问URL的响应
      */
-    @Transactional
     @PostMapping("/merge")
     public ResponseEntity<Map<String, Object>> mergeFile(
             @RequestBody MergeRequest request,
@@ -291,6 +289,16 @@ public class UploadController {
                 errorResponse.put("message", "没有权限操作此文件");
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).body(errorResponse);
             }
+
+            if (fileUpload.getStatus() == FileUpload.STATUS_COMPLETED) {
+                LogUtils.logBusiness("MERGE_FILE", userId, "文件已完成合并，按幂等成功返回: fileMd5=%s, fileName=%s", request.fileMd5(), request.fileName());
+                monitor.end("文件已完成合并");
+                return buildAlreadyMergedResponse(request.fileMd5());
+            }
+
+            if (fileUpload.getStatus() == FileUpload.STATUS_MERGING) {
+                throw new CustomException("文件正在合并中，请稍后重试", HttpStatus.CONFLICT);
+            }
             
             LogUtils.logBusiness("MERGE_FILE", userId, "权限验证通过，开始合并文件: fileMd5=%s, fileName=%s, fileType=%s", request.fileMd5(), request.fileName(), fileType);
             
@@ -309,10 +317,41 @@ public class UploadController {
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
             }
 
+            int updatedRows = fileUploadRepository.updateStatusIfCurrent(
+                    fileUpload.getId(),
+                    FileUpload.STATUS_UPLOADING,
+                    FileUpload.STATUS_MERGING
+            );
+            if (updatedRows == 0) {
+                FileUpload latestFileUpload = fileUploadRepository.findFirstByFileMd5AndUserIdOrderByCreatedAtDesc(request.fileMd5(), userId)
+                        .orElseThrow(() -> new RuntimeException("文件记录不存在"));
+                if (latestFileUpload.getStatus() == FileUpload.STATUS_COMPLETED) {
+                    LogUtils.logBusiness("MERGE_FILE", userId, "文件已被其他请求合并完成，按幂等成功返回: fileMd5=%s, fileName=%s", request.fileMd5(), request.fileName());
+                    monitor.end("文件已完成合并");
+                    return buildAlreadyMergedResponse(request.fileMd5());
+                }
+                if (latestFileUpload.getStatus() == FileUpload.STATUS_MERGING) {
+                    throw new CustomException("文件正在合并中，请稍后重试", HttpStatus.CONFLICT);
+                }
+                throw new CustomException("文件状态已变化，请刷新后重试", HttpStatus.CONFLICT);
+            }
+
+            fileUpload = fileUploadRepository.findFirstByFileMd5AndUserIdOrderByCreatedAtDesc(request.fileMd5(), userId)
+                    .orElseThrow(() -> new RuntimeException("文件记录不存在"));
+
             // 合并文件
             LogUtils.logBusiness("MERGE_FILE", userId, "开始合并文件分片: fileMd5=%s, fileName=%s, fileType=%s, 分片数量=%d", request.fileMd5(), request.fileName(), fileType, totalChunks);
-            String objectUrl = uploadService.mergeChunks(request.fileMd5(), request.fileName(), userId);
+            String objectUrl;
+            try {
+                objectUrl = uploadService.mergeChunks(request.fileMd5(), request.fileName(), userId);
+            } catch (Exception mergeException) {
+                fileUploadRepository.updateStatusIfCurrent(fileUpload.getId(), FileUpload.STATUS_MERGING, FileUpload.STATUS_UPLOADING);
+                throw mergeException;
+            }
             LogUtils.logFileOperation(userId, "MERGE", request.fileName(), request.fileMd5(), "SUCCESS");
+
+            fileUpload = fileUploadRepository.findFirstByFileMd5AndUserIdOrderByCreatedAtDesc(request.fileMd5(), userId)
+                    .orElseThrow(() -> new RuntimeException("文件记录不存在"));
 
             ParseService.EmbeddingEstimate embeddingEstimate = null;
             try (io.minio.GetObjectResponse mergedFileStream = uploadService.getMergedFileStream(request.fileMd5())) {
@@ -377,6 +416,15 @@ public class UploadController {
             LogUtils.logUserOperation(userId, "MERGE_FILE", request.fileMd5(), "SUCCESS");
             monitor.end("文件合并成功");
             return ResponseEntity.ok(response);
+        } catch (CustomException e) {
+            String fileType = getFileType(request.fileName());
+            LogUtils.logBusinessError("MERGE_FILE", userId, "文件合并失败: fileMd5=%s, fileName=%s, fileType=%s", e,
+                    request.fileMd5(), request.fileName(), fileType);
+            monitor.end("文件合并失败: " + e.getMessage());
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("code", e.getStatus().value());
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(e.getStatus()).body(errorResponse);
         } catch (Exception e) {
             String fileType = getFileType(request.fileName());
             LogUtils.logBusinessError("MERGE_FILE", userId, "文件合并失败: fileMd5=%s, fileName=%s, fileType=%s", e, 
@@ -387,6 +435,17 @@ public class UploadController {
             errorResponse.put("message", "文件合并失败: " + e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
         }
+    }
+
+    private ResponseEntity<Map<String, Object>> buildAlreadyMergedResponse(String fileMd5) throws Exception {
+        Map<String, Object> data = new HashMap<>();
+        data.put("object_url", uploadService.generateMergedObjectUrl(fileMd5));
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("code", 200);
+        response.put("message", "文件已完成合并");
+        response.put("data", data);
+        return ResponseEntity.ok(response);
     }
 
     /**

@@ -1,6 +1,7 @@
 package com.yizhaoqi.smartpai.service;
 
 import com.yizhaoqi.smartpai.config.MinioConfig;
+import com.yizhaoqi.smartpai.exception.CustomException;
 import com.yizhaoqi.smartpai.model.ChunkInfo;
 import com.yizhaoqi.smartpai.model.FileUpload;
 import com.yizhaoqi.smartpai.repository.ChunkInfoRepository;
@@ -13,8 +14,10 @@ import org.apache.commons.codec.digest.DigestUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -74,29 +77,14 @@ public class UploadService {
                    fileMd5, chunkIndex, totalSize, fileName, fileType, contentType, file.getSize(), orgTag, isPublic, userId);
         
         try {
-            // 检查 file_upload 表中是否存在该 file_md5
-            boolean fileExists = fileUploadRepository.findFirstByFileMd5AndUserIdOrderByCreatedAtDesc(fileMd5, userId).isPresent();
-            logger.debug("检查文件记录是否存在 => fileMd5: {}, fileName: {}, fileType: {}, exists: {}", fileMd5, fileName, fileType, fileExists);
-            
-            if (!fileExists) {
-                logger.info("创建新的文件记录 => fileMd5: {}, fileName: {}, fileType: {}, totalSize: {}, userId: {}, orgTag: {}, isPublic: {}", 
-                          fileMd5, fileName, fileType, totalSize, userId, orgTag, isPublic);
-                // 插入 file_upload 表
-                FileUpload fileUpload = new FileUpload();
-                fileUpload.setFileMd5(fileMd5);
-                fileUpload.setFileName(fileName); // 文件名可以从请求中获取
-                fileUpload.setTotalSize(totalSize); // 文件总大小
-                fileUpload.setStatus(0); // 0 表示上传中
-                fileUpload.setUserId(userId); // 设置上传用户ID
-                fileUpload.setOrgTag(orgTag); // 设置组织标签
-                fileUpload.setPublic(isPublic); // 设置是否公开
-                try {
-                    fileUploadRepository.save(fileUpload);
-                    logger.info("文件记录创建成功 => fileMd5: {}, fileName: {}, fileType: {}", fileMd5, fileName, fileType);
-                } catch (Exception e) {
-                    logger.error("创建文件记录失败 => fileMd5: {}, fileName: {}, fileType: {}, 错误: {}", fileMd5, fileName, fileType, e.getMessage(), e);
-                    throw new RuntimeException("创建文件记录失败: " + e.getMessage(), e);
-                }
+            FileUpload fileUpload = getOrCreateFileUpload(fileMd5, totalSize, fileName, orgTag, isPublic, userId, fileType);
+            logger.debug("检查文件记录是否存在 => fileMd5: {}, fileName: {}, fileType: {}, status: {}", fileMd5, fileName, fileType, fileUpload.getStatus());
+
+            if (fileUpload.getStatus() == FileUpload.STATUS_MERGING) {
+                throw new CustomException("文件正在合并中，请稍后重试", HttpStatus.CONFLICT);
+            }
+            if (fileUpload.getStatus() == FileUpload.STATUS_COMPLETED) {
+                throw new CustomException("文件已完成合并，不允许继续上传分片", HttpStatus.CONFLICT);
             }
 
             // 检查分片是否已经上传
@@ -107,9 +95,7 @@ public class UploadService {
             // 检查数据库中是否存在分片信息
             boolean chunkInfoExists = false;
             try {
-                List<ChunkInfo> chunkInfos = chunkInfoRepository.findByFileMd5OrderByChunkIndexAsc(fileMd5);
-                chunkInfoExists = chunkInfos.stream()
-                    .anyMatch(chunk -> chunk.getChunkIndex() == chunkIndex);
+                chunkInfoExists = chunkInfoRepository.existsByFileMd5AndChunkIndex(fileMd5, chunkIndex);
                 logger.debug("检查数据库中分片信息 => fileMd5: {}, fileName: {}, chunkIndex: {}, exists: {}", 
                           fileMd5, fileName, chunkIndex, chunkInfoExists);
             } catch (Exception e) {
@@ -522,6 +508,8 @@ public class UploadService {
             
             chunkInfoRepository.save(chunkInfo);
             logger.debug("分片信息已保存 => fileMd5: {}, chunkIndex: {}", fileMd5, chunkIndex);
+        } catch (DataIntegrityViolationException e) {
+            logger.info("分片信息已存在，按幂等成功处理 => fileMd5: {}, chunkIndex: {}", fileMd5, chunkIndex);
         } catch (Exception e) {
             logger.error("保存分片信息失败 => fileMd5: {}, chunkIndex: {}, 错误: {}", 
                       fileMd5, chunkIndex, e.getMessage(), e);
@@ -641,21 +629,14 @@ public class UploadService {
                             logger.error("更新文件状态失败，文件记录不存在 => fileMd5: {}, fileName: {}", fileMd5, fileName);
                             return new RuntimeException("文件记录不存在: " + fileMd5);
                         });
-                fileUpload.setStatus(1); // 已完成
+                fileUpload.setStatus(FileUpload.STATUS_COMPLETED);
                 fileUpload.setMergedAt(LocalDateTime.now());
                 fileUploadRepository.save(fileUpload);
                 logger.info("文件状态已更新为已完成 => fileMd5: {}, fileName: {}, fileType: {}", fileMd5, fileName, fileType);
 
                 // 生成预签名 URL（有效期为 1 小时）
                 logger.info("开始生成预签名URL => fileMd5: {}, fileName: {}, path: {}", fileMd5, fileName, mergedPath);
-                String presignedUrl = minioClient.getPresignedObjectUrl(
-                        GetPresignedObjectUrlArgs.builder()
-                                .method(Method.GET)
-                                .bucket("uploads")
-                                .object(mergedPath)
-                                .expiry(1, TimeUnit.HOURS) // 设置有效期为 1 小时
-                                .build()
-                );
+                String presignedUrl = generateMergedObjectUrl(fileMd5);
                 logger.info("预签名URL已生成 => fileMd5: {}, fileName: {}, fileType: {}, URL: {}", fileMd5, fileName, fileType, presignedUrl);
                 
                 return presignedUrl;
@@ -680,6 +661,17 @@ public class UploadService {
         );
     }
 
+    public String generateMergedObjectUrl(String fileMd5) throws Exception {
+        return minioClient.getPresignedObjectUrl(
+                GetPresignedObjectUrlArgs.builder()
+                        .method(Method.GET)
+                        .bucket("uploads")
+                        .object("merged/" + fileMd5)
+                        .expiry(1, TimeUnit.HOURS)
+                        .build()
+        );
+    }
+
     /**
      * 转换为公开 URL
      * @param minioUrl
@@ -690,5 +682,41 @@ public class UploadService {
             return minioUrl;
         }
         return minioUrl.replaceFirst(minioConfig.getEndpoint(), minioConfig.getPublicUrl());
+    }
+
+    private FileUpload getOrCreateFileUpload(String fileMd5,
+                                             long totalSize,
+                                             String fileName,
+                                             String orgTag,
+                                             boolean isPublic,
+                                             String userId,
+                                             String fileType) {
+        Optional<FileUpload> existingFileUpload = fileUploadRepository.findFirstByFileMd5AndUserIdOrderByCreatedAtDesc(fileMd5, userId);
+        if (existingFileUpload.isPresent()) {
+            return existingFileUpload.get();
+        }
+
+        logger.info("创建新的文件记录 => fileMd5: {}, fileName: {}, fileType: {}, totalSize: {}, userId: {}, orgTag: {}, isPublic: {}",
+                fileMd5, fileName, fileType, totalSize, userId, orgTag, isPublic);
+
+        FileUpload fileUpload = new FileUpload();
+        fileUpload.setFileMd5(fileMd5);
+        fileUpload.setFileName(fileName);
+        fileUpload.setTotalSize(totalSize);
+        fileUpload.setStatus(FileUpload.STATUS_UPLOADING);
+        fileUpload.setUserId(userId);
+        fileUpload.setOrgTag(orgTag);
+        fileUpload.setPublic(isPublic);
+
+        try {
+            return fileUploadRepository.save(fileUpload);
+        } catch (DataIntegrityViolationException e) {
+            logger.info("文件记录已存在，按幂等成功处理 => fileMd5: {}, userId: {}", fileMd5, userId);
+            return fileUploadRepository.findFirstByFileMd5AndUserIdOrderByCreatedAtDesc(fileMd5, userId)
+                    .orElseThrow(() -> new RuntimeException("文件记录并发创建后查询失败", e));
+        } catch (Exception e) {
+            logger.error("创建文件记录失败 => fileMd5: {}, fileName: {}, fileType: {}, 错误: {}", fileMd5, fileName, fileType, e.getMessage(), e);
+            throw new RuntimeException("创建文件记录失败: " + e.getMessage(), e);
+        }
     }
 }

@@ -28,7 +28,7 @@ CREATE TABLE file_upload (
                              file_md5     VARCHAR(32)      NOT NULL COMMENT '文件 MD5',
                              file_name    VARCHAR(255)     NOT NULL COMMENT '文件名称',
                              total_size   BIGINT           NOT NULL COMMENT '文件大小',
-                             status       TINYINT          NOT NULL DEFAULT 0 COMMENT '上传状态',
+                             status       TINYINT          NOT NULL DEFAULT 0 COMMENT '上传状态：0上传中 1已完成 2合并中',
                              user_id      VARCHAR(64)      NOT NULL COMMENT '用户 ID',
                              org_tag      VARCHAR(50)      DEFAULT NULL COMMENT '组织标签',
                              is_public    BOOLEAN          NOT NULL DEFAULT FALSE COMMENT '是否公开',
@@ -48,7 +48,8 @@ CREATE TABLE chunk_info (
                             file_md5 VARCHAR(32) NOT NULL COMMENT '关联的文件MD5值',
                             chunk_index INT NOT NULL COMMENT '分块序号',
                             chunk_md5 VARCHAR(32) NOT NULL COMMENT '分块的MD5值',
-                            storage_path VARCHAR(255) NOT NULL COMMENT '分块在存储系统中的路径'
+                            storage_path VARCHAR(255) NOT NULL COMMENT '分块在存储系统中的路径',
+                            UNIQUE KEY uk_file_md5_chunk_index (file_md5, chunk_index)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文件分块信息表';
 
 CREATE TABLE document_vectors (
