@@ -9,8 +9,8 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yizhaoqi.smartpai.service.ChatHandler;
+import com.yizhaoqi.smartpai.service.ChatSessionRegistry;
 import com.yizhaoqi.smartpai.utils.JwtUtils;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 
 @Component
@@ -20,16 +20,17 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     private static final String HEARTBEAT_PING = "__chat_ping__";
     private static final String HEARTBEAT_PONG = "__chat_pong__";
     private final ChatHandler chatHandler;
-    private final ConcurrentHashMap<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
+    private final ChatSessionRegistry chatSessionRegistry;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final JwtUtils jwtUtils;
     
     // 内部指令令牌 - 可以从配置文件读取
     private static final String INTERNAL_CMD_TOKEN = "WSS_STOP_CMD_" + System.currentTimeMillis() % 1000000;
 
-    public ChatWebSocketHandler(ChatHandler chatHandler, JwtUtils jwtUtils) {
+    public ChatWebSocketHandler(ChatHandler chatHandler, JwtUtils jwtUtils, ChatSessionRegistry chatSessionRegistry) {
         this.chatHandler = chatHandler;
         this.jwtUtils = jwtUtils;
+        this.chatSessionRegistry = chatSessionRegistry;
     }
 
     @Override
@@ -53,7 +54,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
 
         String userId = extractUserId(jwtToken);
-        sessions.put(userId, session);
+        chatSessionRegistry.registerSession(userId, session);
         logger.info("WebSocket连接已建立，用户ID: {}，会话ID: {}，URI路径: {}",
                 userId, session.getId(), session.getUri().getPath());
 
@@ -93,12 +94,13 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                     Map<String, Object> jsonMessage = objectMapper.readValue(payload, Map.class);
                     String messageType = (String) jsonMessage.get("type");
                     String internalToken = (String) jsonMessage.get("_internal_cmd_token");
+                    String generationId = (String) jsonMessage.get("generationId");
                     
                     // 只有包含正确内部令牌的停止指令才处理
                     if ("stop".equals(messageType) && INTERNAL_CMD_TOKEN.equals(internalToken)) {
                         // 处理停止指令
                         logger.info("收到有效的停止按钮指令，用户ID: {}，会话ID: {}", userId, session.getId());
-                        chatHandler.stopResponse(userId, session);
+                        chatHandler.stopResponse(userId, generationId);
                         return;
                     }
                     
@@ -125,7 +127,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         String userId = "unknown";
         try {
             userId = extractUserId(extractToken(session));
-            sessions.remove(userId);
+            chatSessionRegistry.unregisterSession(userId, session);
         } catch (Exception e) {
             logger.debug("关闭连接时无法解析用户信息，会话ID: {}", session.getId());
         }
@@ -138,8 +140,6 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                     userId, session.getId(), status);
         }
 
-        // 清理会话的引用映射
-        chatHandler.clearSessionReferenceMapping(session.getId());
     }
 
     private String extractUserId(String jwtToken) {

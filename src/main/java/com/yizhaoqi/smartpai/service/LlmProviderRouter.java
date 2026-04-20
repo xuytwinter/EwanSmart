@@ -9,6 +9,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.Disposable;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -38,12 +39,12 @@ public class LlmProviderRouter {
         this.objectMapper = objectMapper;
     }
 
-    public void streamResponse(String requesterId,
-                               String userMessage,
-                               String context,
-                               List<Map<String, String>> history,
-                               Consumer<String> onChunk,
-                               Consumer<Throwable> onError) {
+    public StreamHandle streamResponse(String requesterId,
+                                       String userMessage,
+                                       String context,
+                                       List<Map<String, String>> history,
+                                       Consumer<String> onChunk,
+                                       Consumer<Throwable> onError) {
 
         ModelProviderConfigService.ActiveProviderView provider = modelProviderConfigService.getActiveProvider(ModelProviderConfigService.SCOPE_LLM);
         Map<String, Object> request = buildRequest(provider.model(), userMessage, context, history);
@@ -58,7 +59,7 @@ public class LlmProviderRouter {
         StreamUsageTracker usageTracker = new StreamUsageTracker(reservation, estimatedPromptTokens);
 
         try {
-            buildClient(provider)
+            Disposable subscription = buildClient(provider)
                     .post()
                     .uri("/chat/completions")
                     .contentType(MediaType.APPLICATION_JSON)
@@ -73,6 +74,7 @@ public class LlmProviderRouter {
                             },
                             () -> settleUsage(usageTracker)
                     );
+            return new StreamHandle(subscription, () -> settleUsage(usageTracker));
         } catch (Exception exception) {
             usageQuotaService.abortReservation(reservation);
             throw exception;
@@ -221,6 +223,25 @@ public class LlmProviderRouter {
         private StreamUsageTracker(UsageQuotaService.TokenReservationBundle reservation, int estimatedPromptTokens) {
             this.reservation = reservation;
             this.estimatedPromptTokens = estimatedPromptTokens;
+        }
+    }
+
+    public static final class StreamHandle {
+        private final Disposable subscription;
+        private final Runnable onCancel;
+
+        private StreamHandle(Disposable subscription, Runnable onCancel) {
+            this.subscription = subscription;
+            this.onCancel = onCancel;
+        }
+
+        public void cancel() {
+            if (subscription != null && !subscription.isDisposed()) {
+                subscription.dispose();
+            }
+            if (onCancel != null) {
+                onCancel.run();
+            }
         }
     }
 }

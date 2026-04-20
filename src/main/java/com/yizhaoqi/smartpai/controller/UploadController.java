@@ -388,8 +388,16 @@ public class UploadController {
                     request.fileName(),
                     fileUpload.getUserId(),
                     fileUpload.getOrgTag(),
-                    fileUpload.isPublic()
+                    fileUpload.isPublic(),
+                    FileProcessingTask.TASK_TYPE_UPLOAD_PROCESS,
+                    userId
             );
+
+            fileUpload.setVectorizationStatus(FileUpload.VECTORIZATION_STATUS_PROCESSING);
+            fileUpload.setVectorizationErrorMessage(null);
+            fileUpload.setActualEmbeddingTokens(null);
+            fileUpload.setActualChunkCount(null);
+            fileUploadRepository.save(fileUpload);
             
             LogUtils.logBusiness("MERGE_FILE", userId, "发送文件处理任务到Kafka(事务): topic=%s, fileMd5=%s, fileName=%s", 
                     kafkaConfig.getFileProcessingTopic(), request.fileMd5(), request.fileName());

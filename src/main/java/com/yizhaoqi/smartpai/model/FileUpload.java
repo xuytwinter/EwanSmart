@@ -18,6 +18,10 @@ public class FileUpload {
     public static final int STATUS_UPLOADING = 0;
     public static final int STATUS_COMPLETED = 1;
     public static final int STATUS_MERGING = 2;
+    public static final String VECTORIZATION_STATUS_PENDING = "PENDING";
+    public static final String VECTORIZATION_STATUS_PROCESSING = "PROCESSING";
+    public static final String VECTORIZATION_STATUS_COMPLETED = "COMPLETED";
+    public static final String VECTORIZATION_STATUS_FAILED = "FAILED";
 
     /**
      * 文件的唯一标识符
@@ -80,6 +84,12 @@ public class FileUpload {
 
     @Column(name = "actual_chunk_count")
     private Integer actualChunkCount;
+
+    @Column(name = "vectorization_status", length = 32)
+    private String vectorizationStatus;
+
+    @Column(name = "vectorization_error_message", length = 1000)
+    private String vectorizationErrorMessage;
 
     /**
      * 文件上传的创建时间

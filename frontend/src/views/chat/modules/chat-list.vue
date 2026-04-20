@@ -24,7 +24,7 @@ function scrollToBottom() {
   }, 100);
 }
 
-const range = ref<[number, number]>([dayjs().subtract(7, 'day').valueOf(), dayjs().add(1, 'day').valueOf()]);
+const range = ref<[number, number] | null>(null);
 
 function getRetrievalQueryFallback(index: number) {
   for (let i = index - 1; i >= 0; i -= 1) {
@@ -37,6 +37,10 @@ function getRetrievalQueryFallback(index: number) {
 }
 
 const params = computed(() => {
+  if (!range.value) {
+    return {};
+  }
+
   return {
     start_date: dayjs(range.value[0]).format('YYYY-MM-DD'),
     end_date: dayjs(range.value[1]).format('YYYY-MM-DD')
@@ -71,7 +75,7 @@ onMounted(() => {
         <div class="px-10">
           <NForm :model="params" label-placement="left" :show-feedback="false" inline>
             <NFormItem label="时间">
-              <NDatePicker v-model:value="range" type="daterange" />
+              <NDatePicker v-model:value="range" type="daterange" clearable />
             </NFormItem>
           </NForm>
         </div>

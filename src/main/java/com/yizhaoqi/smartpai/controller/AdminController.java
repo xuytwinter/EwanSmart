@@ -1,8 +1,5 @@
 package com.yizhaoqi.smartpai.controller;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yizhaoqi.smartpai.exception.CustomException;
 import com.yizhaoqi.smartpai.model.OrganizationTag;
 import com.yizhaoqi.smartpai.model.RechargePackage;
@@ -10,6 +7,7 @@ import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.OrganizationTagRepository;
 import com.yizhaoqi.smartpai.repository.RechargePackageRepository;
 import com.yizhaoqi.smartpai.repository.UserRepository;
+import com.yizhaoqi.smartpai.service.ConversationService;
 import com.yizhaoqi.smartpai.service.InviteCodeService;
 import com.yizhaoqi.smartpai.service.ModelProviderConfigService;
 import com.yizhaoqi.smartpai.service.RateLimitConfigService;
@@ -19,12 +17,12 @@ import com.yizhaoqi.smartpai.utils.JwtUtils;
 import com.yizhaoqi.smartpai.utils.LogUtils;
 import com.yizhaoqi.smartpai.utils.MinioMigrationUtil;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -47,12 +45,6 @@ public class AdminController {
     
     @Autowired
     private OrganizationTagRepository organizationTagRepository;
-    
-    @Autowired
-    private RedisTemplate<String, String> redisTemplate;
-
-    @Autowired
-    private ObjectMapper objectMapper;
 
     @Autowired
     private MinioMigrationUtil migrationUtil;
@@ -71,6 +63,9 @@ public class AdminController {
 
     @Autowired
     private RechargePackageRepository rechargePackageRepository;
+
+    @Autowired
+    private ConversationService conversationService;
 
     /**
      * 获取所有用户列表
@@ -677,15 +672,11 @@ public class AdminController {
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("ADMIN_GET_ALL_CONVERSATIONS");
         String adminUsername = null;
         try {
-            // 验证管理员权限
             adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
-            User admin = validateAdmin(adminUsername);
+            validateAdmin(adminUsername);
             
-            LogUtils.logBusiness("ADMIN_GET_ALL_CONVERSATIONS", adminUsername, "管理员开始查询对话历史，目标用户ID: %s, 时间范围: %s 到 %s", userid, start_date, end_date);
-            
-            List<Map<String, Object>> allConversations = new ArrayList<>();
-            
-            // 如果指定了userid，先验证用户是否存在
+            LogUtils.logBusiness("ADMIN_GET_ALL_CONVERSATIONS", adminUsername, "管理员开始查询持久化对话历史，目标用户ID: %s, 时间范围: %s 到 %s", userid, start_date, end_date);
+
             String targetUsername = null;
             if (userid != null && !userid.isEmpty()) {
                 try {
@@ -705,37 +696,15 @@ public class AdminController {
                             .body(Map.of("code", 400, "message", "无效的用户ID格式"));
                 }
             }
-            
-            // 获取所有Redis键中以"user:"开头的键
-            Set<String> userKeys = redisTemplate.keys("user:*:current_conversation");
-            
-            if (userKeys != null && !userKeys.isEmpty()) {
-                for (String userKey : userKeys) {
-                    String conversationId = redisTemplate.opsForValue().get(userKey);
-                    if (conversationId != null) {
-                        // 提取用户ID
-                        String redisUserId = userKey.replace("user:", "").replace(":current_conversation", "");
-                        
-                        // 如果指定了userid，只查询该用户的对话
-                        if (userid != null && !userid.isEmpty()) {
-                            // 检查Redis中的用户ID是否匹配（可能是数字ID或用户名）
-                            if (!redisUserId.equals(userid) && !redisUserId.equals(targetUsername)) {
-                                continue;
-                            }
-                        }
-                        
-                        // 获取对话内容，使用实际的用户名而不是Redis中的ID
-                        String conversationKey = "conversation:" + conversationId;
-                        String json = redisTemplate.opsForValue().get(conversationKey);
-                        if (json != null) {
-                            String displayUsername = targetUsername != null ? targetUsername : redisUserId;
-                            processRedisConversation(json, allConversations, displayUsername, conversationId, start_date, end_date);
-                        }
-                    }
-                }
-            }
-            
-            LogUtils.logBusiness("ADMIN_GET_ALL_CONVERSATIONS", adminUsername, "管理员查询完成，共获取到 %d 条对话记录", allConversations.size());
+
+            LocalDateTime startDateTime = parseStartDate(start_date);
+            LocalDateTime endDateTime = parseEndDate(end_date);
+            List<Map<String, Object>> allConversations = conversationService.toMessageHistory(
+                    conversationService.getAllConversations(adminUsername, targetUsername, startDateTime, endDateTime),
+                    true
+            );
+
+            LogUtils.logBusiness("ADMIN_GET_ALL_CONVERSATIONS", adminUsername, "管理员查询完成，共获取到 %d 条历史消息", allConversations.size());
             LogUtils.logUserOperation(adminUsername, "ADMIN_GET_ALL_CONVERSATIONS", "conversation_history", "SUCCESS");
             monitor.end("管理员查询对话历史成功");
             
@@ -756,113 +725,63 @@ public class AdminController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "服务器内部错误: " + e.getMessage()));
         }
     }
-    
-    /**
-     * 处理Redis中的对话数据
-     */
-    private void processRedisConversation(String json, List<Map<String, Object>> targetList, String username,
-                                          String conversationId, String startDate, String endDate) throws JsonProcessingException {
-        List<Map<String, Object>> history = objectMapper.readValue(json,
-                new TypeReference<List<Map<String, Object>>>() {});
-        
-        // 解析时间范围
-        java.time.LocalDateTime startDateTime = null;
-        java.time.LocalDateTime endDateTime = null;
-        
-        if (startDate != null && !startDate.trim().isEmpty()) {
-            try {
-                startDateTime = parseDateTime(startDate);
-            } catch (Exception e) {
-                LogUtils.logBusinessError("ADMIN_GET_ALL_CONVERSATIONS", username, "起始时间解析失败: %s", e, startDate);
-            }
-        }
-        
-        if (endDate != null && !endDate.trim().isEmpty()) {
-            try {
-                endDateTime = parseDateTime(endDate);
-            } catch (Exception e) {
-                LogUtils.logBusinessError("ADMIN_GET_ALL_CONVERSATIONS", username, "结束时间解析失败: %s", e, endDate);
-            }
-        }
-        
-        // 将对话转换为前端需要的格式，使用存储的时间戳并添加用户名
-        for (Map<String, Object> message : history) {
-            String messageTimestamp = String.valueOf(message.getOrDefault("timestamp", "未知时间"));
-            
-            // 时间过滤
-            if (startDateTime != null || endDateTime != null) {
-                if (!"未知时间".equals(messageTimestamp)) {
-                    try {
-                        java.time.LocalDateTime messageDateTime = java.time.LocalDateTime.parse(messageTimestamp, 
-                            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
-                        
-                        // 检查是否在时间范围内
-                        if (startDateTime != null && messageDateTime.isBefore(startDateTime)) {
-                            continue; // 跳过早于起始时间的消息
-                        }
-                        if (endDateTime != null && messageDateTime.isAfter(endDateTime)) {
-                            continue; // 跳过晚于结束时间的消息
-                        }
-                    } catch (Exception e) {
-                        // 时间戳格式不正确，跳过过滤（包含所有消息）
-                        LogUtils.logBusinessError("ADMIN_GET_ALL_CONVERSATIONS", username, "消息时间戳格式错误: %s", e, messageTimestamp);
-                    }
-                }
-                // 如果是"未知时间"且设置了时间过滤，跳过该消息
-                else if (startDateTime != null || endDateTime != null) {
-                    continue;
-                }
-            }
-            
-            Map<String, Object> messageWithMetadata = new HashMap<>();
-            messageWithMetadata.put("role", message.get("role"));
-            messageWithMetadata.put("content", message.get("content"));
-            messageWithMetadata.put("timestamp", messageTimestamp);
-            messageWithMetadata.put("username", username);
-            messageWithMetadata.put("conversationId", conversationId);
-            if (message.get("referenceMappings") != null) {
-                messageWithMetadata.put("referenceMappings", message.get("referenceMappings"));
-            }
-            targetList.add(messageWithMetadata);
-        }
-    }
-    
-    /**
-     * 解析日期时间字符串，支持多种格式
-     */
-    private java.time.LocalDateTime parseDateTime(String dateTimeStr) {
+
+    private LocalDateTime parseStartDate(String dateTimeStr) {
         if (dateTimeStr == null || dateTimeStr.trim().isEmpty()) {
             return null;
         }
         
         try {
-            // 尝试标准格式解析 (2023-01-01T12:00:00)
-            return java.time.LocalDateTime.parse(dateTimeStr);
+            return LocalDateTime.parse(dateTimeStr);
         } catch (java.time.format.DateTimeParseException e1) {
             try {
-                // 尝试解析不带秒的格式 (2023-01-01T12:00)
                 if (dateTimeStr.length() == 16) {
-                    return java.time.LocalDateTime.parse(dateTimeStr + ":00");
+                    return LocalDateTime.parse(dateTimeStr + ":00");
                 }
                 
-                // 尝试解析不带分钟和秒的格式 (2023-01-01T12)
                 if (dateTimeStr.length() == 13) {
-                    return java.time.LocalDateTime.parse(dateTimeStr + ":00:00");
+                    return LocalDateTime.parse(dateTimeStr + ":00:00");
                 }
                 
-                // 尝试解析日期格式 (2023-01-01)
                 if (dateTimeStr.length() == 10) {
-                    return java.time.LocalDateTime.parse(dateTimeStr + "T00:00:00");
+                    return LocalDate.parse(dateTimeStr).atStartOfDay();
                 }
-                
-                // 如果以上都失败，尝试使用自定义格式解析
-                java.time.format.DateTimeFormatter formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm");
-                return java.time.LocalDateTime.parse(dateTimeStr, formatter);
             } catch (Exception e2) {
-                LogUtils.logBusinessError("PARSE_DATETIME", "system", "无法解析日期时间: %s", e2, dateTimeStr);
-                throw new CustomException("无效的日期格式: " + dateTimeStr, HttpStatus.BAD_REQUEST);
+                LogUtils.logBusinessError("PARSE_START_DATETIME", "system", "无法解析起始时间: %s", e2, dateTimeStr);
+                throw new CustomException("无效的起始时间格式: " + dateTimeStr, HttpStatus.BAD_REQUEST);
             }
         }
+
+        throw new CustomException("无效的起始时间格式: " + dateTimeStr, HttpStatus.BAD_REQUEST);
+    }
+
+    private LocalDateTime parseEndDate(String dateTimeStr) {
+        if (dateTimeStr == null || dateTimeStr.trim().isEmpty()) {
+            return null;
+        }
+
+        try {
+            return LocalDateTime.parse(dateTimeStr);
+        } catch (java.time.format.DateTimeParseException e1) {
+            try {
+                if (dateTimeStr.length() == 16) {
+                    return LocalDateTime.parse(dateTimeStr + ":59");
+                }
+
+                if (dateTimeStr.length() == 13) {
+                    return LocalDateTime.parse(dateTimeStr + ":59:59");
+                }
+
+                if (dateTimeStr.length() == 10) {
+                    return LocalDate.parse(dateTimeStr).plusDays(1).atStartOfDay().minusSeconds(1);
+                }
+            } catch (Exception e2) {
+                LogUtils.logBusinessError("PARSE_END_DATETIME", "system", "无法解析结束时间: %s", e2, dateTimeStr);
+                throw new CustomException("无效的结束时间格式: " + dateTimeStr, HttpStatus.BAD_REQUEST);
+            }
+        }
+
+        throw new CustomException("无效的结束时间格式: " + dateTimeStr, HttpStatus.BAD_REQUEST);
     }
     
     /**

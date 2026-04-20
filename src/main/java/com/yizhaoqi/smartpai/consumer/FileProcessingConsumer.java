@@ -2,8 +2,7 @@ package com.yizhaoqi.smartpai.consumer;
 
 import com.yizhaoqi.smartpai.config.KafkaConfig;
 import com.yizhaoqi.smartpai.model.FileProcessingTask;
-import com.yizhaoqi.smartpai.model.FileUpload;
-import com.yizhaoqi.smartpai.repository.FileUploadRepository;
+import com.yizhaoqi.smartpai.service.DocumentService;
 import com.yizhaoqi.smartpai.service.ParseService;
 import com.yizhaoqi.smartpai.service.VectorizationService;
 import io.minio.errors.*;
@@ -24,7 +23,7 @@ public class FileProcessingConsumer {
 
     private final ParseService parseService;
     private final VectorizationService vectorizationService;
-    private final FileUploadRepository fileUploadRepository;
+    private final DocumentService documentService;
     @Autowired
     private KafkaConfig kafkaConfig;
 
@@ -32,11 +31,11 @@ public class FileProcessingConsumer {
     public FileProcessingConsumer(
             ParseService parseService,
             VectorizationService vectorizationService,
-            FileUploadRepository fileUploadRepository
+            DocumentService documentService
     ) {
         this.parseService = parseService;
         this.vectorizationService = vectorizationService;
-        this.fileUploadRepository = fileUploadRepository;
+        this.documentService = documentService;
     }
 
     @KafkaListener(topics = "#{kafkaConfig.getFileProcessingTopic()}", groupId = "#{kafkaConfig.getFileProcessingGroupId()}")
@@ -44,7 +43,14 @@ public class FileProcessingConsumer {
         log.info("Received task: {}", task);
         log.info("文件权限信息: userId={}, orgTag={}, isPublic={}", 
                 task.getUserId(), task.getOrgTag(), task.isPublic());
-                
+
+        documentService.markVectorizationProcessing(task.getFileMd5(), false);
+
+        if (FileProcessingTask.TASK_TYPE_REINDEX.equals(task.getTaskType())) {
+            processReindexTask(task);
+            return;
+        }
+
         InputStream fileStream = null;
         try {
             // 下载文件
@@ -72,9 +78,10 @@ public class FileProcessingConsumer {
                     task.isPublic(),
                     task.getUserId()
             );
-            updateActualEmbeddingUsage(task, vectorizationResult);
+            documentService.markVectorizationCompleted(task.getFileMd5(), vectorizationResult);
             log.info("向量化完成，fileMd5: {}", task.getFileMd5());
         } catch (Exception e) {
+            documentService.markVectorizationFailed(task.getFileMd5(), e);
             log.error("Error processing task: {}", task, e);
             // 抛出异常让 Kafka 的 DefaultErrorHandler 捕获并触发重试 / 死信
             throw new RuntimeException("Error processing task", e);
@@ -87,6 +94,19 @@ public class FileProcessingConsumer {
                     log.error("Error closing file stream", e);
                 }
             }
+        }
+    }
+
+    private void processReindexTask(FileProcessingTask task) {
+        try {
+            String requesterId = task.getRequesterId() == null || task.getRequesterId().isBlank()
+                    ? task.getUserId()
+                    : task.getRequesterId();
+            documentService.reindexDocument(task.getFileMd5(), requesterId);
+        } catch (Exception e) {
+            documentService.markVectorizationFailed(task.getFileMd5(), e);
+            log.error("Error reindexing task: {}", task, e);
+            throw new RuntimeException("Error reindexing task", e);
         }
     }
 
@@ -140,24 +160,4 @@ public class FileProcessingConsumer {
         }
     }
 
-    private void updateActualEmbeddingUsage(
-            FileProcessingTask task,
-            VectorizationService.VectorizationUsageResult vectorizationResult
-    ) {
-        if (task == null || vectorizationResult == null || task.getFileMd5() == null || task.getUserId() == null) {
-            return;
-        }
-
-        FileUpload fileUpload = fileUploadRepository
-                .findFirstByFileMd5AndUserIdOrderByCreatedAtDesc(task.getFileMd5(), task.getUserId())
-                .orElse(null);
-        if (fileUpload == null) {
-            log.warn("回写实际 Embedding 用量失败，未找到文件记录: fileMd5={}, userId={}", task.getFileMd5(), task.getUserId());
-            return;
-        }
-
-        fileUpload.setActualEmbeddingTokens((long) vectorizationResult.actualEmbeddingTokens());
-        fileUpload.setActualChunkCount(vectorizationResult.actualChunkCount());
-        fileUploadRepository.save(fileUpload);
-    }
 }

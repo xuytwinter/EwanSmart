@@ -11,7 +11,6 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
-import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.time.Duration;
@@ -22,6 +21,8 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentHashMap.KeySetView;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.RejectedExecutionException;
 
 /**
@@ -41,45 +42,67 @@ public class ChatHandler {
     private final HybridSearchService searchService;
     private final LlmProviderRouter llmProviderRouter;
     private final RateLimitService rateLimitService;
+    private final ConversationService conversationService;
+    private final ChatGenerationStateService chatGenerationStateService;
+    private final ChatSessionRegistry chatSessionRegistry;
     private final ThreadPoolTaskExecutor chatMonitorExecutor;
     private final ObjectMapper objectMapper;
     
-    // 用于存储每个会话的完整响应
+    // 用于存储每次生成任务的完整响应
     private final Map<String, StringBuilder> responseBuilders = new ConcurrentHashMap<>();
-    // 用于跟踪每个会话的响应完成状态
+    // 用于跟踪每次生成任务的响应完成状态
     private final Map<String, CompletableFuture<String>> responseFutures = new ConcurrentHashMap<>();
+    // 用于持有正在进行中的 LLM 流，支持主动取消上游请求
+    private final Map<String, LlmProviderRouter.StreamHandle> activeStreams = new ConcurrentHashMap<>();
     // 停止标志 - 简单方案
     private final Map<String, Boolean> stopFlags = new ConcurrentHashMap<>();
-    // 用于存储每个会话的引用映射：sessionId -> {referenceNumber -> detail}
-    private final Map<String, Map<Integer, ReferenceInfo>> sessionReferenceMappings = new ConcurrentHashMap<>();
+    // 用于标记已经取消的生成任务，防止后续又被落成 completed
+    private final KeySetView<String, Boolean> cancelledGenerations = ConcurrentHashMap.newKeySet();
+    // 用于存储每次生成任务的引用映射：generationId -> {referenceNumber -> detail}
+    private final Map<String, Map<Integer, ReferenceInfo>> generationReferenceMappings = new ConcurrentHashMap<>();
 
     public ChatHandler(RedisTemplate<String, String> redisTemplate,
                       HybridSearchService searchService,
                       LlmProviderRouter llmProviderRouter,
                       RateLimitService rateLimitService,
+                      ConversationService conversationService,
+                      ChatGenerationStateService chatGenerationStateService,
+                      ChatSessionRegistry chatSessionRegistry,
+                      ObjectMapper objectMapper,
                       @Qualifier("chatMonitorExecutor") ThreadPoolTaskExecutor chatMonitorExecutor) {
         this.redisTemplate = redisTemplate;
         this.searchService = searchService;
         this.llmProviderRouter = llmProviderRouter;
         this.rateLimitService = rateLimitService;
+        this.conversationService = conversationService;
+        this.chatGenerationStateService = chatGenerationStateService;
+        this.chatSessionRegistry = chatSessionRegistry;
+        this.objectMapper = objectMapper;
         this.chatMonitorExecutor = chatMonitorExecutor;
-        this.objectMapper = new ObjectMapper();
     }
 
     public void processMessage(String userId, String userMessage, WebSocketSession session) {
         logger.info("开始处理消息，用户ID: {}, 会话ID: {}", userId, session.getId());
+        String conversationId = null;
+        String generationId = null;
         try {
             rateLimitService.checkChatByUser(userId);
 
             // 1. 获取或创建会话 ID
-            String conversationId = getOrCreateConversationId(userId);
+            conversationId = getOrCreateConversationId(userId);
+            ChatGenerationStateService.GenerationSnapshot generation =
+                    chatGenerationStateService.createGeneration(userId, conversationId, userMessage);
+            generationId = generation.generationId();
+            final String finalConversationId = conversationId;
+            final String finalGenerationId = generationId;
             logger.info("会话ID: {}, 用户ID: {}", conversationId, userId);
+            sendGenerationStart(userId, finalGenerationId, finalConversationId);
             
-            // 为当前会话创建响应构建器
-            responseBuilders.put(session.getId(), new StringBuilder());
+            // 为当前生成任务创建响应构建器
+            responseBuilders.put(finalGenerationId, new StringBuilder());
             // 创建一个CompletableFuture来跟踪响应完成状态
             CompletableFuture<String> responseFuture = new CompletableFuture<>();
-            responseFutures.put(session.getId(), responseFuture);
+            responseFutures.put(finalGenerationId, responseFuture);
             
             // 2. 获取对话历史
             List<Map<String, String>> history = getConversationHistory(conversationId);
@@ -90,108 +113,184 @@ public class ChatHandler {
             logger.debug("搜索结果数量: {}", searchResults.size());
             
             // 4. 构建上下文
-            String context = buildContext(searchResults, session.getId(), userMessage);
+            String context = buildContext(searchResults, finalGenerationId, userMessage);
             
             // 5. 调用活动 LLM Provider 并处理流式响应
             logger.info("调用活动 LLM Provider 生成回复");
-            llmProviderRouter.streamResponse(userId, userMessage, context, history,
+            LlmProviderRouter.StreamHandle streamHandle = llmProviderRouter.streamResponse(userId, userMessage, context, history,
                 chunk -> {
+                    if (isGenerationCancelled(finalGenerationId)) {
+                        logger.debug("检测到取消标志，忽略新的响应块: generationId={}", finalGenerationId);
+                        return;
+                    }
                     // 累积响应内容
-                    StringBuilder responseBuilder = responseBuilders.get(session.getId());
+                    StringBuilder responseBuilder = responseBuilders.get(finalGenerationId);
                     if (responseBuilder != null) {
                         responseBuilder.append(chunk);
                     }
-                    sendResponseChunk(session, chunk);
+                    chatGenerationStateService.appendChunk(finalGenerationId, chunk);
+                    sendResponseChunk(userId, finalGenerationId, finalConversationId, chunk);
                 },
                 error -> {
-                    // 处理错误并完成future
-                    handleError(session, error);
-                    // 发送响应完成通知（错误情况）
-                    sendCompletionNotification(session);
+                    if (isGenerationCancelled(finalGenerationId)) {
+                        logger.info("生成任务已取消，忽略上游错误: generationId={}, message={}", finalGenerationId, error.getMessage());
+                        return;
+                    }
+                    handleError(userId, finalGenerationId, error);
+                    sendCompletionNotification(userId, finalGenerationId, finalConversationId, true);
+                    chatGenerationStateService.markFailed(finalGenerationId, error.getMessage());
                     responseFuture.completeExceptionally(error);
-                    // 清理会话响应构建器
-                    responseBuilders.remove(session.getId());
-                    responseFutures.remove(session.getId());
+                    cleanupGenerationState(finalGenerationId, error);
                 });
+            activeStreams.put(finalGenerationId, streamHandle);
 
             // 6. 后台任务检查并标记响应完成
-            submitCompletionMonitor(userId, userMessage, conversationId, session, responseFuture);
+            submitCompletionMonitor(userId, userMessage, finalConversationId, finalGenerationId, responseFuture);
             
         } catch (RateLimitExceededException e) {
-            sendRateLimitMessage(session, e);
-            cleanupSessionState(session.getId(), null);
+            sendRateLimitMessage(userId, null, e);
         } catch (Exception e) {
             logger.error("处理消息错误: {}", e.getMessage(), e);
-            handleError(session, e);
-            cleanupSessionState(session.getId(), e);
+            if (generationId != null) {
+                chatGenerationStateService.markFailed(generationId, e.getMessage());
+                cleanupGenerationState(generationId, e);
+            }
+            handleError(userId, generationId, e);
         }
     }
 
-    private void submitCompletionMonitor(String userId, String userMessage, String conversationId, WebSocketSession session,
+    private void submitCompletionMonitor(String userId, String userMessage, String conversationId, String generationId,
                                          CompletableFuture<String> responseFuture) {
         try {
             chatMonitorExecutor.execute(() -> {
                 try {
+                    if (finishCancelledGeneration(generationId, responseFuture, responseBuilders.get(generationId))) {
+                        return;
+                    }
+
                     Thread.sleep(3000);
-                    StringBuilder responseBuilder = responseBuilders.get(session.getId());
+                    if (finishCancelledGeneration(generationId, responseFuture, responseBuilders.get(generationId))) {
+                        return;
+                    }
+                    StringBuilder responseBuilder = responseBuilders.get(generationId);
                     if (responseBuilder == null) {
+                        if (finishCancelledGeneration(generationId, responseFuture, null)) {
+                            return;
+                        }
                         RuntimeException exception = new RuntimeException("响应构建器为空");
                         responseFuture.completeExceptionally(exception);
-                        handleError(session, exception);
-                        cleanupSessionState(session.getId(), exception);
+                        handleError(userId, generationId, exception);
+                        cleanupGenerationState(generationId, exception);
                         return;
                     }
 
                     int lastLength = responseBuilder.length();
                     Thread.sleep(2000);
+                    if (finishCancelledGeneration(generationId, responseFuture, responseBuilder)) {
+                        return;
+                    }
                     if (responseBuilder.length() == lastLength) {
-                        finalizeResponse(userId, userMessage, conversationId, session, responseFuture, responseBuilder);
+                        finalizeResponse(userId, userMessage, conversationId, generationId, responseFuture, responseBuilder);
                         return;
                     }
 
                     for (int i = 0; i < 5; i++) {
                         Thread.sleep(5000);
+                        if (finishCancelledGeneration(generationId, responseFuture, responseBuilder)) {
+                            return;
+                        }
                         lastLength = responseBuilder.length();
                         Thread.sleep(2000);
+                        if (finishCancelledGeneration(generationId, responseFuture, responseBuilder)) {
+                            return;
+                        }
                         if (responseBuilder.length() == lastLength) {
-                            finalizeResponse(userId, userMessage, conversationId, session, responseFuture, responseBuilder);
+                            finalizeResponse(userId, userMessage, conversationId, generationId, responseFuture, responseBuilder);
                             return;
                         }
                     }
 
                     if (!responseFuture.isDone()) {
-                        finalizeResponse(userId, userMessage, conversationId, session, responseFuture, responseBuilder);
+                        finalizeResponse(userId, userMessage, conversationId, generationId, responseFuture, responseBuilder);
                     }
                 } catch (Exception e) {
                     logger.error("检查响应完成时出错: {}", e.getMessage(), e);
                     responseFuture.completeExceptionally(e);
-                    cleanupSessionState(session.getId(), e);
+                    chatGenerationStateService.markFailed(generationId, e.getMessage());
+                    cleanupGenerationState(generationId, e);
                 }
             });
         } catch (RejectedExecutionException ex) {
-            logger.warn("聊天监控线程池已满，会话ID: {}", session.getId());
-            handleError(session, new RuntimeException("系统繁忙，请稍后重试"));
-            cleanupSessionState(session.getId(), ex);
+            logger.warn("聊天监控线程池已满，generationId: {}", generationId);
+            RuntimeException busyException = new RuntimeException("系统繁忙，请稍后重试");
+            handleError(userId, generationId, busyException);
+            chatGenerationStateService.markFailed(generationId, busyException.getMessage());
+            cleanupGenerationState(generationId, ex);
         }
     }
 
-    private void finalizeResponse(String userId, String userMessage, String conversationId, WebSocketSession session,
+    private void finalizeResponse(String userId, String userMessage, String conversationId, String generationId,
                                   CompletableFuture<String> responseFuture, StringBuilder responseBuilder) {
+        if (finishCancelledGeneration(generationId, responseFuture, responseBuilder)) {
+            return;
+        }
         String completeResponse = responseBuilder.toString();
         responseFuture.complete(completeResponse);
-        sendCompletionNotification(session);
-        updateConversationHistory(conversationId, userMessage, completeResponse, sessionReferenceMappings.get(session.getId()));
+        Map<Integer, ReferenceInfo> referenceMappings = generationReferenceMappings.get(generationId);
+        updateConversationHistory(conversationId, userMessage, completeResponse, referenceMappings);
+        persistConversation(userId, userMessage, completeResponse, conversationId, referenceMappings);
+        chatGenerationStateService.markCompleted(generationId, toSerializableReferenceMappings(referenceMappings));
+        sendCompletionNotification(userId, generationId, conversationId, false);
         logger.info("对话存储信息 - Redis键: {}, 值: {}", "user:" + userId + ":current_conversation", conversationId);
-        cleanupSessionState(session.getId(), null);
+        cleanupGenerationState(generationId, null);
         logger.info("消息处理完成，用户ID: {}", userId);
     }
 
-    private void cleanupSessionState(String sessionId, Throwable throwable) {
-        responseBuilders.remove(sessionId);
-        CompletableFuture<String> future = responseFutures.remove(sessionId);
+    private void persistConversation(String userId, String userMessage, String completeResponse, String conversationId,
+                                     Map<Integer, ReferenceInfo> referenceMappings) {
+        try {
+            Long userIdLong = Long.parseLong(userId);
+            conversationService.recordConversation(
+                    userIdLong,
+                    userMessage,
+                    completeResponse,
+                    conversationId,
+                    toSerializableReferenceMappings(referenceMappings)
+            );
+        } catch (Exception e) {
+            logger.error("持久化对话历史失败: userId={}, conversationId={}", userId, conversationId, e);
+        }
+    }
+
+    private void cleanupGenerationState(String generationId, Throwable throwable) {
+        responseBuilders.remove(generationId);
+        generationReferenceMappings.remove(generationId);
+        stopFlags.remove(generationId);
+        activeStreams.remove(generationId);
+        cancelledGenerations.remove(generationId);
+        CompletableFuture<String> future = responseFutures.remove(generationId);
         if (throwable != null && future != null && !future.isDone()) {
             future.completeExceptionally(throwable);
         }
+    }
+
+    private boolean finishCancelledGeneration(String generationId,
+                                              CompletableFuture<String> responseFuture,
+                                              StringBuilder responseBuilder) {
+        if (!isGenerationCancelled(generationId)) {
+            return false;
+        }
+
+        if (!responseFuture.isDone()) {
+            responseFuture.complete(responseBuilder != null ? responseBuilder.toString() : "");
+        }
+        cleanupGenerationState(generationId, null);
+        logger.info("生成任务已取消并停止后续收尾逻辑: generationId={}", generationId);
+        return true;
+    }
+
+    private boolean isGenerationCancelled(String generationId) {
+        return generationId != null && (cancelledGenerations.contains(generationId) || Boolean.TRUE.equals(stopFlags.get(generationId)));
     }
 
     private String getOrCreateConversationId(String userId) {
@@ -284,6 +383,9 @@ public class ChatHandler {
 
     private Map<String, Map<String, Object>> toSerializableReferenceMappings(Map<Integer, ReferenceInfo> referenceMapping) {
         Map<String, Map<String, Object>> serialized = new HashMap<>();
+        if (referenceMapping == null || referenceMapping.isEmpty()) {
+            return serialized;
+        }
         for (Map.Entry<Integer, ReferenceInfo> entry : referenceMapping.entrySet()) {
             ReferenceInfo detail = entry.getValue();
             Map<String, Object> item = new HashMap<>();
@@ -303,13 +405,13 @@ public class ChatHandler {
         return serialized;
     }
 
-    private String buildContext(List<SearchResult> searchResults, String sessionId, String userMessage) {
+    private String buildContext(List<SearchResult> searchResults, String generationId, String userMessage) {
         if (searchResults == null || searchResults.isEmpty()) {
             // 返回空字符串，让 LLM provider 按"无检索结果"逻辑处理
             return "";
         }
 
-        // 创建当前会话的引用映射
+        // 创建当前生成任务的引用映射
         Map<Integer, ReferenceInfo> referenceMapping = new HashMap<>();
 
         StringBuilder context = new StringBuilder();
@@ -336,122 +438,123 @@ public class ChatHandler {
                 ReferenceInfo detail = buildReferenceInfo(result, fileLabel, userMessage);
                 referenceMapping.put(i + 1, detail);
                 // 详细日志：记录每个引用编号的映射关系
-                logger.info("引用映射: sessionId={}, 引用编号#{}={}, 文件名={}, MD5={}, page={}, retrievalMode={}, chunkId={}",
-                    sessionId, i + 1, fileLabel, fileMd5, result.getPageNumber(), detail.retrievalMode(), detail.chunkId());
+                logger.info("引用映射: generationId={}, 引用编号#{}={}, 文件名={}, MD5={}, page={}, retrievalMode={}, chunkId={}",
+                    generationId, i + 1, fileLabel, fileMd5, result.getPageNumber(), detail.retrievalMode(), detail.chunkId());
             }
         }
 
-        // 保存当前会话的引用映射
-        sessionReferenceMappings.put(sessionId, referenceMapping);
-        logger.info("保存会话 {} 的引用映射，共 {} 条: {}", sessionId, referenceMapping.size(), referenceMapping);
+        // 保存当前生成任务的引用映射
+        generationReferenceMappings.put(generationId, referenceMapping);
+        chatGenerationStateService.updateReferenceMappings(generationId, toSerializableReferenceMappings(referenceMapping));
+        logger.info("保存生成任务 {} 的引用映射，共 {} 条: {}", generationId, referenceMapping.size(), referenceMapping);
 
         return context.toString();
     }
 
-    private void sendResponseChunk(WebSocketSession session, String chunk) {
-        try {
-            // 检查是否需要停止发送
-            if (Boolean.TRUE.equals(stopFlags.get(session.getId()))) {
-                logger.debug("检测到停止标志，跳过发送响应块");
-                return;
+    private void sendGenerationStart(String userId, String generationId, String conversationId) {
+        chatSessionRegistry.sendJsonToUser(userId, Map.of(
+                "type", "start",
+                "generationId", generationId,
+                "conversationId", conversationId,
+                "timestamp", System.currentTimeMillis()
+        ));
+    }
+
+    private void sendResponseChunk(String userId, String generationId, String conversationId, String chunk) {
+        if (Boolean.TRUE.equals(stopFlags.get(generationId))) {
+            logger.debug("检测到停止标志，跳过发送响应块: generationId={}", generationId);
+            return;
+        }
+
+        chatSessionRegistry.sendJsonToUser(userId, Map.of(
+                "type", "chunk",
+                "generationId", generationId,
+                "conversationId", conversationId,
+                "chunk", chunk
+        ));
+    }
+
+    private void sendCompletionNotification(String userId,
+                                            String generationId,
+                                            String conversationId,
+                                            boolean failed) {
+        Map<String, Object> notification = new HashMap<>();
+        notification.put("type", "completion");
+        notification.put("generationId", generationId);
+        notification.put("conversationId", conversationId);
+        notification.put("status", failed ? "failed" : "finished");
+        notification.put("message", failed ? "响应已中断" : "响应已完成");
+        notification.put("timestamp", System.currentTimeMillis());
+        notification.put("date", java.time.LocalDateTime.now().toString());
+        if (!failed) {
+            Map<Integer, ReferenceInfo> referenceMappings = generationReferenceMappings.get(generationId);
+            if (referenceMappings != null && !referenceMappings.isEmpty()) {
+                notification.put("referenceMappings", toSerializableReferenceMappings(referenceMappings));
             }
-            
-            // 将chunk包装成JSON格式，匹配前端期望的数据结构
-            Map<String, String> chunkResponse = Map.of("chunk", chunk);
-            String jsonChunk = objectMapper.writeValueAsString(chunkResponse);
-            logger.debug("发送响应块到会话 {}: {}", session.getId(), jsonChunk);
-            session.sendMessage(new TextMessage(jsonChunk));
-        } catch (Exception e) {
-            logger.error("发送响应块失败: {}", e.getMessage(), e);
         }
+        chatSessionRegistry.sendJsonToUser(userId, notification);
     }
 
-    private void sendCompletionNotification(WebSocketSession session) {
-        try {
-            long currentTime = System.currentTimeMillis();
-            Map<String, Object> notification = Map.of(
-                "type", "completion",
-                "status", "finished", 
-                "message", "响应已完成",
-                "timestamp", currentTime,
-                "date", java.time.LocalDateTime.now().toString()
-            );
-            String notificationJson = objectMapper.writeValueAsString(notification);
-            logger.info("发送完成通知到会话 {}: {}", session.getId(), notificationJson);
-            session.sendMessage(new TextMessage(notificationJson));
-            logger.info("已发送响应完成通知到会话: {}", session.getId());
-        } catch (Exception e) {
-            logger.error("发送完成通知失败: {}", e.getMessage(), e);
-        }
-    }
-
-    private void handleError(WebSocketSession session, Throwable error) {
+    private void handleError(String userId, String generationId, Throwable error) {
         logger.error("AI服务错误: {}", error.getMessage(), error);
-        try {
-            Map<String, String> errorResponse = Map.of("error", "AI服务暂时不可用，请稍后重试");
-            String errorJson = objectMapper.writeValueAsString(errorResponse);
-            logger.error("发送错误消息到会话 {}: {}", session.getId(), errorJson);
-            session.sendMessage(new TextMessage(errorJson));
-            logger.error("已发送错误消息到会话: {}", session.getId());
-        } catch (Exception e) {
-            logger.error("发送错误消息失败: {}", e.getMessage(), e);
-        }
+        Map<String, Object> errorResponse = new HashMap<>();
+        errorResponse.put("type", "error");
+        errorResponse.put("generationId", generationId);
+        errorResponse.put("error", "AI服务暂时不可用，请稍后重试");
+        chatSessionRegistry.sendJsonToUser(userId, errorResponse);
     }
 
-    private void sendRateLimitMessage(WebSocketSession session, RateLimitExceededException exception) {
-        try {
-            Map<String, Object> response = Map.of(
-                    "code", 429,
-                    "message", exception.getMessage(),
-                    "retryAfterSeconds", exception.getRetryAfterSeconds()
-            );
-            session.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
-        } catch (Exception e) {
-            logger.error("发送限流消息失败: {}", e.getMessage(), e);
-        }
+    private void sendRateLimitMessage(String userId, String generationId, RateLimitExceededException exception) {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("type", "error");
+        payload.put("generationId", generationId);
+        payload.put("code", 429);
+        payload.put("message", exception.getMessage());
+        payload.put("retryAfterSeconds", exception.getRetryAfterSeconds());
+        chatSessionRegistry.sendJsonToUser(userId, payload);
     }
 
     /**
      * 停止响应
      */
-    public void stopResponse(String userId, WebSocketSession session) {
-        String sessionId = session.getId();
-        logger.info("收到停止请求，用户ID: {}, 会话ID: {}", userId, sessionId);
+    public void stopResponse(String userId, String generationId) {
+        String resolvedGenerationId = generationId;
+        if (resolvedGenerationId == null || resolvedGenerationId.isBlank()) {
+            resolvedGenerationId = chatGenerationStateService.getActiveGenerationForUser(userId)
+                    .map(ChatGenerationStateService.GenerationSnapshot::generationId)
+                    .orElse(null);
+        }
+
+        if (resolvedGenerationId == null || resolvedGenerationId.isBlank()) {
+            logger.warn("收到停止请求但未找到活动生成任务，用户ID: {}", userId);
+            return;
+        }
+        final String targetGenerationId = resolvedGenerationId;
+
+        logger.info("收到停止请求，用户ID: {}，generationId: {}", userId, targetGenerationId);
 
         // 设置停止标志
-        stopFlags.put(sessionId, true);
+        cancelledGenerations.add(targetGenerationId);
+        stopFlags.put(targetGenerationId, true);
+        chatGenerationStateService.markCancelled(targetGenerationId);
+        LlmProviderRouter.StreamHandle streamHandle = activeStreams.get(targetGenerationId);
+        if (streamHandle != null) {
+            streamHandle.cancel();
+        }
+        CompletableFuture<String> responseFuture = responseFutures.get(targetGenerationId);
+        if (responseFuture != null && !responseFuture.isDone()) {
+            responseFuture.completeExceptionally(new CancellationException("响应已停止"));
+        }
 
-        // 发送停止确认
-        try {
-            long currentTime = System.currentTimeMillis();
-            Map<String, Object> response = Map.of(
+        chatSessionRegistry.sendJsonToUser(userId, Map.of(
                 "type", "stop",
+                "generationId", targetGenerationId,
                 "message", "响应已停止",
-                "timestamp", currentTime,
-                "date", java.time.Instant.ofEpochMilli(currentTime).toString()
-            );
-            String stopJson = objectMapper.writeValueAsString(response);
-            logger.info("发送停止确认到会话 {}: {}", sessionId, stopJson);
-            session.sendMessage(new TextMessage(stopJson));
-            logger.info("已发送停止确认，会话ID: {}", sessionId);
-        } catch (Exception e) {
-            logger.error("发送停止确认失败: {}", e.getMessage(), e);
-        }
+                "timestamp", System.currentTimeMillis(),
+                "date", java.time.Instant.now().toString()
+        ));
 
-        // 清理停止标志（延迟清理，避免影响当前响应）
-        try {
-            chatMonitorExecutor.execute(() -> {
-                try {
-                    Thread.sleep(2000);
-                    stopFlags.remove(sessionId);
-                    logger.debug("已清理停止标志，会话ID: {}", sessionId);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            });
-        } catch (RejectedExecutionException ignore) {
-            stopFlags.remove(sessionId);
-        }
+        logger.info("已停止上游流式生成: generationId={}", targetGenerationId);
     }
 
     /**
@@ -461,31 +564,59 @@ public class ChatHandler {
      * @param referenceNumber 引用编号
      * @return 文件MD5，如果找不到则返回null
      */
-    public String getReferenceMd5(String sessionId, int referenceNumber) {
-        ReferenceInfo detail = getReferenceDetail(sessionId, referenceNumber);
+    public String getReferenceMd5(String generationId, int referenceNumber) {
+        ReferenceInfo detail = getReferenceDetail(generationId, referenceNumber);
         return detail != null ? detail.fileMd5() : null;
     }
 
-    public ReferenceInfo getReferenceDetail(String sessionId, int referenceNumber) {
-        logger.info("查询引用MD5: sessionId={}, referenceNumber=#{}", sessionId, referenceNumber);
+    public ReferenceInfo getReferenceDetail(String generationId, int referenceNumber) {
+        logger.info("查询引用MD5: generationId={}, referenceNumber=#{}", generationId, referenceNumber);
 
-        Map<Integer, ReferenceInfo> referenceMapping = sessionReferenceMappings.get(sessionId);
+        Map<Integer, ReferenceInfo> referenceMapping = generationReferenceMappings.get(generationId);
         if (referenceMapping == null) {
-            logger.error("未找到会话 {} 的引用映射，当前所有会话: {}", sessionId, sessionReferenceMappings.keySet());
+            referenceMapping = chatGenerationStateService.getGeneration(generationId)
+                    .map(ChatGenerationStateService.GenerationSnapshot::referenceMappings)
+                    .filter(mappings -> !mappings.isEmpty())
+                    .map(this::toReferenceInfoMap)
+                    .orElse(null);
+        }
+        if (referenceMapping == null) {
+            logger.error("未找到生成任务 {} 的引用映射，当前所有生成任务: {}", generationId, generationReferenceMappings.keySet());
             return null;
         }
 
-        logger.info("会话 {} 的引用映射内容: {}", sessionId, referenceMapping);
+        logger.info("生成任务 {} 的引用映射内容: {}", generationId, referenceMapping);
 
         ReferenceInfo detail = referenceMapping.get(referenceNumber);
         if (detail == null) {
-            logger.error("会话 {} 中未找到引用编号 #{}, 可用的引用编号: {}", sessionId, referenceNumber, referenceMapping.keySet());
+            logger.error("生成任务 {} 中未找到引用编号 #{}, 可用的引用编号: {}", generationId, referenceNumber, referenceMapping.keySet());
             return null;
         }
 
-        logger.info("成功找到引用映射: sessionId={}, referenceNumber=#{}, fileMd5={}, pageNumber={}",
-                sessionId, referenceNumber, detail.fileMd5(), detail.pageNumber());
+        logger.info("成功找到引用映射: generationId={}, referenceNumber=#{}, fileMd5={}, pageNumber={}",
+                generationId, referenceNumber, detail.fileMd5(), detail.pageNumber());
         return detail;
+    }
+
+    private Map<Integer, ReferenceInfo> toReferenceInfoMap(Map<String, Map<String, Object>> serializedMappings) {
+        Map<Integer, ReferenceInfo> referenceMap = new HashMap<>();
+        for (Map.Entry<String, Map<String, Object>> entry : serializedMappings.entrySet()) {
+            Map<String, Object> item = entry.getValue();
+            referenceMap.put(Integer.parseInt(entry.getKey()), new ReferenceInfo(
+                    (String) item.get("fileMd5"),
+                    (String) item.get("fileName"),
+                    item.get("pageNumber") instanceof Number number ? number.intValue() : null,
+                    (String) item.get("anchorText"),
+                    (String) item.get("retrievalMode"),
+                    (String) item.get("retrievalLabel"),
+                    (String) item.get("retrievalQuery"),
+                    (String) item.get("matchedChunkText"),
+                    (String) item.get("evidenceSnippet"),
+                    item.get("score") instanceof Number number ? number.doubleValue() : null,
+                    item.get("chunkId") instanceof Number number ? number.intValue() : null
+            ));
+        }
+        return referenceMap;
     }
 
     private ReferenceInfo buildReferenceInfo(SearchResult result, String fileLabel, String userMessage) {
@@ -553,18 +684,6 @@ public class ChatHandler {
 
     private String normalizeEvidenceText(String value) {
         return value == null ? "" : value.replaceAll("\\s+", " ").trim();
-    }
-
-    /**
-     * 清理会话的引用映射
-     *
-     * @param sessionId WebSocket会话ID
-     */
-    public void clearSessionReferenceMapping(String sessionId) {
-        Map<Integer, ReferenceInfo> removed = sessionReferenceMappings.remove(sessionId);
-        if (removed != null) {
-            logger.info("清理会话 {} 的引用映射，共 {} 条", sessionId, removed.size());
-        }
     }
 
     public record ReferenceInfo(

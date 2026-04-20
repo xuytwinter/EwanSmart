@@ -1,5 +1,7 @@
 package com.yizhaoqi.smartpai.service;
 
+import com.yizhaoqi.smartpai.config.KafkaConfig;
+import com.yizhaoqi.smartpai.model.FileProcessingTask;
 import com.yizhaoqi.smartpai.model.FileUpload;
 import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.DocumentVectorRepository;
@@ -15,6 +17,7 @@ import org.apache.tika.exception.TikaException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -24,6 +27,7 @@ import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +50,8 @@ public class DocumentService {
     private static final String PDF_SINGLE_PAGE_CACHE_PREFIX = "preview:pdf:single-page:";
     private static final long PDF_SINGLE_PAGE_CACHE_TTL_MINUTES = 30;
     private static final long PDF_SINGLE_PAGE_CACHE_TTL_MILLIS = TimeUnit.MINUTES.toMillis(PDF_SINGLE_PAGE_CACHE_TTL_MINUTES);
+    private static final String LEGACY_COMPLETED_WITHOUT_USAGE_MESSAGE = "历史数据未统计实际 Tokens，可按需重试以回写实际向量化结果";
+    private static final String LEGACY_FAILED_MESSAGE = "历史向量化结果缺失，可点击重试向量化重新处理";
     private static final Map<String, InMemoryPdfPreviewCache> PDF_SINGLE_PAGE_LOCAL_CACHE = new ConcurrentHashMap<>();
 
     @Autowired
@@ -77,6 +83,12 @@ public class DocumentService {
 
     @Autowired
     private VectorizationService vectorizationService;
+
+    @Autowired
+    private KafkaTemplate<String, Object> kafkaTemplate;
+
+    @Autowired
+    private KafkaConfig kafkaConfig;
 
     /**
      * 删除文档及其相关数据
@@ -163,6 +175,8 @@ public class DocumentService {
         FileUpload fileUpload = fileUploadRepository.findFirstByFileMd5OrderByCreatedAtDesc(fileMd5)
                 .orElseThrow(() -> new RuntimeException("文件不存在"));
 
+        markVectorizationProcessing(fileUpload, true);
+
         try (InputStream fileStream = uploadService.getMergedFileStream(fileMd5)) {
             try {
                 elasticsearchService.deleteByFileMd5(fileMd5);
@@ -189,10 +203,7 @@ public class DocumentService {
                     fileUpload.isPublic(),
                     requesterId
             );
-
-            fileUpload.setActualEmbeddingTokens((long) result.actualEmbeddingTokens());
-            fileUpload.setActualChunkCount(result.actualChunkCount());
-            fileUploadRepository.save(fileUpload);
+            markVectorizationCompleted(fileUpload, result);
 
             logger.info(
                     "文档索引重建完成: fileMd5={}, actualTokens={}, actualChunkCount={}",
@@ -202,12 +213,130 @@ public class DocumentService {
             );
             return result;
         } catch (TikaException e) {
+            markVectorizationFailed(fileUpload, e);
             logger.error("重建文档索引失败，文档解析异常: {}", fileMd5, e);
             throw new RuntimeException("重建文档索引失败: " + e.getMessage(), e);
         } catch (Exception e) {
+            markVectorizationFailed(fileUpload, e);
             logger.error("重建文档索引失败: {}", fileMd5, e);
             throw new RuntimeException("重建文档索引失败: " + e.getMessage(), e);
         }
+    }
+
+    @Transactional
+    public FileUpload enqueueAsyncVectorizationRetry(String fileMd5, String requesterId) {
+        FileUpload fileUpload = fileUploadRepository.findFirstByFileMd5OrderByCreatedAtDesc(fileMd5)
+                .orElseThrow(() -> new RuntimeException("文件不存在"));
+
+        markVectorizationProcessing(fileUpload, true);
+
+        FileProcessingTask task = new FileProcessingTask(
+                fileUpload.getFileMd5(),
+                null,
+                fileUpload.getFileName(),
+                fileUpload.getUserId(),
+                fileUpload.getOrgTag(),
+                fileUpload.isPublic(),
+                FileProcessingTask.TASK_TYPE_REINDEX,
+                requesterId
+        );
+
+        kafkaTemplate.executeInTransaction(kt -> {
+            kt.send(kafkaConfig.getFileProcessingTopic(), task);
+            return true;
+        });
+
+        logger.info("已发送异步向量化重试任务: fileMd5={}, requesterId={}", fileMd5, requesterId);
+        return fileUpload;
+    }
+
+    @Transactional
+    public void markVectorizationProcessing(String fileMd5, boolean resetActualUsage) {
+        FileUpload fileUpload = fileUploadRepository.findFirstByFileMd5OrderByCreatedAtDesc(fileMd5)
+                .orElseThrow(() -> new RuntimeException("文件不存在"));
+        markVectorizationProcessing(fileUpload, resetActualUsage);
+    }
+
+    @Transactional
+    public void markVectorizationCompleted(String fileMd5, VectorizationService.VectorizationUsageResult result) {
+        FileUpload fileUpload = fileUploadRepository.findFirstByFileMd5OrderByCreatedAtDesc(fileMd5)
+                .orElseThrow(() -> new RuntimeException("文件不存在"));
+        markVectorizationCompleted(fileUpload, result);
+    }
+
+    @Transactional
+    public void markVectorizationFailed(String fileMd5, String errorMessage) {
+        FileUpload fileUpload = fileUploadRepository.findFirstByFileMd5OrderByCreatedAtDesc(fileMd5)
+                .orElseThrow(() -> new RuntimeException("文件不存在"));
+        markVectorizationFailed(fileUpload, errorMessage);
+    }
+
+    @Transactional
+    public void markVectorizationFailed(String fileMd5, Throwable error) {
+        FileUpload fileUpload = fileUploadRepository.findFirstByFileMd5OrderByCreatedAtDesc(fileMd5)
+                .orElseThrow(() -> new RuntimeException("文件不存在"));
+        markVectorizationFailed(fileUpload, error);
+    }
+
+    private void markVectorizationProcessing(FileUpload fileUpload, boolean resetActualUsage) {
+        fileUpload.setVectorizationStatus(FileUpload.VECTORIZATION_STATUS_PROCESSING);
+        fileUpload.setVectorizationErrorMessage(null);
+        if (resetActualUsage) {
+            fileUpload.setActualEmbeddingTokens(null);
+            fileUpload.setActualChunkCount(null);
+        }
+        fileUploadRepository.save(fileUpload);
+    }
+
+    private void markVectorizationCompleted(FileUpload fileUpload, VectorizationService.VectorizationUsageResult result) {
+        fileUpload.setActualEmbeddingTokens((long) result.actualEmbeddingTokens());
+        fileUpload.setActualChunkCount(result.actualChunkCount());
+        fileUpload.setVectorizationStatus(FileUpload.VECTORIZATION_STATUS_COMPLETED);
+        fileUpload.setVectorizationErrorMessage(null);
+        fileUploadRepository.save(fileUpload);
+    }
+
+    private void markVectorizationFailed(FileUpload fileUpload, String errorMessage) {
+        fileUpload.setVectorizationStatus(FileUpload.VECTORIZATION_STATUS_FAILED);
+        fileUpload.setVectorizationErrorMessage(trimVectorizationErrorMessage(errorMessage));
+        fileUploadRepository.save(fileUpload);
+    }
+
+    private void markVectorizationFailed(FileUpload fileUpload, Throwable error) {
+        markVectorizationFailed(fileUpload, resolveVectorizationErrorMessage(error));
+    }
+
+    private String resolveVectorizationErrorMessage(Throwable error) {
+        Throwable current = error;
+        String deepestMessage = null;
+
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && !message.isBlank()) {
+                deepestMessage = message;
+                if (message.contains("余额不足")) {
+                    return message;
+                }
+            }
+            current = current.getCause();
+        }
+
+        if (deepestMessage == null || deepestMessage.isBlank()) {
+            return "向量化失败，请稍后重试";
+        }
+
+        if ("向量化失败".equals(deepestMessage) || "Error processing task".equals(deepestMessage)) {
+            return "向量化失败，请稍后重试";
+        }
+
+        return deepestMessage;
+    }
+
+    private String trimVectorizationErrorMessage(String errorMessage) {
+        if (errorMessage == null || errorMessage.isBlank()) {
+            return "向量化失败，请稍后重试";
+        }
+        return errorMessage.length() > 1000 ? errorMessage.substring(0, 1000) : errorMessage;
     }
     
     /**
@@ -239,6 +368,8 @@ public class DocumentService {
                 files = fileUploadRepository.findAccessibleFilesWithTags(userDbId, userEffectiveTags);
                 logger.debug("使用有效组织标签查询文件");
             }
+
+            backfillLegacyVectorizationStatuses(files);
             
             logger.info("成功获取用户可访问文件列表: userId={}, fileCount={}", userId, files.size());
             return files;
@@ -259,6 +390,7 @@ public class DocumentService {
         
         try {
             List<FileUpload> files = fileUploadRepository.findByUserId(userId);
+            backfillLegacyVectorizationStatuses(files);
             logger.info("成功获取用户上传的文件列表: userId={}, fileCount={}", userId, files.size());
             return files;
         } catch (Exception e) {
@@ -275,6 +407,52 @@ public class DocumentService {
         } catch (NumberFormatException ignored) {
             return userRepository.findByUsername(userId)
                     .orElseThrow(() -> new RuntimeException("用户不存在: " + userId));
+        }
+    }
+
+    private void backfillLegacyVectorizationStatuses(List<FileUpload> files) {
+        if (files == null || files.isEmpty()) {
+            return;
+        }
+
+        Map<String, Long> vectorCountCache = new HashMap<>();
+        for (FileUpload file : files) {
+            if (file == null || file.getVectorizationStatus() != null) {
+                continue;
+            }
+
+            boolean changed = false;
+            if (file.getStatus() == FileUpload.STATUS_UPLOADING) {
+                file.setVectorizationStatus(FileUpload.VECTORIZATION_STATUS_PENDING);
+                file.setVectorizationErrorMessage(null);
+                changed = true;
+            } else if (file.getStatus() == FileUpload.STATUS_MERGING) {
+                file.setVectorizationStatus(FileUpload.VECTORIZATION_STATUS_PROCESSING);
+                file.setVectorizationErrorMessage(null);
+                changed = true;
+            } else if (file.getActualEmbeddingTokens() != null || file.getActualChunkCount() != null) {
+                file.setVectorizationStatus(FileUpload.VECTORIZATION_STATUS_COMPLETED);
+                file.setVectorizationErrorMessage(null);
+                changed = true;
+            } else {
+                long vectorCount = vectorCountCache.computeIfAbsent(
+                        file.getFileMd5(),
+                        documentVectorRepository::countByFileMd5
+                );
+                if (vectorCount > 0) {
+                    file.setVectorizationStatus(FileUpload.VECTORIZATION_STATUS_COMPLETED);
+                    file.setVectorizationErrorMessage(LEGACY_COMPLETED_WITHOUT_USAGE_MESSAGE);
+                    changed = true;
+                } else if (file.getEstimatedEmbeddingTokens() != null || file.getEstimatedChunkCount() != null) {
+                    file.setVectorizationStatus(FileUpload.VECTORIZATION_STATUS_FAILED);
+                    file.setVectorizationErrorMessage(LEGACY_FAILED_MESSAGE);
+                    changed = true;
+                }
+            }
+
+            if (changed) {
+                fileUploadRepository.save(file);
+            }
         }
     }
     

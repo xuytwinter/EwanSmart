@@ -11,12 +11,17 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @NoArgsConstructor
 public class FileProcessingTask {
+    public static final String TASK_TYPE_UPLOAD_PROCESS = "UPLOAD_PROCESS";
+    public static final String TASK_TYPE_REINDEX = "REINDEX";
+
     private String fileMd5; // 文件的 MD5 校验值
     private String filePath; // 文件存储路径
     private String fileName; // 文件名
     private String userId;   // 上传用户ID
     private String orgTag;   // 文件所属组织标签
     private boolean isPublic; // 文件是否公开
+    private String taskType; // 任务类型
+    private String requesterId; // 发起重试的用户
     
     /**
      * 向后兼容的构造函数
@@ -28,5 +33,7 @@ public class FileProcessingTask {
         this.userId = null;
         this.orgTag = "DEFAULT";
         this.isPublic = false;
+        this.taskType = TASK_TYPE_UPLOAD_PROCESS;
+        this.requesterId = null;
     }
 }

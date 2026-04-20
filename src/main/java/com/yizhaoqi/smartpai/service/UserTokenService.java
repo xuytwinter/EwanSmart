@@ -4,10 +4,12 @@ import com.yizhaoqi.smartpai.config.UsageQuotaProperties;
 import com.yizhaoqi.smartpai.exception.CustomException;
 import com.yizhaoqi.smartpai.model.DailyReqCountStat;
 import com.yizhaoqi.smartpai.model.DailyUsageStat;
+import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.model.UserDailyChatCount;
 import com.yizhaoqi.smartpai.model.UserTokenRecord;
 import com.yizhaoqi.smartpai.repository.UserDailyChatCountRepository;
 import com.yizhaoqi.smartpai.repository.UserTokenRecordRepository;
+import com.yizhaoqi.smartpai.repository.UserRepository;
 import io.micrometer.common.util.StringUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
@@ -56,13 +58,18 @@ public class UserTokenService {
 
     private final UserDailyChatCountRepository userDailyChatCountRepository;
 
+    private final UserRepository userRepository;
+
     public UserTokenService(StringRedisTemplate stringRedisTemplate,
                             UsageQuotaProperties usageQuotaProperties,
-                            UserTokenRecordRepository userTokenRecordRepository, UserDailyChatCountRepository userDailyChatCountRepository) {
+                            UserTokenRecordRepository userTokenRecordRepository,
+                            UserDailyChatCountRepository userDailyChatCountRepository,
+                            UserRepository userRepository) {
         this.stringRedisTemplate = stringRedisTemplate;
         this.usageQuotaProperties = usageQuotaProperties;
         this.userTokenRecordRepository = userTokenRecordRepository;
         this.userDailyChatCountRepository = userDailyChatCountRepository;
+        this.userRepository = userRepository;
     }
 
     /**
@@ -75,8 +82,7 @@ public class UserTokenService {
         String key = buildLlmTokenKey(userId);
         String value = stringRedisTemplate.opsForValue().get(key);
         if (StringUtils.isBlank(value)) {
-            // 新用户，首次进来时查看余额
-            long initToken = usageQuotaProperties.getLlm().getInitTokens();
+            long initToken = resolveInitToken(userId, usageQuotaProperties.getLlm());
             stringRedisTemplate.opsForValue().set(key, String.valueOf(initToken));
             // 记录 Token 增加
             recordTokenIncrease(userId, UserTokenRecord.TokenType.LLM, initToken, 0L, initToken, "注册赠送", null);
@@ -100,7 +106,7 @@ public class UserTokenService {
         String key = buildEmbeddingTokenKey(userId);
         String value = stringRedisTemplate.opsForValue().get(key);
         if (StringUtils.isBlank(value)) {
-            long initToken = usageQuotaProperties.getEmbedding().getInitTokens();
+            long initToken = resolveInitToken(userId, usageQuotaProperties.getEmbedding());
             stringRedisTemplate.opsForValue().set(key, String.valueOf(initToken));
             // 添加 Embedding Token 增加记录
             recordTokenIncrease(userId, UserTokenRecord.TokenType.EMBEDDING, initToken, 0L, initToken, "注册赠送", null);
@@ -283,6 +289,29 @@ public class UserTokenService {
      */
     private String buildEmbeddingTokenKey(String userId) {
         return EMBEDDING_TOKEN_KEY_PREFIX + userId;
+    }
+
+    private long resolveInitToken(String userId, UsageQuotaProperties.DailyTokenQuota quota) {
+        long adminInitTokens = quota.getAdminInitTokens();
+        if (adminInitTokens > 0 && isAdminUser(userId)) {
+            return adminInitTokens;
+        }
+        return quota.getInitTokens();
+    }
+
+    private boolean isAdminUser(String userId) {
+        if (StringUtils.isBlank(userId)) {
+            return false;
+        }
+        try {
+            return userRepository.findById(Long.parseLong(userId))
+                    .map(User::getRole)
+                    .filter(User.Role.ADMIN::equals)
+                    .isPresent();
+        } catch (NumberFormatException e) {
+            logger.debug("用户 ID 不是数字，跳过管理员初始额度判断: {}", userId);
+            return false;
+        }
     }
 
     /**

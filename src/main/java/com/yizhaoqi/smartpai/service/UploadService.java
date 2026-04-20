@@ -707,6 +707,8 @@ public class UploadService {
         fileUpload.setUserId(userId);
         fileUpload.setOrgTag(orgTag);
         fileUpload.setPublic(isPublic);
+        fileUpload.setVectorizationStatus(FileUpload.VECTORIZATION_STATUS_PENDING);
+        fileUpload.setVectorizationErrorMessage(null);
 
         try {
             return fileUploadRepository.save(fileUpload);

@@ -12,8 +12,6 @@ const scrollbarRef = ref<InstanceType<typeof NScrollbar>>();
 const list = ref<Api.Chat.Message[]>([]);
 const loading = ref(false);
 
-const store = useAuthStore();
-
 watch(() => [...list.value], scrollToBottom);
 
 function scrollToBottom() {
@@ -25,15 +23,26 @@ function scrollToBottom() {
   }, 100);
 }
 
-const range = ref<[number, number]>([dayjs().subtract(7, 'day').valueOf(), dayjs().add(1, 'day').valueOf()]);
-const userId = ref<number>(store.userInfo.id);
+const range = ref<[number, number] | null>(null);
+const userId = ref<number | null>(null);
 
 const params = computed(() => {
-  return {
-    userid: userId.value,
-    start_date: dayjs(range.value[0]).format('YYYY-MM-DD'),
-    end_date: dayjs(range.value[1]).format('YYYY-MM-DD')
-  };
+  const query: {
+    userid?: number;
+    start_date?: string;
+    end_date?: string;
+  } = {};
+
+  if (userId.value !== null) {
+    query.userid = userId.value;
+  }
+
+  if (range.value) {
+    query.start_date = dayjs(range.value[0]).format('YYYY-MM-DD');
+    query.end_date = dayjs(range.value[1]).format('YYYY-MM-DD');
+  }
+
+  return query;
 });
 
 watchEffect(() => {
@@ -41,7 +50,6 @@ watchEffect(() => {
 });
 
 async function getList() {
-  if (!params.value.userid) return;
   loading.value = true;
   const { error, data } = await request<Api.Chat.Message[]>({
     url: 'admin/conversation',
@@ -64,16 +72,16 @@ async function getList() {
             <TheSelect
               v-model:value="userId"
               url="admin/users/list"
-              :params="{ page: 1, size: 999, orgTag: store.userInfo.primaryOrg }"
+              :params="{ page: 1, size: 999 }"
               key-field="content"
               value-field="userId"
               label-field="username"
               class="clear w-200px!"
-              :clearable="false"
+              placeholder="全部用户"
             />
           </NFormItem>
           <NFormItem label="时间">
-            <NDatePicker v-model:value="range" type="daterange" class="clear" />
+            <NDatePicker v-model:value="range" type="daterange" class="clear" clearable />
           </NFormItem>
         </NForm>
       </div>

@@ -161,6 +161,57 @@ public class DocumentController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
         }
     }
+
+    @PostMapping("/{fileMd5}/vectorization/retry")
+    public ResponseEntity<?> retryVectorizationAsync(
+            @PathVariable String fileMd5,
+            @RequestAttribute("userId") String userId,
+            @RequestAttribute("role") String role) {
+
+        LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("RETRY_VECTORIZATION_ASYNC");
+        try {
+            LogUtils.logBusiness("RETRY_VECTORIZATION_ASYNC", userId, "接收到异步向量化重试请求: fileMd5=%s, role=%s", fileMd5, role);
+
+            Optional<FileUpload> fileOpt = fileUploadRepository.findFirstByFileMd5OrderByCreatedAtDesc(fileMd5);
+            if (fileOpt.isEmpty()) {
+                monitor.end("重试失败：文档不存在");
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of(
+                        "code", HttpStatus.NOT_FOUND.value(),
+                        "message", "文档不存在"
+                ));
+            }
+
+            FileUpload file = fileOpt.get();
+            if (!file.getUserId().equals(userId) && !"ADMIN".equals(role)) {
+                monitor.end("重试失败：权限不足");
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                        "code", HttpStatus.FORBIDDEN.value(),
+                        "message", "没有权限重试此文档向量化"
+                ));
+            }
+
+            FileUpload queuedFile = documentService.enqueueAsyncVectorizationRetry(fileMd5, userId);
+            monitor.end("异步向量化重试任务已提交");
+
+            Map<String, Object> data = new HashMap<>();
+            data.put("fileMd5", queuedFile.getFileMd5());
+            data.put("fileName", queuedFile.getFileName());
+            data.put("vectorizationStatus", queuedFile.getVectorizationStatus());
+
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "已提交异步向量化重试任务",
+                    "data", data
+            ));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("RETRY_VECTORIZATION_ASYNC", userId, "异步向量化重试失败: fileMd5=%s", e, fileMd5);
+            monitor.end("异步向量化重试失败: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
+                    "code", HttpStatus.INTERNAL_SERVER_ERROR.value(),
+                    "message", "异步向量化重试失败: " + e.getMessage()
+            ));
+        }
+    }
     
     /**
      * 获取用户可访问的所有文件列表
@@ -263,6 +314,8 @@ public class DocumentController {
             dto.put("estimatedChunkCount", file.getEstimatedChunkCount());
             dto.put("actualEmbeddingTokens", file.getActualEmbeddingTokens());
             dto.put("actualChunkCount", file.getActualChunkCount());
+            dto.put("vectorizationStatus", file.getVectorizationStatus());
+            dto.put("vectorizationErrorMessage", file.getVectorizationErrorMessage());
             dto.put("orgTagName", getOrgTagName(file.getOrgTag()));
             return dto;
         }).collect(Collectors.toList());

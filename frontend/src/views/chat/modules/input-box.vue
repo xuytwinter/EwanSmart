@@ -71,6 +71,71 @@ const cooldownText = computed(() => {
   return `${rateLimitRemainingSeconds.value} 秒后可重新发送`;
 });
 
+function findAssistantMessage(generationId?: string) {
+  if (generationId) {
+    for (let i = list.value.length - 1; i >= 0; i -= 1) {
+      const item = list.value[i];
+      if (item?.role === 'assistant' && item.generationId === generationId) {
+        return item;
+      }
+    }
+  }
+
+  const latest = list.value[list.value.length - 1];
+  if (latest?.role === 'assistant') {
+    return latest;
+  }
+
+  return null;
+}
+
+function handleStartPayload(assistant: Api.Chat.Message, payload: Record<string, any>) {
+  assistant.generationId = payload.generationId || assistant.generationId;
+  assistant.conversationId = payload.conversationId || assistant.conversationId;
+  if (!assistant.timestamp && payload.timestamp) {
+    assistant.timestamp = new Date(payload.timestamp).toISOString();
+  }
+}
+
+function handleCompletionPayload(assistant: Api.Chat.Message, payload: Record<string, any>) {
+  if (payload.status === 'finished' && assistant.status !== 'error') {
+    assistant.status = 'finished';
+  } else if (payload.status === 'failed') {
+    assistant.status = 'error';
+  }
+
+  if (payload.referenceMappings) {
+    assistant.referenceMappings = payload.referenceMappings;
+  }
+}
+
+function handleStopPayload(assistant: Api.Chat.Message) {
+  if (assistant.status !== 'error') {
+    assistant.status = 'finished';
+  }
+}
+
+function handleErrorPayload(assistant: Api.Chat.Message, payload: Record<string, any>) {
+  if (Number(payload.code) === 429) {
+    chatStore.startRateLimitCountdown(Number(payload.retryAfterSeconds || 0));
+  }
+
+  const message = buildWsErrorMessage(payload);
+  assistant.status = 'error';
+  assistant.content = message;
+
+  if (Number(payload.code) === 429) {
+    window.$message?.warning(message);
+  } else {
+    window.$message?.error(message);
+  }
+}
+
+function handleChunkPayload(assistant: Api.Chat.Message, payload: Record<string, any>) {
+  assistant.status = 'loading';
+  assistant.content += payload.chunk;
+}
+
 watch(wsData, val => {
   if (!val) return;
 
@@ -82,31 +147,32 @@ watch(wsData, val => {
     return;
   }
 
-  const assistant = list.value[list.value.length - 1];
+  const assistant = findAssistantMessage(payload.generationId);
 
   if (!assistant) return;
 
-  if (payload.type === 'completion' && payload.status === 'finished' && assistant.status !== 'error')
-    assistant.status = 'finished';
+  if (payload.type === 'start') {
+    handleStartPayload(assistant, payload);
+    return;
+  }
+
+  if (payload.type === 'completion') {
+    handleCompletionPayload(assistant, payload);
+    return;
+  }
+
+  if (payload.type === 'stop') {
+    handleStopPayload(assistant);
+    return;
+  }
 
   if (payload.error || Number(payload.code) >= 400) {
-    if (Number(payload.code) === 429) {
-      chatStore.startRateLimitCountdown(Number(payload.retryAfterSeconds || 0));
-    }
+    handleErrorPayload(assistant, payload);
+    return;
+  }
 
-    const message = buildWsErrorMessage(payload);
-
-    assistant.status = 'error';
-    assistant.content = message;
-
-    if (Number(payload.code) === 429) {
-      window.$message?.warning(message);
-    } else {
-      window.$message?.error(message);
-    }
-  } else if (payload.chunk) {
-    assistant.status = 'loading';
-    assistant.content += payload.chunk;
+  if (payload.chunk) {
+    handleChunkPayload(assistant, payload);
   }
 });
 
@@ -118,10 +184,19 @@ const handleSend = async () => {
 
   //  判断是否正在发送, 如果发送中，则停止ai继续响应
   if (isSending.value) {
-    const { error, data: tokenData } = await request<Api.Chat.Token>({ url: 'chat/websocket-token', baseURL: 'proxy-api' });
+    const { error, data: tokenData } = await request<Api.Chat.Token>({
+      url: 'chat/websocket-token',
+      baseURL: 'proxy-api'
+    });
     if (error) return;
 
-    chatStore.wsSend(JSON.stringify({ type: 'stop', _internal_cmd_token: tokenData.cmdToken }));
+    chatStore.wsSend(
+      JSON.stringify({
+        type: 'stop',
+        generationId: latestMessage.value.generationId,
+        _internal_cmd_token: tokenData.cmdToken
+      })
+    );
 
     list.value[list.value.length - 1].status = 'finished';
     if (!latestMessage.value.content) list.value.pop();
@@ -132,12 +207,12 @@ const handleSend = async () => {
     content: input.value.message,
     role: 'user'
   });
-  chatStore.wsSend(input.value.message);
   list.value.push({
     content: '',
     role: 'assistant',
     status: 'pending'
   });
+  chatStore.wsSend(input.value.message);
   input.value.message = '';
 };
 
@@ -184,7 +259,10 @@ const handShortcut = (e: KeyboardEvent) => {
     <div class="flex items-center justify-between pt-2">
       <div class="flex items-center gap-3 text-18px color-gray-500">
         <NText class="text-14px">连接状态：</NText>
-        <icon-eos-icons:loading v-if="connectionStatus === 'CONNECTING' || connectionStatus === 'RECONNECTING'" class="color-yellow" />
+        <icon-eos-icons:loading
+          v-if="connectionStatus === 'CONNECTING' || connectionStatus === 'RECONNECTING'"
+          class="color-yellow"
+        />
         <icon-fluent:plug-connected-checkmark-20-filled v-else-if="connectionStatus === 'OPEN'" class="color-green" />
         <icon-tabler:plug-connected-x v-else class="color-red" />
         <NText class="text-14px">{{ connectionText }}</NText>

@@ -1,4 +1,5 @@
 import { useWebSocket } from '@vueuse/core';
+import { request } from '@/service/request';
 
 export const useChatStore = defineStore(SetupStoreId.Chat, () => {
   const NON_RETRYABLE_CLOSE_CODES = new Set([1002, 1003, 1007, 1008]);
@@ -20,6 +21,127 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
   const rateLimitUntil = ref<number | null>(null);
   const rateLimitRemainingSeconds = ref(0);
   let rateLimitTimer: ReturnType<typeof setInterval> | null = null;
+
+  function mapGenerationStatus(status?: Api.Chat.GenerationStatus): Api.Chat.Message['status'] {
+    if (status === 'COMPLETED' || status === 'CANCELLED') {
+      return 'finished';
+    }
+    if (status === 'FAILED') {
+      return 'error';
+    }
+    if (status === 'STREAMING') {
+      return 'loading';
+    }
+    return 'pending';
+  }
+
+  function findAssistantIndexByGenerationId(generationId?: string) {
+    if (!generationId) {
+      return -1;
+    }
+
+    for (let i = list.value.length - 1; i >= 0; i -= 1) {
+      const item = list.value[i];
+      if (item?.role === 'assistant' && item.generationId === generationId) {
+        return i;
+      }
+    }
+
+    return -1;
+  }
+
+  function getPendingGenerationId() {
+    for (let i = list.value.length - 1; i >= 0; i -= 1) {
+      const item = list.value[i];
+      if (item?.role === 'assistant' && ['pending', 'loading'].includes(item.status || '') && item.generationId) {
+        return item.generationId;
+      }
+    }
+
+    return '';
+  }
+
+  function upsertGenerationSnapshot(snapshot: Api.Chat.GenerationSnapshot | null) {
+    if (!snapshot) {
+      return;
+    }
+
+    conversationId.value = snapshot.conversationId || conversationId.value;
+
+    const assistantIndex = findAssistantIndexByGenerationId(snapshot.generationId);
+    const nextStatus = mapGenerationStatus(snapshot.status);
+
+    if (assistantIndex >= 0) {
+      const assistant = list.value[assistantIndex];
+      assistant.content = snapshot.content || assistant.content || '';
+      assistant.status = nextStatus;
+      assistant.generationId = snapshot.generationId;
+      assistant.conversationId = snapshot.conversationId;
+      assistant.timestamp ||= snapshot.updatedAt;
+      if (snapshot.referenceMappings && Object.keys(snapshot.referenceMappings).length > 0) {
+        assistant.referenceMappings = snapshot.referenceMappings;
+      }
+      return;
+    }
+
+    list.value.push({
+      role: 'user',
+      content: snapshot.question,
+      conversationId: snapshot.conversationId,
+      generationId: snapshot.generationId,
+      timestamp: snapshot.createdAt
+    });
+    list.value.push({
+      role: 'assistant',
+      content: snapshot.content || '',
+      status: nextStatus,
+      conversationId: snapshot.conversationId,
+      generationId: snapshot.generationId,
+      timestamp: snapshot.updatedAt,
+      referenceMappings: snapshot.referenceMappings
+    });
+  }
+
+  async function fetchGenerationSnapshot(generationId: string) {
+    if (!generationId) {
+      return null;
+    }
+
+    const { error, data } = await request<Api.Chat.GenerationSnapshot | null>({
+      url: `chat/generation/${generationId}`,
+      baseURL: 'proxy-api'
+    });
+
+    if (error) {
+      return null;
+    }
+
+    return data || null;
+  }
+
+  async function fetchActiveGenerationSnapshot() {
+    const { error, data } = await request<Api.Chat.GenerationSnapshot | null>({
+      url: 'chat/active-generation',
+      baseURL: 'proxy-api'
+    });
+
+    if (error) {
+      return null;
+    }
+
+    return data || null;
+  }
+
+  async function syncGenerationAfterReconnect() {
+    const pendingGenerationId = getPendingGenerationId();
+    if (pendingGenerationId) {
+      upsertGenerationSnapshot(await fetchGenerationSnapshot(pendingGenerationId));
+      return;
+    }
+
+    upsertGenerationSnapshot(await fetchActiveGenerationSnapshot());
+  }
+
   const socketUrl = computed(() => {
     const token = store.token?.trim();
 
@@ -168,16 +290,16 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
   );
 
   // 监听WebSocket消息，捕获sessionId
-  watch(wsData, (val) => {
+  watch(wsData, val => {
     if (!val) return;
     try {
       const data = JSON.parse(val);
       if (data.type === 'connection' && data.sessionId) {
         handshakeConfirmed.value = true;
         sessionId.value = data.sessionId;
-        console.log('WebSocket会话ID已更新:', sessionId.value);
+        syncGenerationAfterReconnect().catch(() => {});
       }
-    } catch (e) {
+    } catch {
       // Ignore JSON parse errors for non-JSON messages
     }
   });
@@ -212,6 +334,8 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     scrollToBottom,
     clearRateLimitCountdown,
     startRateLimitCountdown,
-    handleAuthReset
+    handleAuthReset,
+    upsertGenerationSnapshot,
+    syncGenerationAfterReconnect
   };
 });

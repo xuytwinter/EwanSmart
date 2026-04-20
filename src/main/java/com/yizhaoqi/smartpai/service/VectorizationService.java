@@ -96,7 +96,11 @@ public class VectorizationService {
             );
         } catch (Exception e) {
             logger.error("向量化失败，fileMd5: {}", fileMd5, e);
-            throw new RuntimeException("向量化失败", e);
+            String message = e.getMessage();
+            if (message == null || message.isBlank()) {
+                throw new RuntimeException("向量化失败", e);
+            }
+            throw new RuntimeException("向量化失败: " + message, e);
         }
     }
     

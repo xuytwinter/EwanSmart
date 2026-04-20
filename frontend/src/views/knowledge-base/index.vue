@@ -61,7 +61,7 @@ const { columns, columnChecks, data, getData, loading } = useTable({
           {renderIcon(row.fileName)}
           <NEllipsis lineClamp={2} tooltip>
             <span
-              class="cursor-pointer hover:text-primary transition-colors"
+              class="cursor-pointer transition-colors hover:text-primary"
               onClick={() => handleFilePreview(row.fileName, row.fileMd5)}
             >
               {row.fileName}
@@ -77,7 +77,7 @@ const { columns, columnChecks, data, getData, loading } = useTable({
       render: row => (
         <NEllipsis tooltip>
           <span
-            class="cursor-pointer hover:text-primary transition-colors font-mono text-3"
+            class="cursor-pointer text-3 font-mono transition-colors hover:text-primary"
             onClick={() => {
               navigator.clipboard.writeText(row.fileMd5);
               window.$message?.success('MD5已复制');
@@ -138,12 +138,7 @@ const { columns, columnChecks, data, getData, loading } = useTable({
       render: row => (
         <div class="flex gap-4">
           {canManageFile(row) ? renderResumeUploadButton(row) : null}
-          <NButton
-            type="primary"
-            ghost
-            size="small"
-            onClick={() => handleFilePreview(row.fileName, row.fileMd5)}
-          >
+          <NButton type="primary" ghost size="small" onClick={() => handleFilePreview(row.fileName, row.fileMd5)}>
             预览
           </NButton>
           {canManageFile(row) ? (
@@ -185,7 +180,9 @@ function syncTaskFromServer(target: Api.KnowledgeBase.UploadTask, source: Api.Kn
     estimatedEmbeddingTokens: source.estimatedEmbeddingTokens,
     estimatedChunkCount: source.estimatedChunkCount,
     actualEmbeddingTokens: source.actualEmbeddingTokens,
-    actualChunkCount: source.actualChunkCount
+    actualChunkCount: source.actualChunkCount,
+    vectorizationStatus: source.vectorizationStatus,
+    vectorizationErrorMessage: source.vectorizationErrorMessage
   });
 }
 
@@ -263,27 +260,132 @@ function renderEstimatedEmbeddingUsage(row: Api.KnowledgeBase.UploadTask) {
   const estimatedTokenLabel = Number(row.estimatedEmbeddingTokens).toLocaleString();
   const estimatedChunkLabel = Number(row.estimatedChunkCount || 0).toLocaleString();
   return (
-    <div class="text-xs leading-5 text-stone-600">
+    <div class="text-xs text-stone-600 leading-5">
       <div>{estimatedTokenLabel} Tokens</div>
       <div class="text-stone-400">{estimatedChunkLabel} 个切片</div>
     </div>
   );
 }
 
+function isVectorizationProcessing(row: Api.KnowledgeBase.UploadTask) {
+  return row.vectorizationStatus === 'PENDING' || row.vectorizationStatus === 'PROCESSING';
+}
+
+function canRetryVectorization(row: Api.KnowledgeBase.UploadTask) {
+  if (!canManageFile(row)) return false;
+  if (row.vectorizationStatus === 'FAILED') return true;
+  if (!row.actualEmbeddingTokens && row.estimatedEmbeddingTokens) return true;
+  return false;
+}
+
+async function handleRetryVectorization(row: Api.KnowledgeBase.UploadTask) {
+  const { error } = await request({
+    url: `/documents/${row.fileMd5}/vectorization/retry`,
+    method: 'POST'
+  });
+
+  if (error) return;
+
+  row.vectorizationStatus = 'PROCESSING';
+  row.vectorizationErrorMessage = null;
+  row.actualEmbeddingTokens = undefined;
+  row.actualChunkCount = undefined;
+  window.$message?.success('已提交异步向量化重试任务');
+  await getList();
+}
+
 function renderActualEmbeddingUsage(row: Api.KnowledgeBase.UploadTask) {
-  if (!row.actualEmbeddingTokens) {
-    return <span class="text-xs text-stone-400">-</span>;
+  if (row.actualEmbeddingTokens !== null && row.actualEmbeddingTokens !== undefined) {
+    const actualTokenLabel = Number(row.actualEmbeddingTokens).toLocaleString();
+    const actualChunkLabel = Number(row.actualChunkCount || 0).toLocaleString();
+    return (
+      <div class="text-xs text-emerald-700 leading-5">
+        <div>{actualTokenLabel} Tokens</div>
+        <div class="text-stone-400">{actualChunkLabel} 个切片</div>
+      </div>
+    );
   }
 
-  const actualTokenLabel = Number(row.actualEmbeddingTokens).toLocaleString();
-  const actualChunkLabel = Number(row.actualChunkCount || 0).toLocaleString();
-  return (
-    <div class="text-xs leading-5 text-emerald-700">
-      <div>{actualTokenLabel} Tokens</div>
-      <div class="text-stone-400">{actualChunkLabel} 个切片</div>
-    </div>
-  );
+  if (isVectorizationProcessing(row)) {
+    return (
+      <div class="text-xs text-sky-700 leading-5">
+        <div>向量化处理中</div>
+        <div class="text-stone-400">完成后会回写实际 Tokens</div>
+      </div>
+    );
+  }
+
+  if (row.vectorizationStatus === 'FAILED') {
+    return (
+      <div class="flex flex-col gap-6px text-xs leading-5">
+        <div class="text-rose-600 font-500">向量化失败</div>
+        <NEllipsis tooltip lineClamp={2} class="text-stone-500">
+          {row.vectorizationErrorMessage || '请检查 Embedding 额度或稍后重试'}
+        </NEllipsis>
+        {canRetryVectorization(row) ? (
+          <div>
+            <NButton size="tiny" type="error" ghost onClick={() => handleRetryVectorization(row)}>
+              重试向量化
+            </NButton>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (canRetryVectorization(row)) {
+    return (
+      <div class="flex flex-col gap-6px text-xs leading-5">
+        <div class="text-amber-600">暂无实际向量化结果</div>
+        <div class="text-stone-400">可能仍在处理，或历史任务未回写结果</div>
+        <div>
+          <NButton size="tiny" ghost onClick={() => handleRetryVectorization(row)}>
+            重试向量化
+          </NButton>
+        </div>
+      </div>
+    );
+  }
+
+  return <span class="text-xs text-stone-400">-</span>;
 }
+
+let vectorizationPollingTimer: ReturnType<typeof window.setTimeout> | null = null;
+
+function clearVectorizationPolling() {
+  if (vectorizationPollingTimer) {
+    window.clearTimeout(vectorizationPollingTimer);
+    vectorizationPollingTimer = null;
+  }
+}
+
+function scheduleVectorizationPolling() {
+  clearVectorizationPolling();
+
+  if (!tasks.value.some(item => isVectorizationProcessing(item))) {
+    return;
+  }
+
+  vectorizationPollingTimer = window.setTimeout(async () => {
+    await getList();
+    scheduleVectorizationPolling();
+  }, 3000);
+}
+
+watch(
+  () =>
+    tasks.value
+      .map(item => `${item.fileMd5}:${item.vectorizationStatus || ''}:${item.actualEmbeddingTokens ?? ''}`)
+      .join('|'),
+  () => {
+    scheduleVectorizationPolling();
+  },
+  { immediate: true }
+);
+
+onUnmounted(() => {
+  clearVectorizationPolling();
+});
 
 // #region 文件续传
 function renderResumeUploadButton(row: Api.KnowledgeBase.UploadTask) {
@@ -376,7 +478,7 @@ async function onBeforeUpload(
     </NCard>
     <UploadDialog v-model:visible="uploadVisible" />
     <SearchDialog v-model:visible="searchVisible" />
-    
+
     <!-- 文件预览弹窗 -->
     <NModal v-model:show="previewVisible" class="document-preview-modal" :auto-focus="false">
       <div class="document-preview-modal-shell">

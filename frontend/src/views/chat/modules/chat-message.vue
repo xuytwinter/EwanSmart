@@ -221,7 +221,7 @@ async function handleSourceFileClick(fileInfo: {
 }) {
   const { fileName, referenceNumber, fileMd5: extractedMd5, anchorText: clickedAnchorText } = fileInfo;
   const persistedDetail = props.msg.referenceMappings?.[String(referenceNumber)] || props.msg.referenceMappings?.[referenceNumber];
-  const referenceSessionId = props.msg.conversationId || props.sessionId;
+  const referenceSessionId = props.msg.generationId || props.msg.conversationId || props.sessionId;
   console.log('点击了来源文件:', fileName, '引用编号:', referenceNumber, '提取的MD5:', extractedMd5, '会话ID:', referenceSessionId);
 
   try {
@@ -296,7 +296,7 @@ async function handleSourceFileClick(fileInfo: {
         <SvgIcon icon="ph:user-circle" class="text-icon-large color-white" />
       </NAvatar>
       <div class="flex-col gap-1">
-        <NText class="text-4 font-bold">{{ authStore.userInfo.username }}</NText>
+        <NText class="text-4 font-bold">{{ msg.username || authStore.userInfo.username }}</NText>
         <NText class="text-3 color-gray-500">{{ formatDate(msg.timestamp) }}</NText>
       </div>
     </div>

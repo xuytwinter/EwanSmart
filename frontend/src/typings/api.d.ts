@@ -367,6 +367,8 @@ declare namespace Api {
       estimatedChunkCount?: number;
       actualEmbeddingTokens?: number;
       actualChunkCount?: number;
+      vectorizationStatus?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | null;
+      vectorizationErrorMessage?: string | null;
       createdAt?: string;
       mergedAt?: string;
       requestIds?: string[]; // 请求ID，用于取消上传
@@ -389,6 +391,8 @@ declare namespace Api {
   }
 
   namespace Chat {
+    type GenerationStatus = 'STREAMING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+
     interface ReferenceEvidence {
       fileMd5: string;
       fileName: string;
@@ -422,11 +426,26 @@ declare namespace Api {
       status?: 'pending' | 'loading' | 'finished' | 'error';
       timestamp?: string;
       conversationId?: string;
+      generationId?: string;
+      username?: string;
       referenceMappings?: Record<string, ReferenceEvidence>;
     }
 
     interface Token {
       cmdToken: string;
+    }
+
+    interface GenerationSnapshot {
+      generationId: string;
+      userId: string;
+      conversationId: string;
+      question: string;
+      status: GenerationStatus;
+      content: string;
+      createdAt: string;
+      updatedAt: string;
+      errorMessage?: string | null;
+      referenceMappings?: Record<string, ReferenceEvidence>;
     }
   }
 

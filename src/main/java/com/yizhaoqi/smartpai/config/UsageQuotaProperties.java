@@ -24,6 +24,7 @@ public class UsageQuotaProperties {
         private boolean enabled = true;
         private long dayMaxTokens;
         private long initTokens;
+        private long adminInitTokens;
 
         public DailyTokenQuota() {
         }

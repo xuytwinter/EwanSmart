@@ -3,8 +3,10 @@ server:
 
 spring:
   # docker profile 用于容器化启动；基础设施地址建议统一走 `.env`
+  jackson:
+    time-zone: ${APP_TIMEZONE:Asia/Shanghai}
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/PaiSmart?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/PaiSmart?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
     username: ${SPRING_DATASOURCE_USERNAME:root}
     password: ${SPRING_DATASOURCE_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -15,6 +17,8 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.MySQL8Dialect
+        jdbc:
+          time_zone: ${APP_TIMEZONE:Asia/Shanghai}
   data:
     redis:
       host: ${SPRING_DATA_REDIS_HOST:localhost}
