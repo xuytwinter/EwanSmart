@@ -30,14 +30,12 @@ public class ConversationController {
     @Autowired
     private ConversationService conversationService;
 
-    /**
-     * 查询持久化的对话历史
-     */
     @GetMapping
     public ResponseEntity<?> getConversations(
             @RequestHeader("Authorization") String token,
             @RequestParam(required = false) String start_date,
-            @RequestParam(required = false) String end_date) {
+            @RequestParam(required = false) String end_date,
+            @RequestParam(required = false) String conversationId) {
 
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("GET_CONVERSATIONS");
         String username = null;
@@ -51,12 +49,18 @@ public class ConversationController {
 
             LogUtils.logBusiness("GET_CONVERSATIONS", username, "开始查询用户持久化对话历史");
 
-            LocalDateTime startDateTime = parseStartDate(start_date);
-            LocalDateTime endDateTime = parseEndDate(end_date);
-            List<Map<String, Object>> messages = conversationService.toMessageHistory(
-                    conversationService.getConversations(username, startDateTime, endDateTime),
-                    false
-            );
+            List<Map<String, Object>> messages;
+
+            if (conversationId != null && !conversationId.isBlank()) {
+                messages = conversationService.getMessagesByConversationId(conversationId);
+            } else {
+                LocalDateTime startDateTime = parseStartDate(start_date);
+                LocalDateTime endDateTime = parseEndDate(end_date);
+                messages = conversationService.toMessageHistory(
+                        conversationService.getConversations(username, startDateTime, endDateTime),
+                        false
+                );
+            }
 
             LogUtils.logBusiness("GET_CONVERSATIONS", username, "持久化历史查询完成，共 %d 条消息", messages.size());
             LogUtils.logUserOperation(username, "GET_CONVERSATIONS", "conversation_history", "SUCCESS");

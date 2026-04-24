@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -142,13 +143,15 @@ public class ModelProviderConfigService {
         validateConnectionTestRequest(normalizedScope, request);
 
         long startAt = System.currentTimeMillis();
+        String provider = normalizeOptionalProvider(request.provider());
         try {
             WebClient.Builder builder = WebClient.builder()
                     .baseUrl(request.apiBaseUrl())
                     .defaultHeader("Content-Type", MediaType.APPLICATION_JSON_VALUE);
 
-            if (request.apiKey() != null && !request.apiKey().isBlank()) {
-                builder.defaultHeader("Authorization", "Bearer " + request.apiKey());
+            String apiKey = resolveConnectionTestApiKey(normalizedScope, provider, request.apiKey());
+            if (apiKey != null && !apiKey.isBlank()) {
+                builder.defaultHeader("Authorization", "Bearer " + apiKey);
             }
 
             WebClient client = builder.build();
@@ -183,7 +186,7 @@ public class ModelProviderConfigService {
 
             return new ConnectivityTestView(true, "连接成功", System.currentTimeMillis() - startAt);
         } catch (Exception exception) {
-            return new ConnectivityTestView(false, exception.getMessage(), System.currentTimeMillis() - startAt);
+            return new ConnectivityTestView(false, formatConnectionFailure(provider, exception), System.currentTimeMillis() - startAt);
         }
     }
 
@@ -356,11 +359,21 @@ public class ModelProviderConfigService {
         if (SCOPE_EMBEDDING.equals(scope) && request.dimension() != null && request.dimension() <= 0) {
             throw new CustomException("Embedding 维度必须大于 0", HttpStatus.BAD_REQUEST);
         }
+        if (request.provider() != null && !request.provider().isBlank()) {
+            resolveProvider(scope, normalizeProvider(request.provider()), currentSettings);
+        }
     }
 
     private ScopeSettingsView resolveScope(String scope, ModelProviderSettingsView settings) {
         String normalizedScope = normalizeScope(scope);
         return SCOPE_LLM.equals(normalizedScope) ? settings.llm() : settings.embedding();
+    }
+
+    private ProviderConfigView resolveProvider(String scope, String provider, ModelProviderSettingsView settings) {
+        return resolveScope(scope, settings).providers().stream()
+                .filter(item -> item.provider().equals(provider))
+                .findFirst()
+                .orElseThrow(() -> new CustomException("不支持的 provider: " + provider, HttpStatus.BAD_REQUEST));
     }
 
     private String normalizeScope(String scope) {
@@ -376,6 +389,78 @@ public class ModelProviderConfigService {
             throw new CustomException("provider 不能为空", HttpStatus.BAD_REQUEST);
         }
         return provider.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String normalizeOptionalProvider(String provider) {
+        return provider == null || provider.isBlank() ? null : normalizeProvider(provider);
+    }
+
+    private String resolveConnectionTestApiKey(String scope, String provider, String rawApiKey) {
+        if (rawApiKey != null && !rawApiKey.isBlank()) {
+            return rawApiKey.trim();
+        }
+        if (provider == null) {
+            return null;
+        }
+
+        ProviderConfigView config = resolveProvider(scope, provider, currentSettings);
+        if (!config.hasApiKey()) {
+            return null;
+        }
+
+        Optional<ModelProviderConfig> persisted = repository.findByConfigScopeAndProviderCode(scope, provider);
+        if (persisted.isPresent()) {
+            return secretCryptoService.decrypt(persisted.get().getApiKeyCiphertext());
+        }
+        if ("deepseek".equals(provider)) {
+            return deepSeekApiKey;
+        }
+        if ("aliyun".equals(provider)) {
+            return embeddingApiKey;
+        }
+        return null;
+    }
+
+    private String formatConnectionFailure(String provider, Exception exception) {
+        WebClientResponseException responseException = findResponseException(exception);
+        if (responseException == null) {
+            return exception.getMessage();
+        }
+
+        int statusCode = responseException.getStatusCode().value();
+        String displayName = provider != null ? resolveProviderDisplayName(provider) : "模型";
+        if (statusCode == HttpStatus.UNAUTHORIZED.value() || statusCode == HttpStatus.FORBIDDEN.value()) {
+            return displayName + " API Key 无效或未填写，请检查已保存密钥，或在“新 API Key”中重新输入后再测试";
+        }
+        if (statusCode == HttpStatus.NOT_FOUND.value()) {
+            return displayName + " API 地址或接口路径不可用，请检查 Base URL 是否填写到 OpenAI 兼容根地址";
+        }
+        if (statusCode == HttpStatus.BAD_REQUEST.value()) {
+            return displayName + " 请求参数无效，请检查模型标识是否为服务商支持的 API 模型名";
+        }
+        return responseException.getMessage();
+    }
+
+    private WebClientResponseException findResponseException(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof WebClientResponseException responseException) {
+                return responseException;
+            }
+            current = current.getCause();
+        }
+        return null;
+    }
+
+    private String resolveProviderDisplayName(String provider) {
+        return currentSettings.llm().providers().stream()
+                .filter(item -> item.provider().equals(provider))
+                .findFirst()
+                .or(() -> currentSettings.embedding().providers().stream()
+                        .filter(item -> item.provider().equals(provider))
+                        .findFirst())
+                .map(ProviderConfigView::displayName)
+                .orElse(provider);
     }
 
     private String resolveCiphertext(String rawApiKey, ProviderConfigView fallback) {
@@ -454,6 +539,7 @@ public class ModelProviderConfigService {
     }
 
     public record ProviderConnectionTestRequest(
+            String provider,
             String apiBaseUrl,
             String model,
             String apiKey,

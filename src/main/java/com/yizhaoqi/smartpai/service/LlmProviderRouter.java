@@ -44,7 +44,8 @@ public class LlmProviderRouter {
                                        String context,
                                        List<Map<String, String>> history,
                                        Consumer<String> onChunk,
-                                       Consumer<Throwable> onError) {
+                                       Consumer<Throwable> onError,
+                                       Runnable onComplete) {
 
         ModelProviderConfigService.ActiveProviderView provider = modelProviderConfigService.getActiveProvider(ModelProviderConfigService.SCOPE_LLM);
         Map<String, Object> request = buildRequest(provider.model(), userMessage, context, history);
@@ -72,7 +73,12 @@ public class LlmProviderRouter {
                                 settleUsage(usageTracker);
                                 onError.accept(error);
                             },
-                            () -> settleUsage(usageTracker)
+                            () -> {
+                                settleUsage(usageTracker);
+                                if (onComplete != null) {
+                                    onComplete.run();
+                                }
+                            }
                     );
             return new StreamHandle(subscription, () -> settleUsage(usageTracker));
         } catch (Exception exception) {

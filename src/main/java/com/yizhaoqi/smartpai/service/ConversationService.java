@@ -4,22 +4,28 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yizhaoqi.smartpai.exception.CustomException;
 import com.yizhaoqi.smartpai.model.Conversation;
+import com.yizhaoqi.smartpai.model.ConversationSession;
 import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.ConversationRepository;
+import com.yizhaoqi.smartpai.repository.ConversationSessionRepository;
 import com.yizhaoqi.smartpai.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @Service
 public class ConversationService {
@@ -31,18 +37,17 @@ public class ConversationService {
     private ConversationRepository conversationRepository;
 
     @Autowired
+    private ConversationSessionRepository sessionRepository;
+
+    @Autowired
     private UserRepository userRepository;
 
     @Autowired
     private ObjectMapper objectMapper;
 
-    /**
-     * 记录用户的对话历史。
-     *
-     * @param username 用户名
-     * @param question 用户提问内容
-     * @param answer 系统回答内容
-     */
+    @Autowired
+    private RedisTemplate<String, String> redisTemplate;
+
     public void recordConversation(String username, String question, String answer) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new CustomException("User not found", HttpStatus.NOT_FOUND));
@@ -56,6 +61,8 @@ public class ConversationService {
                 .orElseThrow(() -> new CustomException("User not found", HttpStatus.NOT_FOUND));
 
         saveConversation(user, question, answer, conversationId, referenceMappings);
+        updateSessionTitleIfDefault(conversationId, question);
+        touchSessionUpdatedAt(conversationId);
     }
 
     private void saveConversation(User user, String question, String answer, String conversationId,
@@ -70,19 +77,130 @@ public class ConversationService {
         conversationRepository.save(conversation);
     }
 
-    /**
-     * 查询用户的对话历史。
-     *
-     * @param username 用户名
-     * @param startDate 起始日期（可选）
-     * @param endDate 结束日期（可选）
-     * @return 符合条件的对话记录列表
-     */
+    // ---- ConversationSession management ----
+
+    public List<Map<String, Object>> getConversationSessions(Long userId) {
+        List<ConversationSession> sessions = sessionRepository.findByUserIdOrderByUpdatedAtDesc(userId);
+        List<Map<String, Object>> result = new ArrayList<>();
+
+        for (ConversationSession session : sessions) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id", session.getId());
+            item.put("conversationId", session.getConversationId());
+            item.put("title", session.getTitle() != null ? session.getTitle() : "新对话");
+            item.put("status", session.getStatus().name());
+            item.put("createdAt", session.getCreatedAt() != null ? session.getCreatedAt().format(TIMESTAMP_FORMATTER) : null);
+            item.put("updatedAt", session.getUpdatedAt() != null ? session.getUpdatedAt().format(TIMESTAMP_FORMATTER) : null);
+            result.add(item);
+        }
+
+        return result;
+    }
+
+    public Map<String, Object> createConversationSession(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new CustomException("User not found", HttpStatus.NOT_FOUND));
+
+        String conversationId = UUID.randomUUID().toString();
+
+        ConversationSession session = new ConversationSession();
+        session.setUser(user);
+        session.setConversationId(conversationId);
+        session.setTitle("新对话");
+        session.setStatus(ConversationSession.SessionStatus.ACTIVE);
+        sessionRepository.save(session);
+
+        // Update Redis so the backend uses this new conversation for subsequent messages
+        String redisKey = "user:" + userId + ":current_conversation";
+        redisTemplate.opsForValue().set(redisKey, conversationId, Duration.ofDays(7));
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("conversationId", conversationId);
+        result.put("title", "新对话");
+        result.put("status", "ACTIVE");
+        result.put("createdAt", session.getCreatedAt().format(TIMESTAMP_FORMATTER));
+        result.put("updatedAt", session.getUpdatedAt().format(TIMESTAMP_FORMATTER));
+        return result;
+    }
+
+    public void ensureConversationSession(Long userId, String conversationId, String title) {
+        if (sessionRepository.existsByConversationId(conversationId)) {
+            return;
+        }
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new CustomException("User not found", HttpStatus.NOT_FOUND));
+
+        ConversationSession session = new ConversationSession();
+        session.setUser(user);
+        session.setConversationId(conversationId);
+        session.setTitle(title != null && !title.isBlank() ? title : "新对话");
+        session.setStatus(ConversationSession.SessionStatus.ACTIVE);
+        sessionRepository.save(session);
+    }
+
+    public void switchCurrentConversation(Long userId, String conversationId) {
+        if (!sessionRepository.existsByConversationId(conversationId)) {
+            throw new CustomException("对话不存在", HttpStatus.NOT_FOUND);
+        }
+        String redisKey = "user:" + userId + ":current_conversation";
+        redisTemplate.opsForValue().set(redisKey, conversationId, Duration.ofDays(7));
+    }
+
+    public void updateSessionTitle(String conversationId, String title) {
+        sessionRepository.findByConversationId(conversationId).ifPresent(session -> {
+            if (session.getTitle() == null || "新对话".equals(session.getTitle())) {
+                session.setTitle(title);
+                sessionRepository.save(session);
+            }
+        });
+    }
+
+    public void archiveConversationSession(String conversationId) {
+        ConversationSession session = sessionRepository.findByConversationId(conversationId)
+                .orElseThrow(() -> new CustomException("对话不存在", HttpStatus.NOT_FOUND));
+        session.setStatus(ConversationSession.SessionStatus.ARCHIVED);
+        sessionRepository.save(session);
+    }
+
+    public void unarchiveConversationSession(String conversationId) {
+        ConversationSession session = sessionRepository.findByConversationId(conversationId)
+                .orElseThrow(() -> new CustomException("对话不存在", HttpStatus.NOT_FOUND));
+        session.setStatus(ConversationSession.SessionStatus.ACTIVE);
+        sessionRepository.save(session);
+    }
+
+    private void touchSessionUpdatedAt(String conversationId) {
+        sessionRepository.findByConversationId(conversationId).ifPresent(session -> {
+            session.setUpdatedAt(LocalDateTime.now());
+            sessionRepository.save(session);
+        });
+    }
+
+    public void updateSessionTitleIfDefault(String conversationId, String title) {
+        if (title == null || title.isBlank()) {
+            return;
+        }
+        String trimmed = title.length() > 50 ? title.substring(0, 50) : title;
+        sessionRepository.findByConversationId(conversationId).ifPresent(session -> {
+            if ("新对话".equals(session.getTitle())) {
+                session.setTitle(trimmed);
+                sessionRepository.save(session);
+            }
+        });
+    }
+
+    // ---- Message queries ----
+
+    public List<Map<String, Object>> getMessagesByConversationId(String conversationId) {
+        List<Conversation> conversations = conversationRepository.findByConversationIdOrderByTimestampAsc(conversationId);
+        return toMessageHistory(conversations, false);
+    }
+
     public List<Conversation> getConversations(String username, LocalDateTime startDate, LocalDateTime endDate) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new CustomException("User not found", HttpStatus.NOT_FOUND));
 
-        // 检查用户角色，如果是管理员且username参数为"all"，则返回所有对话历史
         if (user.getRole() == User.Role.ADMIN && "all".equals(username)) {
             if (startDate != null && endDate != null) {
                 return conversationRepository.findByTimestampBetweenOrderByTimestampAsc(startDate, endDate);
@@ -90,7 +208,6 @@ public class ConversationService {
                 return conversationRepository.findAllByOrderByTimestampAsc();
             }
         } else {
-            // 普通用户只能查看自己的对话历史
             if (startDate != null && endDate != null) {
                 return conversationRepository.findByUserIdAndTimestampBetweenOrderByTimestampAsc(
                         user.getId(), startDate, endDate);
@@ -99,31 +216,20 @@ public class ConversationService {
             }
         }
     }
-    
-    /**
-     * 管理员查询所有用户的对话历史。
-     *
-     * @param adminUsername 管理员用户名
-     * @param targetUsername 目标用户名（可选，如果提供则只查询该用户的对话历史）
-     * @param startDate 起始日期（可选）
-     * @param endDate 结束日期（可选）
-     * @return 符合条件的对话记录列表
-     */
-    public List<Conversation> getAllConversations(String adminUsername, String targetUsername, 
+
+    public List<Conversation> getAllConversations(String adminUsername, String targetUsername,
                                                  LocalDateTime startDate, LocalDateTime endDate) {
         User admin = userRepository.findByUsername(adminUsername)
                 .orElseThrow(() -> new CustomException("Admin not found", HttpStatus.NOT_FOUND));
-        
-        // 验证用户是否为管理员
+
         if (admin.getRole() != User.Role.ADMIN) {
             throw new CustomException("Unauthorized access", HttpStatus.FORBIDDEN);
         }
-        
-        // 如果指定了目标用户，则只查询该用户的对话历史
+
         if (targetUsername != null && !targetUsername.isEmpty()) {
             User targetUser = userRepository.findByUsername(targetUsername)
                     .orElseThrow(() -> new CustomException("Target user not found", HttpStatus.NOT_FOUND));
-            
+
             if (startDate != null && endDate != null) {
                 return conversationRepository.findByUserIdAndTimestampBetweenOrderByTimestampAsc(
                         targetUser.getId(), startDate, endDate);
@@ -131,7 +237,6 @@ public class ConversationService {
                 return conversationRepository.findByUserIdOrderByTimestampAsc(targetUser.getId());
             }
         } else {
-            // 否则查询所有用户的对话历史
             if (startDate != null && endDate != null) {
                 return conversationRepository.findByTimestampBetweenOrderByTimestampAsc(startDate, endDate);
             } else {

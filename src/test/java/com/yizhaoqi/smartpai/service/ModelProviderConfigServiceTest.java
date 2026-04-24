@@ -4,17 +4,20 @@ import com.yizhaoqi.smartpai.exception.CustomException;
 import com.yizhaoqi.smartpai.model.ModelProviderConfig;
 import com.yizhaoqi.smartpai.repository.ModelProviderConfigRepository;
 import com.yizhaoqi.smartpai.utils.SecretCryptoService;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -128,5 +131,38 @@ class ModelProviderConfigServiceTest {
 
         assertEquals(HttpStatus.CONFLICT, exception.getStatus());
         assertTrue(exception.getMessage().contains("重嵌入"));
+    }
+
+    @Test
+    void shouldReuseStoredApiKeyWhenTestingConnectionWithBlankInput() throws Exception {
+        AtomicReference<String> authorizationHeader = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            authorizationHeader.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            byte[] response = "{\"ok\":true}".getBytes();
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            int port = server.getAddress().getPort();
+            ModelProviderConfigService.ConnectivityTestView result = service.testConnection(
+                    ModelProviderConfigService.SCOPE_LLM,
+                    new ModelProviderConfigService.ProviderConnectionTestRequest(
+                            "deepseek",
+                            "http://127.0.0.1:" + port + "/v1",
+                            "deepseek-chat",
+                            "",
+                            null
+                    )
+            );
+
+            assertTrue(result.success());
+            assertEquals("Bearer sk-default-deepseek", authorizationHeader.get());
+        } finally {
+            server.stop(0);
+        }
     }
 }

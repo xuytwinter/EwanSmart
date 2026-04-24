@@ -23,7 +23,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentHashMap.KeySetView;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 聊天处理服务
@@ -38,6 +41,7 @@ public class ChatHandler {
     private static final int MAX_CONTEXT_SNIPPET_LEN = 300;
     private static final int MAX_MATCHED_CHUNK_LEN = 800;
     private static final int MAX_EVIDENCE_SNIPPET_LEN = 160;
+    private static final int GENERATION_COMPLETION_TIMEOUT_SECONDS = 120;
     private final RedisTemplate<String, String> redisTemplate;
     private final HybridSearchService searchService;
     private final LlmProviderRouter llmProviderRouter;
@@ -90,6 +94,7 @@ public class ChatHandler {
 
             // 1. 获取或创建会话 ID
             conversationId = getOrCreateConversationId(userId);
+            conversationService.ensureConversationSession(Long.parseLong(userId), conversationId, userMessage);
             ChatGenerationStateService.GenerationSnapshot generation =
                     chatGenerationStateService.createGeneration(userId, conversationId, userMessage);
             generationId = generation.generationId();
@@ -141,10 +146,15 @@ public class ChatHandler {
                     chatGenerationStateService.markFailed(finalGenerationId, error.getMessage());
                     responseFuture.completeExceptionally(error);
                     cleanupGenerationState(finalGenerationId, error);
-                });
+                },
+                () -> finalizeResponse(userId, userMessage, finalConversationId, finalGenerationId,
+                        responseFuture, responseBuilders.get(finalGenerationId)));
             activeStreams.put(finalGenerationId, streamHandle);
+            if (responseFuture.isDone()) {
+                activeStreams.remove(finalGenerationId, streamHandle);
+            }
 
-            // 6. 后台任务检查并标记响应完成
+            // 6. 后台任务仅兜底超时；正常完成由上游流结束信号驱动
             submitCompletionMonitor(userId, userMessage, finalConversationId, finalGenerationId, responseFuture);
             
         } catch (RateLimitExceededException e) {
@@ -168,56 +178,28 @@ public class ChatHandler {
                         return;
                     }
 
-                    Thread.sleep(3000);
+                    responseFuture.get(GENERATION_COMPLETION_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                } catch (TimeoutException e) {
                     if (finishCancelledGeneration(generationId, responseFuture, responseBuilders.get(generationId))) {
                         return;
                     }
-                    StringBuilder responseBuilder = responseBuilders.get(generationId);
-                    if (responseBuilder == null) {
-                        if (finishCancelledGeneration(generationId, responseFuture, null)) {
-                            return;
-                        }
-                        RuntimeException exception = new RuntimeException("响应构建器为空");
-                        responseFuture.completeExceptionally(exception);
+                    RuntimeException exception = new RuntimeException("模型响应超时，请稍后重试");
+                    if (responseFuture.completeExceptionally(exception)) {
                         handleError(userId, generationId, exception);
+                        sendCompletionNotification(userId, generationId, conversationId, true);
+                        chatGenerationStateService.markFailed(generationId, exception.getMessage());
                         cleanupGenerationState(generationId, exception);
-                        return;
                     }
-
-                    int lastLength = responseBuilder.length();
-                    Thread.sleep(2000);
-                    if (finishCancelledGeneration(generationId, responseFuture, responseBuilder)) {
-                        return;
-                    }
-                    if (responseBuilder.length() == lastLength) {
-                        finalizeResponse(userId, userMessage, conversationId, generationId, responseFuture, responseBuilder);
-                        return;
-                    }
-
-                    for (int i = 0; i < 5; i++) {
-                        Thread.sleep(5000);
-                        if (finishCancelledGeneration(generationId, responseFuture, responseBuilder)) {
-                            return;
-                        }
-                        lastLength = responseBuilder.length();
-                        Thread.sleep(2000);
-                        if (finishCancelledGeneration(generationId, responseFuture, responseBuilder)) {
-                            return;
-                        }
-                        if (responseBuilder.length() == lastLength) {
-                            finalizeResponse(userId, userMessage, conversationId, generationId, responseFuture, responseBuilder);
-                            return;
-                        }
-                    }
-
-                    if (!responseFuture.isDone()) {
-                        finalizeResponse(userId, userMessage, conversationId, generationId, responseFuture, responseBuilder);
-                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (ExecutionException ignored) {
+                    // 上游错误分支已经处理并完成了当前 future，这里只负责等待兜底。
                 } catch (Exception e) {
                     logger.error("检查响应完成时出错: {}", e.getMessage(), e);
-                    responseFuture.completeExceptionally(e);
-                    chatGenerationStateService.markFailed(generationId, e.getMessage());
-                    cleanupGenerationState(generationId, e);
+                    if (responseFuture.completeExceptionally(e)) {
+                        chatGenerationStateService.markFailed(generationId, e.getMessage());
+                        cleanupGenerationState(generationId, e);
+                    }
                 }
             });
         } catch (RejectedExecutionException ex) {
@@ -234,8 +216,33 @@ public class ChatHandler {
         if (finishCancelledGeneration(generationId, responseFuture, responseBuilder)) {
             return;
         }
+        if (responseBuilder == null) {
+            if (responseFuture.isDone() || !responseFutures.containsKey(generationId)) {
+                return;
+            }
+            RuntimeException exception = new RuntimeException("响应构建器为空");
+            if (responseFuture.completeExceptionally(exception)) {
+                handleError(userId, generationId, exception);
+                sendCompletionNotification(userId, generationId, conversationId, true);
+                chatGenerationStateService.markFailed(generationId, exception.getMessage());
+                cleanupGenerationState(generationId, exception);
+            }
+            return;
+        }
         String completeResponse = responseBuilder.toString();
-        responseFuture.complete(completeResponse);
+        if (completeResponse.isBlank()) {
+            RuntimeException exception = new RuntimeException("模型未返回有效内容，请稍后重试");
+            if (responseFuture.completeExceptionally(exception)) {
+                handleError(userId, generationId, exception);
+                sendCompletionNotification(userId, generationId, conversationId, true);
+                chatGenerationStateService.markFailed(generationId, exception.getMessage());
+                cleanupGenerationState(generationId, exception);
+            }
+            return;
+        }
+        if (!responseFuture.complete(completeResponse)) {
+            return;
+        }
         Map<Integer, ReferenceInfo> referenceMappings = generationReferenceMappings.get(generationId);
         updateConversationHistory(conversationId, userMessage, completeResponse, referenceMappings);
         persistConversation(userId, userMessage, completeResponse, conversationId, referenceMappings);

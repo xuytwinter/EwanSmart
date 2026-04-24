@@ -91,6 +91,7 @@ async function testModelProvider(scopeKey: 'llm' | 'embedding', provider: Api.Ad
     url: `/admin/model-providers/${scopeKey}/test`,
     method: 'post',
     data: {
+      provider: provider.provider,
       apiBaseUrl: provider.apiBaseUrl,
       model: provider.model,
       apiKey: provider.apiKeyInput?.trim() || '',

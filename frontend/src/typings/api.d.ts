@@ -447,6 +447,15 @@ declare namespace Api {
       errorMessage?: string | null;
       referenceMappings?: Record<string, ReferenceEvidence>;
     }
+
+    interface ConversationSession {
+      id: number;
+      conversationId: string;
+      title: string;
+      status: 'ACTIVE' | 'ARCHIVED';
+      createdAt: string;
+      updatedAt: string;
+    }
   }
 
   namespace Document {

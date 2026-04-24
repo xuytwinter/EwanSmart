@@ -8,12 +8,14 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
 
   const conversationId = ref<string>('');
   const input = ref<Api.Chat.Input>({ message: '' });
-
   const list = ref<Api.Chat.Message[]>([]);
+  const sessions = ref<Api.Chat.ConversationSession[]>([]);
+  const sessionsLoading = ref(false);
+  const activeTab = ref<'active' | 'archived'>('active');
 
   const store = useAuthStore();
 
-  const sessionId = ref<string>(''); // WebSocket session ID
+  const sessionId = ref<string>('');
   const allowReconnect = ref(true);
   const authFailureNotified = ref(false);
   const handshakeConfirmed = ref(false);
@@ -39,14 +41,12 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     if (!generationId) {
       return -1;
     }
-
     for (let i = list.value.length - 1; i >= 0; i -= 1) {
       const item = list.value[i];
       if (item?.role === 'assistant' && item.generationId === generationId) {
         return i;
       }
     }
-
     return -1;
   }
 
@@ -57,7 +57,6 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
         return item.generationId;
       }
     }
-
     return '';
   }
 
@@ -65,7 +64,6 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     if (!snapshot) {
       return;
     }
-
     conversationId.value = snapshot.conversationId || conversationId.value;
 
     const assistantIndex = findAssistantIndexByGenerationId(snapshot.generationId);
@@ -106,16 +104,13 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     if (!generationId) {
       return null;
     }
-
     const { error, data } = await request<Api.Chat.GenerationSnapshot | null>({
       url: `chat/generation/${generationId}`,
       baseURL: 'proxy-api'
     });
-
     if (error) {
       return null;
     }
-
     return data || null;
   }
 
@@ -124,11 +119,9 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
       url: 'chat/active-generation',
       baseURL: 'proxy-api'
     });
-
     if (error) {
       return null;
     }
-
     return data || null;
   }
 
@@ -138,17 +131,107 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
       upsertGenerationSnapshot(await fetchGenerationSnapshot(pendingGenerationId));
       return;
     }
-
     upsertGenerationSnapshot(await fetchActiveGenerationSnapshot());
   }
 
+  // ---- Session management ----
+
+  async function loadSessions() {
+    sessionsLoading.value = true;
+    const { error, data } = await request<Api.Chat.ConversationSession[]>({
+      url: 'users/conversations'
+    });
+    if (!error && data) {
+      sessions.value = data;
+      // Auto-select first active session if none is active
+      if (!conversationId.value) {
+        const firstActive = data.find(s => s.status === 'ACTIVE');
+        if (firstActive) {
+          await switchSession(firstActive.conversationId);
+        }
+      }
+    }
+    sessionsLoading.value = false;
+  }
+
+  async function createNewSession() {
+    const { error, data } = await request<Api.Chat.ConversationSession>({
+      url: 'users/conversations',
+      method: 'POST'
+    });
+    if (!error && data) {
+      conversationId.value = data.conversationId;
+      list.value = [];
+      await loadSessions();
+    }
+    return !error;
+  }
+
+  async function switchSession(targetConversationId: string) {
+    if (targetConversationId === conversationId.value) {
+      return;
+    }
+    const { error } = await request({
+      url: `users/conversations/${targetConversationId}/switch`,
+      method: 'PUT'
+    });
+    if (error) {
+      return;
+    }
+    conversationId.value = targetConversationId;
+    list.value = [];
+    await loadMessages(targetConversationId);
+  }
+
+  async function loadMessages(targetConversationId?: string) {
+    const cid = targetConversationId || conversationId.value;
+    if (!cid) {
+      return;
+    }
+    const { error, data } = await request<Api.Chat.Message[]>({
+      url: 'users/conversation',
+      params: { conversationId: cid }
+    });
+    if (!error && data) {
+      list.value = data;
+    }
+  }
+
+  async function archiveSession(targetConversationId: string) {
+    const { error } = await request({
+      url: `users/conversations/${targetConversationId}/archive`,
+      method: 'PUT'
+    });
+    if (!error) {
+      await loadSessions();
+      if (targetConversationId === conversationId.value) {
+        list.value = [];
+        conversationId.value = '';
+      }
+    }
+  }
+
+  async function unarchiveSession(targetConversationId: string) {
+    const { error } = await request({
+      url: `users/conversations/${targetConversationId}/unarchive`,
+      method: 'PUT'
+    });
+    if (!error) {
+      await loadSessions();
+    }
+  }
+
+  const filteredSessions = computed(() => {
+    return sessions.value.filter(s => s.status === (activeTab.value === 'archived' ? 'ARCHIVED' : 'ACTIVE'));
+  });
+
+  // ---- WebSocket ----
+
   const socketUrl = computed(() => {
     const token = store.token?.trim();
-
     if (!token) {
       return undefined;
     }
-
     return `/proxy-ws/chat/${encodeURIComponent(token)}`;
   });
 
@@ -187,12 +270,9 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
         allowReconnect.value = Boolean(socketUrl.value);
         return;
       }
-
       const closedBeforeHandshake = !handshakeConfirmed.value;
       const isAuthOrProtocolFailure = NON_RETRYABLE_CLOSE_CODES.has(event.code) || closedBeforeHandshake;
-
       allowReconnect.value = !isAuthOrProtocolFailure;
-
       if (isAuthOrProtocolFailure && !authFailureNotified.value) {
         authFailureNotified.value = true;
         window.$message?.error('聊天连接鉴权失败，请重新登录后再试');
@@ -205,10 +285,8 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
       rateLimitRemainingSeconds.value = 0;
       return;
     }
-
     const remainingMs = rateLimitUntil.value - Date.now();
     rateLimitRemainingSeconds.value = Math.max(0, Math.ceil(remainingMs / 1000));
-
     if (remainingMs <= 0) {
       clearRateLimitCountdown();
     }
@@ -229,12 +307,10 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
 
   function startRateLimitCountdown(retryAfterSeconds: number) {
     const normalizedSeconds = Math.max(0, Math.ceil(retryAfterSeconds));
-
     if (normalizedSeconds <= 0) {
       clearRateLimitCountdown();
       return;
     }
-
     rateLimitUntil.value = Date.now() + normalizedSeconds * 1000;
     syncRateLimitCountdown();
     clearRateLimitTimer();
@@ -251,7 +327,6 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     if (!socketUrl.value) {
       return;
     }
-
     resetConnectionState();
     allowReconnect.value = true;
     intentionalDisconnect.value = wsStatus.value === 'OPEN' || wsStatus.value === 'CONNECTING';
@@ -270,6 +345,7 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     conversationId.value = '';
     input.value = { message: '' };
     list.value = [];
+    sessions.value = [];
     wsClose(1000, 'auth-reset');
   }
 
@@ -277,19 +353,16 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     socketUrl,
     url => {
       resetConnectionState();
-
       if (!url) {
         wsClose();
         clearRateLimitCountdown();
         return;
       }
-
       wsOpen();
     },
     { immediate: true }
   );
 
-  // 监听WebSocket消息，捕获sessionId
   watch(wsData, val => {
     if (!val) return;
     try {
@@ -310,11 +383,9 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     if (wsStatus.value === 'OPEN') {
       return 'OPEN';
     }
-
     if (wsStatus.value === 'CONNECTING' && handshakeConfirmed.value) {
       return 'RECONNECTING';
     }
-
     return wsStatus.value;
   });
 
@@ -322,6 +393,10 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     input,
     conversationId,
     list,
+    sessions,
+    sessionsLoading,
+    activeTab,
+    filteredSessions,
     connectionStatus,
     isRateLimited,
     rateLimitRemainingSeconds,
@@ -336,6 +411,12 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     startRateLimitCountdown,
     handleAuthReset,
     upsertGenerationSnapshot,
-    syncGenerationAfterReconnect
+    syncGenerationAfterReconnect,
+    loadSessions,
+    createNewSession,
+    switchSession,
+    loadMessages,
+    archiveSession,
+    unarchiveSession
   };
 });

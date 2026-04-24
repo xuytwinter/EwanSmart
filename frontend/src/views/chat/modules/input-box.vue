@@ -39,11 +39,9 @@ const sendDisabled = computed(() => {
   if (isSending.value) {
     return false;
   }
-
   if (isRateLimited.value) {
     return true;
   }
-
   return !input.value.message || ['CLOSED', 'CONNECTING'].includes(connectionStatus.value);
 });
 
@@ -51,15 +49,12 @@ const connectionText = computed(() => {
   if (connectionStatus.value === 'OPEN') {
     return '已连接';
   }
-
   if (connectionStatus.value === 'RECONNECTING') {
     return '重连中';
   }
-
   if (connectionStatus.value === 'CONNECTING') {
     return '连接中';
   }
-
   return '未连接';
 });
 
@@ -67,8 +62,7 @@ const cooldownText = computed(() => {
   if (!isRateLimited.value) {
     return '';
   }
-
-  return `${rateLimitRemainingSeconds.value} 秒后可重新发送`;
+  return `${rateLimitRemainingSeconds} 秒后可重新发送`;
 });
 
 function findAssistantMessage(generationId?: string) {
@@ -182,7 +176,6 @@ const handleSend = async () => {
     return;
   }
 
-  //  判断是否正在发送, 如果发送中，则停止ai继续响应
   if (isSending.value) {
     const { error, data: tokenData } = await request<Api.Chat.Token>({
       url: 'chat/websocket-token',
@@ -217,25 +210,20 @@ const handleSend = async () => {
 };
 
 const inputRef = ref();
-// 手动插入换行符（确保所有浏览器兼容）
 const insertNewline = () => {
   const textarea = inputRef.value;
   const start = textarea.selectionStart;
   const end = textarea.selectionEnd;
 
-  // 在光标位置插入换行符
   input.value.message = `${input.value.message.substring(0, start)}\n${input.value.message.substring(end)}`;
 
-  // 更新光标位置（在插入的换行符之后）
   nextTick(() => {
     textarea.selectionStart = start + 1;
     textarea.selectionEnd = start + 1;
-    textarea.focus(); // 确保保持焦点
+    textarea.focus();
   });
 };
 
-// ctrl + enter 换行
-// enter 发送
 const handShortcut = (e: KeyboardEvent) => {
   if (e.key === 'Enter') {
     e.preventDefault();
@@ -248,32 +236,49 @@ const handShortcut = (e: KeyboardEvent) => {
 </script>
 
 <template>
-  <div class="relative w-full b-1 b-#1c1c1c20 bg-#fff p-4 card-wrapper dark:bg-#1c1c1c">
-    <textarea
-      ref="inputRef"
-      v-model.trim="input.message"
-      placeholder="给 派聪明 发送消息"
-      class="min-h-10 w-full cursor-text resize-none b-none bg-transparent color-#333 caret-[rgb(var(--primary-color))] outline-none dark:color-#f1f1f1"
-      @keydown="handShortcut"
-    />
-    <div class="flex items-center justify-between pt-2">
-      <div class="flex items-center gap-3 text-18px color-gray-500">
-        <NText class="text-14px">连接状态：</NText>
-        <icon-eos-icons:loading
-          v-if="connectionStatus === 'CONNECTING' || connectionStatus === 'RECONNECTING'"
-          class="color-yellow"
-        />
-        <icon-fluent:plug-connected-checkmark-20-filled v-else-if="connectionStatus === 'OPEN'" class="color-green" />
-        <icon-tabler:plug-connected-x v-else class="color-red" />
-        <NText class="text-14px">{{ connectionText }}</NText>
-        <NText v-if="isRateLimited" type="warning" class="text-13px">{{ cooldownText }}</NText>
-      </div>
-      <NButton :disabled="sendDisabled" strong circle type="primary" @click="handleSend">
+  <div class="shrink-0 border-t border-[rgb(var(--border-color)/0.15)] bg-white px-4 pb-3 pt-3 dark:bg-[#1c1c1c]">
+    <div
+      class="mx-auto w-full max-w-[960px] flex items-end gap-2 rounded-xl border border-[rgb(var(--border-color)/0.25)] bg-[rgb(var(--border-color)/0.04)] px-3 py-2 transition-colors focus-within:border-[rgb(var(--primary-color)/0.4)] focus-within:bg-white focus-within:shadow-sm dark:bg-[#FFFFFF04] dark:focus-within:bg-[#1c1c1c]"
+    >
+      <textarea
+        ref="inputRef"
+        v-model.trim="input.message"
+        placeholder="给 派聪明 发送消息，Enter 发送，Shift+Enter 换行"
+        class="min-h-6 max-h-32 w-full flex-1 resize-none border-none bg-transparent py-1 text-14px color-#333 caret-[rgb(var(--primary-color))] outline-none placeholder:text-#bbb dark:color-#e1e1e1 dark:placeholder:text-#555"
+        @keydown="handShortcut"
+      />
+      <NButton
+        :disabled="sendDisabled"
+        class="shrink-0 self-end"
+        size="small"
+        circle
+        :type="isSending ? 'warning' : 'primary'"
+        @click="handleSend"
+      >
         <template #icon>
-          <icon-material-symbols:stop-rounded v-if="isSending" />
-          <icon-guidance:send v-else />
+          <icon-material-symbols:stop-rounded v-if="isSending" class="text-16px" />
+          <icon-material-symbols:arrow-upward-rounded v-else class="text-16px" />
         </template>
       </NButton>
+    </div>
+    <div class="mx-auto mt-1.5 flex w-full max-w-[960px] items-center justify-between px-1">
+      <div class="flex items-center gap-2">
+        <div class="flex items-center gap-1">
+          <span
+            class="inline-block h-1.5 w-1.5 rounded-full"
+            :class="{
+              'bg-green-500': connectionStatus === 'OPEN',
+              'bg-yellow-500 animate-pulse': connectionStatus === 'CONNECTING' || connectionStatus === 'RECONNECTING',
+              'bg-red-400': connectionStatus === 'CLOSED'
+            }"
+          />
+          <span class="text-11px color-#aaa">{{ connectionText }}</span>
+        </div>
+        <span v-if="isRateLimited" class="text-11px text-[rgb(var(--primary-color))]">
+          {{ cooldownText }}
+        </span>
+      </div>
+      <span class="text-11px color-#bbb">Shift+Enter 换行</span>
     </div>
   </div>
 </template>
