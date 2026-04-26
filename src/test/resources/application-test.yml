@@ -48,6 +48,8 @@ minio:
 file:
   parsing:
     chunk-size: 512
+    overlap-size: 100
+    min-chunk-size: 100
     parent-chunk-size: 1048576
     buffer-size: 8192
     max-memory-threshold: 0.8

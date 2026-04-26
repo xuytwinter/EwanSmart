@@ -113,7 +113,7 @@ public class VectorizationService {
     // 从数据库获取分块内容
     private List<TextChunk> fetchTextChunks(String fileMd5) {
         // 调用 Repository 查询数据
-        List<DocumentVector> vectors = documentVectorRepository.findByFileMd5(fileMd5);
+        List<DocumentVector> vectors = documentVectorRepository.findByFileMd5OrderByChunkIdAsc(fileMd5);
 
         // 转换为 TextChunk 列表
         return vectors.stream()

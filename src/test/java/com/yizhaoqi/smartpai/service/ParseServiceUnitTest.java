@@ -22,6 +22,8 @@ class ParseServiceUnitTest {
         parseService = new ParseService();
         // 设置配置值
         ReflectionTestUtils.setField(parseService, "chunkSize", 1000);
+        ReflectionTestUtils.setField(parseService, "overlapSize", 0);
+        ReflectionTestUtils.setField(parseService, "minChunkSize", 1);
         ReflectionTestUtils.setField(parseService, "bufferSize", 8192);
         ReflectionTestUtils.setField(parseService, "maxMemoryThreshold", 0.8);
     }
@@ -151,5 +153,46 @@ class ParseServiceUnitTest {
         
         // 性能断言：处理时间应该在合理范围内
         assertTrue(duration < 5000, "处理时间过长: " + duration + "ms");
+    }
+
+    @Test
+    void testSplitTextIntoChunksWithSemantics_AddsSentenceOverlap() throws Exception {
+        ReflectionTestUtils.setField(parseService, "overlapSize", 10);
+        ReflectionTestUtils.setField(parseService, "minChunkSize", 1);
+
+        String text = "第一句内容较长。第二句内容较长。第三句内容较长。第四句内容较长。";
+
+        List<String> result = splitTextIntoChunksWithSemantics(text, 20);
+
+        assertEquals(2, result.size());
+        assertEquals("第一句内容较长。第二句内容较长。", result.get(0));
+        assertTrue(result.get(1).startsWith("第二句内容较长。\n\n第三句内容较长。"));
+    }
+
+    @Test
+    void testSplitTextIntoChunksWithSemantics_MergesShortChunks() throws Exception {
+        ReflectionTestUtils.setField(parseService, "overlapSize", 0);
+        ReflectionTestUtils.setField(parseService, "minChunkSize", 10);
+
+        String text = "标题\n\n第一句内容较长。第二句内容较长。第三句内容较长。";
+
+        List<String> result = splitTextIntoChunksWithSemantics(text, 20);
+
+        assertFalse(result.contains("标题"));
+        assertTrue(result.get(0).startsWith("标题\n\n第一句内容较长。"));
+        assertTrue(result.stream().allMatch(chunk -> chunk != null && !chunk.isBlank()));
+    }
+
+    @Test
+    void testSplitTextIntoChunksWithSemantics_EmptyTextReturnsNoChunks() throws Exception {
+        assertTrue(splitTextIntoChunksWithSemantics("", 16).isEmpty());
+        assertTrue(splitTextIntoChunksWithSemantics("   \n\n  ", 16).isEmpty());
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> splitTextIntoChunksWithSemantics(String text, int chunkSize) throws Exception {
+        Method method = ParseService.class.getDeclaredMethod("splitTextIntoChunksWithSemantics", String.class, int.class);
+        method.setAccessible(true);
+        return (List<String>) method.invoke(parseService, text, chunkSize);
     }
 }

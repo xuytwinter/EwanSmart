@@ -11,6 +11,8 @@ import java.util.List;
 public interface DocumentVectorRepository extends JpaRepository<DocumentVector, Long> {
     List<DocumentVector> findByFileMd5(String fileMd5); // 查询某文件的所有分块
 
+    List<DocumentVector> findByFileMd5OrderByChunkIdAsc(String fileMd5); // 按分块顺序查询某文件的所有分块
+
     long countByFileMd5(String fileMd5);
 
     long countByFileMd5AndPageNumberIsNotNull(String fileMd5);

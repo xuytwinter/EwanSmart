@@ -32,6 +32,8 @@ class ParseServiceTest {
         MockitoAnnotations.openMocks(this);
         // 设置配置值
         ReflectionTestUtils.setField(parseService, "chunkSize", 1000);
+        ReflectionTestUtils.setField(parseService, "overlapSize", 0);
+        ReflectionTestUtils.setField(parseService, "minChunkSize", 1);
         ReflectionTestUtils.setField(parseService, "bufferSize", 8192);
         ReflectionTestUtils.setField(parseService, "maxMemoryThreshold", 0.8);
     }

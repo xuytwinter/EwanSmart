@@ -133,6 +133,8 @@ usage-quota:
 file:
   parsing:
     chunk-size: 512
+    overlap-size: 100
+    min-chunk-size: 100
     buffer-size: 8192
     max-memory-threshold: 0.8
 

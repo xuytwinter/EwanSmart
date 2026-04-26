@@ -24,6 +24,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import com.hankcs.hanlp.seg.common.Term;
 import com.hankcs.hanlp.tokenizer.StandardTokenizer;
 
@@ -43,6 +45,12 @@ public class ParseService {
 
     @Value("${file.parsing.chunk-size}")
     private int chunkSize;
+
+    @Value("${file.parsing.overlap-size:100}")
+    private int overlapSize = 100;
+
+    @Value("${file.parsing.min-chunk-size:100}")
+    private int minChunkSize = 100;
 
     @Value("${file.parsing.parent-chunk-size:1048576}")
     private int parentChunkSize;
@@ -498,6 +506,17 @@ public class ParseService {
      * 智能文本分割，保持语义完整性
      */
     private List<String> splitTextIntoChunksWithSemantics(String text, int chunkSize) {
+        if (text == null || text.isBlank()) {
+            return new ArrayList<>();
+        }
+
+        int effectiveChunkSize = Math.max(1, chunkSize);
+        List<String> baseChunks = splitTextIntoBaseChunks(text, effectiveChunkSize);
+        List<String> mergedChunks = mergeSmallChunks(baseChunks, effectiveChunkSize);
+        return addSemanticOverlap(mergedChunks, effectiveChunkSize);
+    }
+
+    private List<String> splitTextIntoBaseChunks(String text, int chunkSize) {
         List<String> chunks = new ArrayList<>();
 
         // 按段落分割
@@ -506,6 +525,12 @@ public class ParseService {
         StringBuilder currentChunk = new StringBuilder();
 
         for (String paragraph : paragraphs) {
+            if (paragraph == null || paragraph.isBlank()) {
+                continue;
+            }
+
+            paragraph = paragraph.trim();
+
             // 如果单个段落超过chunk大小，需要进一步分割
             if (paragraph.length() > chunkSize) {
                 // 先保存当前chunk
@@ -519,7 +544,7 @@ public class ParseService {
                 chunks.addAll(sentenceChunks);
             }
             // 如果添加这个段落会超过chunk大小
-            else if (currentChunk.length() + paragraph.length() > chunkSize) {
+            else if (currentChunk.length() + paragraph.length() + paragraphSeparatorLength(currentChunk) > chunkSize) {
                 // 保存当前chunk
                 if (currentChunk.length() > 0) {
                     chunks.add(currentChunk.toString().trim());
@@ -542,6 +567,170 @@ public class ParseService {
         }
 
         return chunks;
+    }
+
+    private int paragraphSeparatorLength(StringBuilder currentChunk) {
+        return currentChunk.length() > 0 ? 2 : 0;
+    }
+
+    private List<String> mergeSmallChunks(List<String> chunks, int chunkSize) {
+        List<String> merged = new ArrayList<>();
+        int effectiveMinChunkSize = normalizedMinChunkSize(chunkSize);
+        int maxMergedChunkSize = chunkSize + normalizedOverlapSize(chunkSize);
+
+        for (String chunk : chunks) {
+            String normalizedChunk = normalizeChunk(chunk);
+            if (normalizedChunk.isEmpty()) {
+                continue;
+            }
+
+            if (!merged.isEmpty()) {
+                String previous = merged.get(merged.size() - 1);
+                String combined = combineChunks(previous, normalizedChunk);
+                if ((normalizedChunk.length() < effectiveMinChunkSize || previous.length() < effectiveMinChunkSize)
+                        && combined.length() <= maxMergedChunkSize) {
+                    merged.set(merged.size() - 1, combined);
+                    continue;
+                }
+            }
+
+            merged.add(normalizedChunk);
+        }
+
+        return merged;
+    }
+
+    private String normalizeChunk(String chunk) {
+        return chunk == null ? "" : chunk.trim();
+    }
+
+    private int normalizedMinChunkSize(int chunkSize) {
+        if (minChunkSize <= 0) {
+            return 0;
+        }
+        return Math.min(minChunkSize, chunkSize);
+    }
+
+    private int normalizedOverlapSize(int chunkSize) {
+        if (overlapSize <= 0 || chunkSize <= 1) {
+            return 0;
+        }
+        return Math.min(overlapSize, chunkSize - 1);
+    }
+
+    private String combineChunks(String first, String second) {
+        if (first == null || first.isBlank()) {
+            return normalizeChunk(second);
+        }
+        if (second == null || second.isBlank()) {
+            return normalizeChunk(first);
+        }
+        return normalizeChunk(first) + "\n\n" + normalizeChunk(second);
+    }
+
+    private List<String> addSemanticOverlap(List<String> chunks, int chunkSize) {
+        int effectiveOverlapSize = normalizedOverlapSize(chunkSize);
+        if (effectiveOverlapSize <= 0 || chunks.size() <= 1) {
+            return chunks;
+        }
+
+        List<String> overlappedChunks = new ArrayList<>(chunks.size());
+        overlappedChunks.add(chunks.get(0));
+
+        for (int i = 1; i < chunks.size(); i++) {
+            String overlapText = buildOverlapText(chunks.get(i - 1), effectiveOverlapSize);
+            String currentChunk = chunks.get(i);
+            if (overlapText.isEmpty()) {
+                overlappedChunks.add(currentChunk);
+            } else {
+                overlappedChunks.add(overlapText + "\n\n" + currentChunk);
+            }
+        }
+
+        return overlappedChunks;
+    }
+
+    private String buildOverlapText(String text, int maxLength) {
+        if (text == null || text.isBlank() || maxLength <= 0) {
+            return "";
+        }
+
+        List<String> sentences = splitIntoSentenceUnits(text);
+        StringBuilder overlap = new StringBuilder();
+
+        for (int i = sentences.size() - 1; i >= 0; i--) {
+            String sentence = sentences.get(i).trim();
+            if (sentence.isEmpty()) {
+                continue;
+            }
+
+            if (sentence.length() > maxLength) {
+                return overlap.isEmpty()
+                        ? tailByTokenBoundary(sentence, maxLength)
+                        : overlap.toString().trim();
+            }
+
+            if (overlap.length() + sentence.length() > maxLength) {
+                break;
+            }
+
+            overlap.insert(0, sentence);
+        }
+
+        if (overlap.isEmpty()) {
+            return tailByTokenBoundary(text, maxLength);
+        }
+        return overlap.toString().trim();
+    }
+
+    private List<String> splitIntoSentenceUnits(String text) {
+        List<String> sentences = new ArrayList<>();
+        Matcher matcher = Pattern.compile("[^。！？；.!?;]+[。！？；.!?;]?").matcher(text);
+        while (matcher.find()) {
+            String sentence = matcher.group().trim();
+            if (!sentence.isEmpty()) {
+                sentences.add(sentence);
+            }
+        }
+
+        if (sentences.isEmpty()) {
+            sentences.add(text.trim());
+        }
+        return sentences;
+    }
+
+    private String tailByTokenBoundary(String text, int maxLength) {
+        if (text == null || text.isBlank() || maxLength <= 0) {
+            return "";
+        }
+
+        String normalized = text.trim();
+        if (normalized.length() <= maxLength) {
+            return normalized;
+        }
+
+        try {
+            List<Term> termList = StandardTokenizer.segment(normalized);
+            StringBuilder tail = new StringBuilder();
+            for (int i = termList.size() - 1; i >= 0; i--) {
+                String word = termList.get(i).word;
+                if (word == null || word.isEmpty()) {
+                    continue;
+                }
+                if (tail.length() + word.length() > maxLength) {
+                    break;
+                }
+                tail.insert(0, word);
+            }
+
+            if (!tail.isEmpty()) {
+                return tail.toString();
+            }
+        } catch (Exception e) {
+            logger.debug("HanLP overlap 边界处理失败，使用字符兜底: {}", e.getMessage());
+        }
+
+        return normalized.substring(Math.max(0, normalized.length() - maxLength));
     }
 
     /**
