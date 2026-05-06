@@ -45,7 +45,6 @@ async function handleFeedback(message: Api.Chat.Message, rating: 'good' | 'bad')
   const { error } = await request({
     url: 'chat/feedback',
     method: 'POST',
-    baseURL: 'proxy-api',
     data: {
       rating,
       reason: rating === 'good' ? '用户点击点赞，表示认可本次回答' : '用户点击点踩，表示不满意本次回答',

@@ -312,8 +312,7 @@ const handleSend = async () => {
 
   if (isSending.value) {
     const { error, data: tokenData } = await request<Api.Chat.Token>({
-      url: 'chat/websocket-token',
-      baseURL: 'proxy-api'
+      url: 'chat/websocket-token'
     });
     if (error) return;
 
