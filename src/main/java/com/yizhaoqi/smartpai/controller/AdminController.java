@@ -12,7 +12,9 @@ import com.yizhaoqi.smartpai.service.InviteCodeService;
 import com.yizhaoqi.smartpai.service.ModelProviderConfigService;
 import com.yizhaoqi.smartpai.service.RateLimitConfigService;
 import com.yizhaoqi.smartpai.service.UsageDashboardService;
+import com.yizhaoqi.smartpai.service.UsageQuotaService;
 import com.yizhaoqi.smartpai.service.UserService;
+import com.yizhaoqi.smartpai.service.UserTokenService;
 import com.yizhaoqi.smartpai.utils.JwtUtils;
 import com.yizhaoqi.smartpai.utils.LogUtils;
 import com.yizhaoqi.smartpai.utils.MinioMigrationUtil;
@@ -42,6 +44,9 @@ public class AdminController {
 
     @Autowired
     private UserService userService;
+
+    @Autowired
+    private UserTokenService userTokenService;
     
     @Autowired
     private OrganizationTagRepository organizationTagRepository;
@@ -54,6 +59,9 @@ public class AdminController {
 
     @Autowired
     private UsageDashboardService usageDashboardService;
+
+    @Autowired
+    private UsageQuotaService usageQuotaService;
 
     @Autowired
     private RateLimitConfigService rateLimitConfigService;
@@ -658,6 +666,73 @@ public class AdminController {
                     .body(Map.of("code", 500, "message", "获取用户列表失败: " + e.getMessage()));
         }
     }
+
+    /**
+     * 管理员手动追加用户 Token 额度。
+     */
+    @PostMapping("/users/{userId}/tokens/add")
+    public ResponseEntity<?> addUserTokens(
+            @RequestHeader("Authorization") String token,
+            @PathVariable Long userId,
+            @RequestBody AddUserTokenRequest request) {
+
+        String adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
+        validateAdmin(adminUsername);
+
+        try {
+            User targetUser = userRepository.findById(userId)
+                    .orElseThrow(() -> new CustomException("目标用户不存在", HttpStatus.NOT_FOUND));
+
+            long llmToken = request.llmToken() == null ? 0L : request.llmToken();
+            long embeddingToken = request.embeddingToken() == null ? 0L : request.embeddingToken();
+            if (llmToken < 0 || embeddingToken < 0) {
+                throw new CustomException("追加 Token 数量不能为负数", HttpStatus.BAD_REQUEST);
+            }
+            if (llmToken == 0 && embeddingToken == 0) {
+                throw new CustomException("请至少追加一种 Token 额度", HttpStatus.BAD_REQUEST);
+            }
+
+            String userIdText = String.valueOf(userId);
+            String reason = normalizeManualTokenReason(request.reason());
+            String remark = "admin=" + adminUsername;
+            if (llmToken > 0) {
+                userTokenService.addLlmTokens(userIdText, llmToken, reason, remark);
+            }
+            if (embeddingToken > 0) {
+                userTokenService.addEmbeddingTokens(userIdText, embeddingToken, reason, remark);
+            }
+
+            LogUtils.logBusiness("ADMIN_ADD_USER_TOKENS", adminUsername,
+                    "管理员为用户追加 Token：userId=%d, username=%s, llm=%d, embedding=%d",
+                    userId, targetUser.getUsername(), llmToken, embeddingToken);
+
+            Map<String, Object> data = new HashMap<>();
+            data.put("userId", userId);
+            data.put("username", targetUser.getUsername());
+            data.put("usage", usageQuotaService.getSnapshot(userIdText));
+
+            return ResponseEntity.ok(Map.of(
+                    "code", 200,
+                    "message", "追加 Token 额度成功",
+                    "data", data
+            ));
+        } catch (CustomException e) {
+            LogUtils.logBusinessError("ADMIN_ADD_USER_TOKENS", adminUsername, "追加 Token 额度失败: %s", e, e.getMessage());
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+        } catch (Exception e) {
+            LogUtils.logBusinessError("ADMIN_ADD_USER_TOKENS", adminUsername, "追加 Token 额度异常: %s", e, e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("code", 500, "message", "追加 Token 额度失败: " + e.getMessage()));
+        }
+    }
+
+    private String normalizeManualTokenReason(String reason) {
+        if (reason == null || reason.isBlank()) {
+            return "管理员手动追加";
+        }
+        String trimmed = reason.trim();
+        return trimmed.length() > 200 ? trimmed.substring(0, 200) : trimmed;
+    }
     
     /**
      * 管理员查询所有对话历史
@@ -1137,6 +1212,8 @@ record OrgTagRequest(String tagId, String name, String description, String paren
  * 分配组织标签请求体
  */
 record AssignOrgTagsRequest(List<String> orgTags) {}
+
+record AddUserTokenRequest(Long llmToken, Long embeddingToken, String reason) {}
 
 // 添加组织标签更新请求记录类
 record OrgTagUpdateRequest(String name, String description, String parentTag, Long uploadMaxSizeMb) {}

@@ -1,5 +1,6 @@
 package com.yizhaoqi.smartpai.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yizhaoqi.smartpai.config.AiProperties;
@@ -9,9 +10,12 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.Disposable;
 
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -20,6 +24,9 @@ import java.util.function.Consumer;
 public class LlmProviderRouter {
 
     private static final Logger logger = LoggerFactory.getLogger(LlmProviderRouter.class);
+    private static final int REACT_HISTORY_MAX_MESSAGES = 6;
+    private static final int REACT_HISTORY_MAX_CONTENT_CHARS = 800;
+    private static final int DEFAULT_REACT_MAX_COMPLETION_TOKENS = 2000;
 
     private final AiProperties aiProperties;
     private final RateLimitService rateLimitService;
@@ -99,6 +106,132 @@ public class LlmProviderRouter {
         }
     }
 
+    public List<Map<String, Object>> buildReActMessages(String userMessage,
+                                                        String context,
+                                                        List<Map<String, String>> history) {
+        List<Map<String, Object>> messages = new ArrayList<>();
+        AiProperties.Prompt promptCfg = aiProperties.getPrompt();
+
+        StringBuilder sysBuilder = new StringBuilder();
+        if (promptCfg.getRules() != null) {
+            sysBuilder.append(promptCfg.getRules()).append("\n\n");
+        }
+        sysBuilder.append("你可以使用系统提供的 tools 完成需要外部能力的任务。")
+                .append("如果需要查询知识库、整理知识库摘要、记录反馈或查看知识库统计，请通过 tool_calls 调用工具；")
+                .append("拿到 tool 结果后继续思考并给出最终回答。")
+                .append("如果工具执行失败，请根据 tool 返回的错误信息重新判断下一步，不要直接中断。\n\n");
+
+        String refStart = promptCfg.getRefStart() != null ? promptCfg.getRefStart() : "<<REF>>";
+        String refEnd = promptCfg.getRefEnd() != null ? promptCfg.getRefEnd() : "<<END>>";
+        sysBuilder.append(refStart).append("\n");
+        if (context != null && !context.isEmpty()) {
+            sysBuilder.append(context);
+        } else {
+            sysBuilder.append(promptCfg.getNoResultText() != null ? promptCfg.getNoResultText() : "（本轮无预置检索结果，可按需调用工具）").append("\n");
+        }
+        sysBuilder.append(refEnd);
+
+        messages.add(newMessage("system", sysBuilder.toString()));
+        if (history != null && !history.isEmpty()) {
+            int start = Math.max(0, history.size() - REACT_HISTORY_MAX_MESSAGES);
+            for (Map<String, String> message : history.subList(start, history.size())) {
+                String role = message.get("role");
+                String content = message.get("content");
+                if (role == null || role.isBlank() || content == null || content.isBlank()) {
+                    continue;
+                }
+                if ("user".equals(role) || "assistant".equals(role) || "system".equals(role)) {
+                    messages.add(newMessage(role, limitText(content, REACT_HISTORY_MAX_CONTENT_CHARS)));
+                }
+            }
+        }
+        messages.add(newMessage("user", userMessage));
+        return messages;
+    }
+
+    public ReActTurn completeReActTurn(String requesterId,
+                                       List<Map<String, Object>> messages,
+                                       List<AgentToolRegistry.AgentTool> tools,
+                                       int maxCompletionTokens) {
+        ModelProviderConfigService.ActiveProviderView provider =
+                modelProviderConfigService.getActiveProvider(ModelProviderConfigService.SCOPE_LLM);
+        Map<String, Object> request = buildReActRequest(provider.model(), messages, tools, maxCompletionTokens, false);
+
+        int estimatedPromptTokens = estimateObjectMessagesTokens(messages)
+                + (tools == null || tools.isEmpty() ? 0 : estimateToolsTokens(tools));
+        UsageQuotaService.TokenReservationBundle reservation = rateLimitService.reserveLlmUsage(
+                requesterId, estimatedPromptTokens, maxCompletionTokens);
+
+        try {
+            String responseBody = buildClient(provider)
+                    .post()
+                    .uri("/chat/completions")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block(Duration.ofSeconds(90));
+            ReActTurn turn = parseReActTurn(responseBody, estimatedPromptTokens);
+            usageQuotaService.settleReservation(reservation, turn.promptTokens() + turn.completionTokens());
+            logger.info("ReAct 回合完成: provider={}, model={}, finishReason={}, toolCalls={}, contentChars={}",
+                    provider.provider(), provider.model(), turn.finishReason(), turn.toolCalls().size(), turn.content().length());
+            return turn;
+        } catch (Exception exception) {
+            usageQuotaService.abortReservation(reservation);
+            throw new RuntimeException("ReAct 模型回合调用失败", exception);
+        }
+    }
+
+    public StreamHandle streamReActTurn(String requesterId,
+                                        List<Map<String, Object>> messages,
+                                        List<AgentToolRegistry.AgentTool> tools,
+                                        int maxCompletionTokens,
+                                        Consumer<String> onChunk,
+                                        Consumer<Throwable> onError,
+                                        Consumer<ReActTurn> onComplete) {
+        ModelProviderConfigService.ActiveProviderView provider =
+                modelProviderConfigService.getActiveProvider(ModelProviderConfigService.SCOPE_LLM);
+        Map<String, Object> request = buildReActRequest(provider.model(), messages, tools, maxCompletionTokens, true);
+        int estimatedPromptTokens = estimateObjectMessagesTokens(messages)
+                + (tools == null || tools.isEmpty() ? 0 : estimateToolsTokens(tools));
+        UsageQuotaService.TokenReservationBundle reservation = rateLimitService.reserveLlmUsage(
+                requesterId, estimatedPromptTokens, Math.max(maxCompletionTokens, 1));
+        ReActStreamAccumulator accumulator = new ReActStreamAccumulator(reservation, estimatedPromptTokens);
+
+        try {
+            Disposable subscription = buildClient(provider)
+                    .post()
+                    .uri("/chat/completions")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToFlux(String.class)
+                    .subscribe(
+                            chunk -> processReActStreamChunk(chunk, accumulator, onChunk),
+                            error -> {
+                                logProviderError("ReAct 流式回合调用失败", error);
+                                settleReActStreamUsage(accumulator);
+                                onError.accept(error);
+                            },
+                            () -> {
+                                settleReActStreamUsage(accumulator);
+                                ReActTurn turn = accumulator.toTurn();
+                                logger.info("ReAct 流式回合完成: provider={}, model={}, finishReason={}, toolCalls={}, contentChars={}",
+                                        provider.provider(),
+                                        provider.model(),
+                                        turn.finishReason(),
+                                        turn.toolCalls().size(),
+                                        turn.content().length());
+                                onComplete.accept(turn);
+                            }
+                    );
+            return new StreamHandle(subscription, () -> settleReActStreamUsage(accumulator));
+        } catch (Exception exception) {
+            usageQuotaService.abortReservation(reservation);
+            throw exception;
+        }
+    }
+
     private WebClient buildClient(ModelProviderConfigService.ActiveProviderView provider) {
         WebClient.Builder builder = WebClient.builder()
                 .baseUrl(ModelProviderConfigService.normalizeOpenAiCompatibleBaseUrl(provider.apiBaseUrl()));
@@ -106,6 +239,46 @@ public class LlmProviderRouter {
             builder.defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + provider.apiKey());
         }
         return builder.build();
+    }
+
+    private void logProviderError(String message, Throwable error) {
+        if (error instanceof WebClientResponseException responseException) {
+            logger.warn("{}: status={}, body={}",
+                    message,
+                    responseException.getStatusCode(),
+                    responseException.getResponseBodyAsString(),
+                    responseException);
+            return;
+        }
+        logger.warn("{}: {}", message, error.getMessage(), error);
+    }
+
+    private Map<String, Object> buildReActRequest(String model,
+                                                  List<Map<String, Object>> messages,
+                                                  List<AgentToolRegistry.AgentTool> tools,
+                                                  int maxCompletionTokens,
+                                                  boolean stream) {
+        Map<String, Object> request = new LinkedHashMap<>();
+        request.put("model", model);
+        request.put("messages", messages);
+        request.put("stream", stream);
+        request.put("max_tokens", Math.max(maxCompletionTokens, 1));
+        if (stream) {
+            request.put("stream_options", Map.of("include_usage", true));
+        }
+
+        AiProperties.Generation gen = aiProperties.getGeneration();
+        if (gen.getTemperature() != null) {
+            request.put("temperature", gen.getTemperature());
+        }
+        if (gen.getTopP() != null) {
+            request.put("top_p", gen.getTopP());
+        }
+        if (tools != null && !tools.isEmpty()) {
+            request.put("tools", buildOpenAiTools(tools));
+            request.put("tool_choice", "auto");
+        }
+        return request;
     }
 
     private Map<String, Object> buildRequest(String model,
@@ -160,6 +333,137 @@ public class LlmProviderRouter {
         return messages;
     }
 
+    private Map<String, Object> newMessage(String role, String content) {
+        Map<String, Object> message = new LinkedHashMap<>();
+        message.put("role", role);
+        message.put("content", content == null ? "" : content);
+        return message;
+    }
+
+    private String limitText(String text, int maxChars) {
+        if (text == null || text.length() <= maxChars) {
+            return text;
+        }
+        return text.substring(0, Math.max(maxChars, 0)) + "...";
+    }
+
+    private List<Map<String, Object>> buildOpenAiTools(List<AgentToolRegistry.AgentTool> tools) {
+        List<Map<String, Object>> openAiTools = new ArrayList<>();
+        for (AgentToolRegistry.AgentTool tool : tools) {
+            Map<String, Object> function = new LinkedHashMap<>();
+            function.put("name", tool.name());
+            function.put("description", tool.description());
+            function.put("parameters", tool.parameters());
+
+            Map<String, Object> toolSchema = new LinkedHashMap<>();
+            toolSchema.put("type", "function");
+            toolSchema.put("function", function);
+            openAiTools.add(toolSchema);
+        }
+        return openAiTools;
+    }
+
+    private int estimateToolsTokens(List<AgentToolRegistry.AgentTool> tools) {
+        int tokens = 0;
+        for (AgentToolRegistry.AgentTool tool : tools) {
+            tokens += usageQuotaService.estimateTextTokens(tool.name());
+            tokens += usageQuotaService.estimateTextTokens(tool.description());
+            try {
+                tokens += usageQuotaService.estimateTextTokens(objectMapper.writeValueAsString(tool.parameters()));
+            } catch (Exception ignored) {
+                tokens += 80;
+            }
+        }
+        return tokens;
+    }
+
+    private int estimateObjectMessagesTokens(List<Map<String, Object>> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return 0;
+        }
+        int tokens = 0;
+        for (Map<String, Object> message : messages) {
+            tokens += 8;
+            tokens += usageQuotaService.estimateTextTokens(String.valueOf(message.getOrDefault("role", "")));
+            tokens += usageQuotaService.estimateTextTokens(String.valueOf(message.getOrDefault("content", "")));
+            Object reasoningContent = message.get("reasoning_content");
+            if (reasoningContent != null) {
+                tokens += usageQuotaService.estimateTextTokens(String.valueOf(reasoningContent));
+            }
+            Object toolCalls = message.get("tool_calls");
+            if (toolCalls != null) {
+                try {
+                    tokens += usageQuotaService.estimateTextTokens(objectMapper.writeValueAsString(toolCalls));
+                } catch (Exception ignored) {
+                    tokens += 128;
+                }
+            }
+            Object toolCallId = message.get("tool_call_id");
+            if (toolCallId != null) {
+                tokens += usageQuotaService.estimateTextTokens(String.valueOf(toolCallId));
+            }
+        }
+        return Math.max(tokens, 1);
+    }
+
+    private ReActTurn parseReActTurn(String responseBody, int estimatedPromptTokens) {
+        if (responseBody == null || responseBody.isBlank()) {
+            throw new IllegalStateException("ReAct 模型响应为空");
+        }
+        try {
+            JsonNode root = objectMapper.readTree(responseBody);
+            JsonNode choice = root.path("choices").path(0);
+            JsonNode messageNode = choice.path("message");
+            if (!messageNode.isObject()) {
+                throw new IllegalStateException("ReAct 模型响应缺少 message");
+            }
+
+            Map<String, Object> assistantMessage = objectMapper.convertValue(
+                    messageNode,
+                    new TypeReference<Map<String, Object>>() {
+                    });
+            assistantMessage.put("role", "assistant");
+            if (!assistantMessage.containsKey("content") || assistantMessage.get("content") == null) {
+                assistantMessage.put("content", "");
+            }
+
+            List<ToolCallDecision> toolCalls = new ArrayList<>();
+            JsonNode toolCallsNode = messageNode.path("tool_calls");
+            if (toolCallsNode.isArray()) {
+                for (JsonNode call : toolCallsNode) {
+                    JsonNode function = call.path("function");
+                    String name = function.path("name").asText("");
+                    if (name.isBlank()) {
+                        continue;
+                    }
+                    String argumentsJson = function.path("arguments").asText("{}");
+                    Map<String, Object> arguments = objectMapper.readValue(
+                            argumentsJson == null || argumentsJson.isBlank() ? "{}" : argumentsJson,
+                            new TypeReference<Map<String, Object>>() {
+                            });
+                    toolCalls.add(new ToolCallDecision(call.path("id").asText(""), name, arguments));
+                }
+            }
+
+            JsonNode usage = root.path("usage");
+            int promptTokens = usage.path("prompt_tokens").asInt(estimatedPromptTokens);
+            int completionTokens = usage.path("completion_tokens").asInt(
+                    usageQuotaService.estimateTextTokens(messageNode.path("content").asText(""))
+                            + estimateObjectMessagesTokens(List.of(assistantMessage))
+            );
+            return new ReActTurn(
+                    messageNode.path("content").asText("").trim(),
+                    toolCalls,
+                    assistantMessage,
+                    choice.path("finish_reason").asText("unknown"),
+                    promptTokens,
+                    completionTokens
+            );
+        } catch (Exception exception) {
+            throw new RuntimeException("解析 ReAct 模型响应失败", exception);
+        }
+    }
+
     private void processChunk(String rawChunk, StreamUsageTracker usageTracker, Consumer<String> onChunk) {
         try {
             for (String chunk : extractPayloads(rawChunk)) {
@@ -195,6 +499,59 @@ public class LlmProviderRouter {
             }
         } catch (Exception exception) {
             logger.error("处理模型响应数据块失败: {}", exception.getMessage(), exception);
+        }
+    }
+
+    private void processReActStreamChunk(String rawChunk,
+                                         ReActStreamAccumulator accumulator,
+                                         Consumer<String> onChunk) {
+        try {
+            for (String chunk : extractPayloads(rawChunk)) {
+                if ("[DONE]".equals(chunk)) {
+                    continue;
+                }
+
+                JsonNode node = objectMapper.readTree(chunk);
+                JsonNode usageNode = node.path("usage");
+                if (usageNode.isObject()) {
+                    accumulator.promptTokens = usageNode.path("prompt_tokens").asInt(accumulator.promptTokens);
+                    accumulator.completionTokens = usageNode.path("completion_tokens").asInt(accumulator.completionTokens);
+                }
+
+                JsonNode choiceNode = node.path("choices").path(0);
+                if (!choiceNode.isObject()) {
+                    continue;
+                }
+
+                JsonNode finishReasonNode = choiceNode.path("finish_reason");
+                if (!finishReasonNode.isMissingNode() && !finishReasonNode.isNull()) {
+                    String finishReason = finishReasonNode.asText("");
+                    if (!finishReason.isBlank()) {
+                        accumulator.finishReason = finishReason;
+                    }
+                }
+
+                JsonNode delta = choiceNode.path("delta");
+                String reasoningContent = delta.path("reasoning_content").asText("");
+                if (!reasoningContent.isEmpty()) {
+                    accumulator.reasoningContent.append(reasoningContent);
+                }
+
+                String content = delta.path("content").asText("");
+                if (!content.isEmpty()) {
+                    accumulator.content.append(content);
+                    onChunk.accept(content);
+                }
+
+                JsonNode toolCallsNode = delta.path("tool_calls");
+                if (toolCallsNode.isArray()) {
+                    for (JsonNode toolCallDelta : toolCallsNode) {
+                        accumulator.appendToolCallDelta(toolCallDelta);
+                    }
+                }
+            }
+        } catch (Exception exception) {
+            logger.error("处理 ReAct 流式响应数据块失败: {}", exception.getMessage(), exception);
         }
     }
 
@@ -240,6 +597,22 @@ public class LlmProviderRouter {
         usageQuotaService.settleReservation(usageTracker.reservation, actualPromptTokens + actualCompletionTokens);
     }
 
+    private void settleReActStreamUsage(ReActStreamAccumulator accumulator) {
+        if (accumulator == null || accumulator.settled) {
+            return;
+        }
+
+        accumulator.settled = true;
+        int actualPromptTokens = accumulator.promptTokens > 0
+                ? accumulator.promptTokens
+                : accumulator.estimatedPromptTokens;
+        int actualCompletionTokens = accumulator.completionTokens > 0
+                ? accumulator.completionTokens
+                : usageQuotaService.estimateTextTokens(accumulator.content.toString())
+                + estimateObjectMessagesTokens(List.of(accumulator.assistantMessage()));
+        usageQuotaService.settleReservation(accumulator.reservation, actualPromptTokens + actualCompletionTokens);
+    }
+
     private static final class StreamUsageTracker {
         private final UsageQuotaService.TokenReservationBundle reservation;
         private final int estimatedPromptTokens;
@@ -255,11 +628,145 @@ public class LlmProviderRouter {
         }
     }
 
+    private static final class ReActStreamAccumulator {
+        private final UsageQuotaService.TokenReservationBundle reservation;
+        private final int estimatedPromptTokens;
+        private final StringBuilder content = new StringBuilder();
+        private final StringBuilder reasoningContent = new StringBuilder();
+        private final Map<Integer, StreamingToolCall> toolCalls = new LinkedHashMap<>();
+        private volatile int promptTokens;
+        private volatile int completionTokens;
+        private volatile String finishReason;
+        private volatile boolean settled;
+
+        private ReActStreamAccumulator(UsageQuotaService.TokenReservationBundle reservation, int estimatedPromptTokens) {
+            this.reservation = reservation;
+            this.estimatedPromptTokens = estimatedPromptTokens;
+        }
+
+        private void appendToolCallDelta(JsonNode delta) {
+            int index = delta.path("index").asInt(toolCalls.size());
+            StreamingToolCall toolCall = toolCalls.computeIfAbsent(index, ignored -> new StreamingToolCall());
+            String id = delta.path("id").asText("");
+            if (!id.isBlank()) {
+                toolCall.id = id;
+            }
+            String type = delta.path("type").asText("");
+            if (!type.isBlank()) {
+                toolCall.type = type;
+            }
+            JsonNode function = delta.path("function");
+            if (function.isObject()) {
+                String name = function.path("name").asText("");
+                if (!name.isBlank()) {
+                    toolCall.name.append(name);
+                }
+                String arguments = function.path("arguments").asText("");
+                if (!arguments.isEmpty()) {
+                    toolCall.arguments.append(arguments);
+                }
+            }
+        }
+
+        private Map<String, Object> assistantMessage() {
+            Map<String, Object> message = new LinkedHashMap<>();
+            List<Map<String, Object>> serializedToolCalls = serializedToolCalls();
+            message.put("role", "assistant");
+            if (!serializedToolCalls.isEmpty()) {
+                String assistantContent = content.toString();
+                message.put("content", assistantContent.isBlank() ? null : assistantContent);
+                message.put("tool_calls", serializedToolCalls);
+            } else {
+                message.put("content", content.toString());
+            }
+            if (!reasoningContent.isEmpty()) {
+                message.put("reasoning_content", reasoningContent.toString());
+            }
+            return message;
+        }
+
+        private List<Map<String, Object>> serializedToolCalls() {
+            List<Map<String, Object>> serialized = new ArrayList<>();
+            for (Map.Entry<Integer, StreamingToolCall> entry : toolCalls.entrySet()) {
+                StreamingToolCall toolCall = entry.getValue();
+                if (toolCall.name.isEmpty()) {
+                    continue;
+                }
+                Map<String, Object> function = new LinkedHashMap<>();
+                function.put("name", toolCall.name.toString());
+                function.put("arguments", toolCall.arguments.isEmpty() ? "{}" : toolCall.arguments.toString());
+
+                Map<String, Object> call = new LinkedHashMap<>();
+                call.put("id", toolCall.id == null || toolCall.id.isBlank() ? "call_" + entry.getKey() : toolCall.id);
+                call.put("type", toolCall.type == null || toolCall.type.isBlank() ? "function" : toolCall.type);
+                call.put("function", function);
+                serialized.add(call);
+            }
+            return serialized;
+        }
+
+        private ReActTurn toTurn() {
+            Map<String, Object> assistantMessage = assistantMessage();
+            List<ToolCallDecision> decisions = new ArrayList<>();
+            for (Map<String, Object> item : serializedToolCalls()) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> function = (Map<String, Object>) item.get("function");
+                String argumentsJson = String.valueOf(function.getOrDefault("arguments", "{}"));
+                Map<String, Object> arguments;
+                try {
+                    arguments = new ObjectMapper().readValue(
+                            argumentsJson == null || argumentsJson.isBlank() ? "{}" : argumentsJson,
+                            new TypeReference<Map<String, Object>>() {
+                            });
+                } catch (Exception ignored) {
+                    arguments = Map.of();
+                }
+                decisions.add(new ToolCallDecision(
+                        String.valueOf(item.getOrDefault("id", "")),
+                        String.valueOf(function.getOrDefault("name", "")),
+                        arguments
+                ));
+            }
+            return new ReActTurn(
+                    content.toString().trim(),
+                    decisions,
+                    assistantMessage,
+                    finishReason == null || finishReason.isBlank() ? "unknown" : finishReason,
+                    promptTokens > 0 ? promptTokens : estimatedPromptTokens,
+                    completionTokens > 0 ? completionTokens : DEFAULT_REACT_MAX_COMPLETION_TOKENS
+            );
+        }
+    }
+
+    private static final class StreamingToolCall {
+        private String id;
+        private String type;
+        private final StringBuilder name = new StringBuilder();
+        private final StringBuilder arguments = new StringBuilder();
+    }
+
     public record StreamCompletion(
             String finishReason,
             int promptTokens,
             int completionTokens,
             int responseChars
+    ) {
+    }
+
+    public record ToolCallDecision(
+            String id,
+            String name,
+            Map<String, Object> arguments
+    ) {
+    }
+
+    public record ReActTurn(
+            String content,
+            List<ToolCallDecision> toolCalls,
+            Map<String, Object> assistantMessage,
+            String finishReason,
+            int promptTokens,
+            int completionTokens
     ) {
     }
 

@@ -410,6 +410,7 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     clearRateLimitCountdown,
     startRateLimitCountdown,
     handleAuthReset,
+    fetchGenerationSnapshot,
     upsertGenerationSnapshot,
     syncGenerationAfterReconnect,
     loadSessions,
