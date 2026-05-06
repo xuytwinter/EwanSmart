@@ -45,7 +45,7 @@ public class LlmProviderRouter {
                                        List<Map<String, String>> history,
                                        Consumer<String> onChunk,
                                        Consumer<Throwable> onError,
-                                       Runnable onComplete) {
+                                       Consumer<StreamCompletion> onComplete) {
 
         ModelProviderConfigService.ActiveProviderView provider = modelProviderConfigService.getActiveProvider(ModelProviderConfigService.SCOPE_LLM);
         Map<String, Object> request = buildRequest(provider.model(), userMessage, context, history);
@@ -75,8 +75,20 @@ public class LlmProviderRouter {
                             },
                             () -> {
                                 settleUsage(usageTracker);
+                                logger.info("LLM 流式响应完成: provider={}, model={}, finishReason={}, promptTokens={}, completionTokens={}, responseChars={}",
+                                        provider.provider(),
+                                        provider.model(),
+                                        usageTracker.finishReason == null ? "unknown" : usageTracker.finishReason,
+                                        usageTracker.promptTokens,
+                                        usageTracker.completionTokens,
+                                        usageTracker.responseContent.length());
                                 if (onComplete != null) {
-                                    onComplete.run();
+                                    onComplete.accept(new StreamCompletion(
+                                            usageTracker.finishReason,
+                                            usageTracker.promptTokens,
+                                            usageTracker.completionTokens,
+                                            usageTracker.responseContent.length()
+                                    ));
                                 }
                             }
                     );
@@ -88,7 +100,8 @@ public class LlmProviderRouter {
     }
 
     private WebClient buildClient(ModelProviderConfigService.ActiveProviderView provider) {
-        WebClient.Builder builder = WebClient.builder().baseUrl(provider.apiBaseUrl());
+        WebClient.Builder builder = WebClient.builder()
+                .baseUrl(ModelProviderConfigService.normalizeOpenAiCompatibleBaseUrl(provider.apiBaseUrl()));
         if (provider.apiKey() != null && !provider.apiKey().isBlank()) {
             builder.defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + provider.apiKey());
         }
@@ -161,6 +174,15 @@ public class LlmProviderRouter {
                     usageTracker.completionTokens = usageNode.path("completion_tokens").asInt(usageTracker.completionTokens);
                 }
 
+                JsonNode choiceNode = node.path("choices").path(0);
+                JsonNode finishReasonNode = choiceNode.path("finish_reason");
+                if (!finishReasonNode.isMissingNode() && !finishReasonNode.isNull()) {
+                    String finishReason = finishReasonNode.asText("");
+                    if (!finishReason.isBlank()) {
+                        usageTracker.finishReason = finishReason;
+                    }
+                }
+
                 String content = node.path("choices")
                         .path(0)
                         .path("delta")
@@ -224,12 +246,21 @@ public class LlmProviderRouter {
         private final StringBuilder responseContent = new StringBuilder();
         private volatile int promptTokens;
         private volatile int completionTokens;
+        private volatile String finishReason;
         private volatile boolean settled;
 
         private StreamUsageTracker(UsageQuotaService.TokenReservationBundle reservation, int estimatedPromptTokens) {
             this.reservation = reservation;
             this.estimatedPromptTokens = estimatedPromptTokens;
         }
+    }
+
+    public record StreamCompletion(
+            String finishReason,
+            int promptTokens,
+            int completionTokens,
+            int responseChars
+    ) {
     }
 
     public static final class StreamHandle {

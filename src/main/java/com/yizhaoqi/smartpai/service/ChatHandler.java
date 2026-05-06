@@ -147,8 +147,8 @@ public class ChatHandler {
                     responseFuture.completeExceptionally(error);
                     cleanupGenerationState(finalGenerationId, error);
                 },
-                () -> finalizeResponse(userId, userMessage, finalConversationId, finalGenerationId,
-                        responseFuture, responseBuilders.get(finalGenerationId)));
+                completion -> finalizeResponse(userId, userMessage, finalConversationId, finalGenerationId,
+                        responseFuture, responseBuilders.get(finalGenerationId), completion));
             activeStreams.put(finalGenerationId, streamHandle);
             if (responseFuture.isDone()) {
                 activeStreams.remove(finalGenerationId, streamHandle);
@@ -212,7 +212,9 @@ public class ChatHandler {
     }
 
     private void finalizeResponse(String userId, String userMessage, String conversationId, String generationId,
-                                  CompletableFuture<String> responseFuture, StringBuilder responseBuilder) {
+                                  CompletableFuture<String> responseFuture,
+                                  StringBuilder responseBuilder,
+                                  LlmProviderRouter.StreamCompletion completion) {
         if (finishCancelledGeneration(generationId, responseFuture, responseBuilder)) {
             return;
         }
@@ -243,6 +245,13 @@ public class ChatHandler {
         if (!responseFuture.complete(completeResponse)) {
             return;
         }
+        logger.info("模型回答收尾: generationId={}, conversationId={}, answerChars={}, finishReason={}, promptTokens={}, completionTokens={}",
+                generationId,
+                conversationId,
+                completeResponse.length(),
+                completion != null && completion.finishReason() != null ? completion.finishReason() : "unknown",
+                completion != null ? completion.promptTokens() : 0,
+                completion != null ? completion.completionTokens() : 0);
         Map<Integer, ReferenceInfo> referenceMappings = generationReferenceMappings.get(generationId);
         updateConversationHistory(conversationId, userMessage, completeResponse, referenceMappings);
         persistConversation(userId, userMessage, completeResponse, conversationId, referenceMappings);
