@@ -179,9 +179,9 @@ public class AgentToolRegistry {
     private AgentTool searchKnowledgeTool() {
         return new AgentTool(
                 "search_knowledge",
-                "在知识库中搜索与用户问题相关的文档片段。仅当用户明确要求查询、引用、核对知识库内容或需要基于已上传文档回答时调用；普通闲聊、常识问题或不需要知识库证据的问题不要调用。",
+                "在知识库中搜索与用户问题相关的文档片段。当用户问题的答案可能依赖已上传资料、企业/项目/产品/系统内部信息、专有名词、事实依据、定义、功能、使用方式、实现细节、背景、流程或引用来源时应调用；即使用户没有明确说“查询知识库”，只要问题不像纯通用常识也应先检索。普通问候、闲聊、纯创作、翻译、通用代码/常识问题，或用户明确要求不要查知识库时不要调用。",
                 objectSchema(Map.of(
-                        "query", stringSchema("用户要在知识库中检索的具体问题或关键词。"),
+                        "query", stringSchema("用于知识库检索的查询语句。应保留用户原话中的核心实体、缩写和限定词，可包含原始问句和必要的等价改写；不要替换成固定关键词。"),
                         "topK", integerSchema("返回的片段数量，默认 5。")
                 ), List.of("query"))
         );
@@ -247,7 +247,9 @@ public class AgentToolRegistry {
             return "未检索到相关知识库片段。";
         }
 
-        StringBuilder output = new StringBuilder("检索到 ").append(results.size()).append(" 个知识库片段：");
+        StringBuilder output = new StringBuilder("检索到 ").append(results.size()).append(" 个知识库片段。")
+                .append("请基于这些片段回答用户问题；不得声称知识库暂无相关信息。")
+                .append("如果片段信息不足，请说明“基于已检索片段只能确认……”并标注来源编号。");
         for (int i = 0; i < results.size(); i++) {
             SearchResult result = results.get(i);
             output.append("\n\n[").append(i + 1).append("] ");

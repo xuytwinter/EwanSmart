@@ -301,8 +301,7 @@ async function handleSourceFileClick(fileInfo: {
           params: {
             sessionId: referenceSessionId,
             referenceNumber: referenceNumber.toString()
-          },
-          baseURL: '/proxy-api'
+          }
         });
 
         if (!detailError && detailData?.fileMd5) {
