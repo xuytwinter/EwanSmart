@@ -200,10 +200,14 @@ onMounted(async () => {
 });
 
 function syncTaskFromServer(target: Api.KnowledgeBase.UploadTask, source: Api.KnowledgeBase.UploadTask) {
+  const isLocalUploading =
+    target.file && (target.status === UploadStatus.Pending || target.status === UploadStatus.Uploading);
+  const status = source.status === UploadStatus.Uploading && !isLocalUploading ? UploadStatus.Break : source.status;
+
   Object.assign(target, {
     fileName: source.fileName,
     totalSize: source.totalSize,
-    status: source.status,
+    status,
     userId: source.userId,
     orgTag: source.orgTag,
     orgTagName: source.orgTagName,
@@ -297,7 +301,10 @@ function renderEstimatedEmbeddingUsage(row: Api.KnowledgeBase.UploadTask) {
 }
 
 function isVectorizationProcessing(row: Api.KnowledgeBase.UploadTask) {
-  return row.vectorizationStatus === 'PENDING' || row.vectorizationStatus === 'PROCESSING';
+  return (
+    row.status === UploadStatus.Completed &&
+    (row.vectorizationStatus === 'PENDING' || row.vectorizationStatus === 'PROCESSING')
+  );
 }
 
 function hasActualVectorizationUsage(row: Api.KnowledgeBase.UploadTask) {
@@ -329,6 +336,10 @@ async function handleRetryVectorization(row: Api.KnowledgeBase.UploadTask) {
 }
 
 function renderActualEmbeddingUsage(row: Api.KnowledgeBase.UploadTask) {
+  if (row.status !== UploadStatus.Completed) {
+    return <span class="text-xs text-stone-400">-</span>;
+  }
+
   if (hasActualVectorizationUsage(row)) {
     const actualTokenLabel = Number(row.actualEmbeddingTokens).toLocaleString();
     const actualChunkLabel = Number(row.actualChunkCount || 0).toLocaleString();
@@ -402,7 +413,7 @@ function renderActualEmbeddingUsage(row: Api.KnowledgeBase.UploadTask) {
   return <span class="text-xs text-stone-400">-</span>;
 }
 
-let vectorizationPollingTimer: ReturnType<typeof window.setTimeout> | null = null;
+let vectorizationPollingTimer: number | null = null;
 
 function clearVectorizationPolling() {
   if (vectorizationPollingTimer) {

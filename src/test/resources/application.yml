@@ -53,6 +53,16 @@ file:
     parent-chunk-size: 1048576
     buffer-size: 8192
     max-memory-threshold: 0.8
+    pdf:
+      engine: liteparse
+    liteparse:
+      command: lit
+      ocr-enabled: false
+      ocr-language: eng
+      max-pages: 1000
+      dpi: 150
+      num-workers: 0
+      timeout-seconds: 300
 
 elasticsearch:
   host: localhost

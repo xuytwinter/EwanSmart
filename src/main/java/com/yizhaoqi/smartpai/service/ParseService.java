@@ -2,8 +2,8 @@ package com.yizhaoqi.smartpai.service;
 
 import com.yizhaoqi.smartpai.model.DocumentVector;
 import com.yizhaoqi.smartpai.repository.DocumentVectorRepository;
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.text.PDFTextStripper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.tika.exception.TikaException;
 import org.apache.tika.metadata.Metadata;
 import org.apache.tika.parser.ParseContext;
@@ -17,13 +17,12 @@ import org.springframework.stereotype.Service;
 import org.xml.sax.SAXException;
 
 import java.io.*;
-import java.text.Normalizer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import com.hankcs.hanlp.seg.common.Term;
@@ -33,15 +32,15 @@ import com.hankcs.hanlp.tokenizer.StandardTokenizer;
 public class ParseService {
 
     private static final Logger logger = LoggerFactory.getLogger(ParseService.class);
-    private static final int PDF_BOUNDARY_SCAN_LINES = 3;
-    private static final int PDF_BOILERPLATE_MIN_LENGTH = 4;
-    private static final int PDF_BOILERPLATE_MAX_LENGTH = 120;
+    private static final String PDF_PARSER_LITEPARSE = "liteparse";
 
     @Autowired
     private DocumentVectorRepository documentVectorRepository;
 
     @Autowired
     private UsageQuotaService usageQuotaService;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${file.parsing.chunk-size}")
     private int chunkSize;
@@ -60,6 +59,36 @@ public class ParseService {
     
     @Value("${file.parsing.max-memory-threshold:0.8}")
     private double maxMemoryThreshold;
+
+    @Value("${file.parsing.pdf.engine:liteparse}")
+    private String pdfParsingEngine;
+
+    @Value("${file.parsing.liteparse.command:lit}")
+    private String liteParseCommand;
+
+    @Value("${file.parsing.liteparse.ocr-enabled:true}")
+    private boolean liteParseOcrEnabled;
+
+    @Value("${file.parsing.liteparse.ocr-language:chi_sim+eng}")
+    private String liteParseOcrLanguage;
+
+    @Value("${file.parsing.liteparse.ocr-server-url:}")
+    private String liteParseOcrServerUrl;
+
+    @Value("${file.parsing.liteparse.tessdata-path:}")
+    private String liteParseTessdataPath;
+
+    @Value("${file.parsing.liteparse.max-pages:1000}")
+    private int liteParseMaxPages;
+
+    @Value("${file.parsing.liteparse.dpi:150}")
+    private int liteParseDpi;
+
+    @Value("${file.parsing.liteparse.num-workers:0}")
+    private int liteParseNumWorkers;
+
+    @Value("${file.parsing.liteparse.timeout-seconds:300}")
+    private long liteParseTimeoutSeconds;
     
     public ParseService() {
         // 无需初始化，StandardTokenizer是静态方法
@@ -87,7 +116,7 @@ public class ParseService {
         try (BufferedInputStream bufferedStream = new BufferedInputStream(fileStream, bufferSize)) {
             if (isPdfDocument(bufferedStream)) {
                 parsePdfAndSave(fileMd5, bufferedStream, userId, orgTag, isPublic);
-                logger.info("PDF 文件页级解析和入库完成，fileMd5: {}", fileMd5);
+                logger.info("PDF 文件 LiteParse 页级解析和入库完成，fileMd5: {}", fileMd5);
                 return;
             }
 
@@ -284,202 +313,184 @@ public class ParseService {
     }
 
     private void parsePdfAndSave(String fileMd5, InputStream fileStream, String userId, String orgTag, boolean isPublic) throws IOException {
-        try (PDDocument document = PDDocument.load(fileStream)) {
-            int savedChunkCount = 0;
+        List<LiteParsePage> pages = parsePdfWithLiteParse(fileStream);
+        int savedChunkCount = 0;
 
-            List<String> cleanedPageTexts = extractCleanPdfPageTexts(document);
-            for (int pageNumber = 1; pageNumber <= cleanedPageTexts.size(); pageNumber++) {
-                String pageText = cleanedPageTexts.get(pageNumber - 1);
-                if (pageText == null || pageText.isBlank()) {
-                    continue;
-                }
-
-                List<String> childChunks = splitTextIntoChunksWithSemantics(pageText, chunkSize);
-                savedChunkCount = saveChildChunks(fileMd5, childChunks, userId, orgTag, isPublic, savedChunkCount, pageNumber);
+        for (LiteParsePage page : pages) {
+            String pageText = page.text();
+            if (pageText == null || pageText.isBlank()) {
+                continue;
             }
+
+            List<String> childChunks = splitTextIntoChunksWithSemantics(pageText, chunkSize);
+            savedChunkCount = saveChildChunks(fileMd5, childChunks, userId, orgTag, isPublic, savedChunkCount, page.pageNumber());
         }
     }
 
     private EmbeddingEstimate estimatePdfEmbeddingUsage(InputStream fileStream) throws IOException {
-        try (PDDocument document = PDDocument.load(fileStream)) {
-            long estimatedTokens = 0L;
-            int estimatedChunkCount = 0;
+        List<LiteParsePage> pages = parsePdfWithLiteParse(fileStream);
+        long estimatedTokens = 0L;
+        int estimatedChunkCount = 0;
 
-            List<String> cleanedPageTexts = extractCleanPdfPageTexts(document);
-            for (String pageText : cleanedPageTexts) {
-                if (pageText == null || pageText.isBlank()) {
-                    continue;
-                }
-
-                List<String> childChunks = splitTextIntoChunksWithSemantics(pageText, chunkSize);
-                estimatedChunkCount += childChunks.size();
-                estimatedTokens += usageQuotaService.estimateEmbeddingTokens(childChunks);
-            }
-
-            return new EmbeddingEstimate(estimatedTokens, estimatedChunkCount);
-        }
-    }
-
-    private List<String> extractCleanPdfPageTexts(PDDocument document) throws IOException {
-        PDFTextStripper stripper = new PDFTextStripper();
-        List<List<String>> rawPageLines = new ArrayList<>();
-
-        for (int pageNumber = 1; pageNumber <= document.getNumberOfPages(); pageNumber++) {
-            stripper.setStartPage(pageNumber);
-            stripper.setEndPage(pageNumber);
-            String pageText = stripper.getText(document);
-            rawPageLines.add(splitPdfLines(pageText));
-        }
-
-        Map<String, Integer> topLineCounts = collectBoundaryLineCounts(rawPageLines, true);
-        Map<String, Integer> bottomLineCounts = collectBoundaryLineCounts(rawPageLines, false);
-        int repeatedThreshold = Math.max(2, Math.min(3, document.getNumberOfPages()));
-
-        List<String> cleanedPages = new ArrayList<>(rawPageLines.size());
-        for (int pageIndex = 0; pageIndex < rawPageLines.size(); pageIndex++) {
-            List<String> cleanedLines = removePdfBoilerplateLines(
-                    rawPageLines.get(pageIndex),
-                    topLineCounts,
-                    bottomLineCounts,
-                    repeatedThreshold
-            );
-            String cleanedText = String.join("\n", cleanedLines).trim();
-            cleanedPages.add(cleanedText);
-        }
-
-        return cleanedPages;
-    }
-
-    private List<String> splitPdfLines(String pageText) {
-        if (pageText == null || pageText.isBlank()) {
-            return new ArrayList<>();
-        }
-
-        String[] lines = pageText.split("\\R");
-        List<String> result = new ArrayList<>(lines.length);
-        for (String line : lines) {
-            result.add(line == null ? "" : line.strip());
-        }
-        return result;
-    }
-
-    private Map<String, Integer> collectBoundaryLineCounts(List<List<String>> pageLines, boolean topBoundary) {
-        Map<String, Integer> counts = new HashMap<>();
-
-        for (List<String> lines : pageLines) {
-            List<String> boundaryLines = topBoundary
-                    ? firstMeaningfulLines(lines, PDF_BOUNDARY_SCAN_LINES)
-                    : lastMeaningfulLines(lines, PDF_BOUNDARY_SCAN_LINES);
-
-            for (String line : boundaryLines) {
-                String key = normalizePdfBoundaryLine(line);
-                if (key == null) {
-                    continue;
-                }
-                counts.merge(key, 1, Integer::sum);
-            }
-        }
-
-        return counts;
-    }
-
-    private List<String> firstMeaningfulLines(List<String> lines, int maxCount) {
-        List<String> result = new ArrayList<>(maxCount);
-        for (String line : lines) {
-            if (line == null || line.isBlank()) {
-                continue;
-            }
-            result.add(line);
-            if (result.size() >= maxCount) {
-                break;
-            }
-        }
-        return result;
-    }
-
-    private List<String> lastMeaningfulLines(List<String> lines, int maxCount) {
-        List<String> result = new ArrayList<>(maxCount);
-        for (int index = lines.size() - 1; index >= 0; index--) {
-            String line = lines.get(index);
-            if (line == null || line.isBlank()) {
-                continue;
-            }
-            result.add(0, line);
-            if (result.size() >= maxCount) {
-                break;
-            }
-        }
-        return result;
-    }
-
-    private List<String> removePdfBoilerplateLines(
-            List<String> lines,
-            Map<String, Integer> topLineCounts,
-            Map<String, Integer> bottomLineCounts,
-            int repeatedThreshold) {
-
-        int start = 0;
-        int remainingTopChecks = PDF_BOUNDARY_SCAN_LINES;
-        while (start < lines.size() && remainingTopChecks > 0) {
-            String line = lines.get(start);
-            if (line == null || line.isBlank()) {
-                start++;
+        for (LiteParsePage page : pages) {
+            String pageText = page.text();
+            if (pageText == null || pageText.isBlank()) {
                 continue;
             }
 
-            String key = normalizePdfBoundaryLine(line);
-            if (key == null || topLineCounts.getOrDefault(key, 0) < repeatedThreshold) {
-                break;
-            }
-
-            logger.debug("过滤 PDF 页眉文本: {}", line);
-            start++;
-            remainingTopChecks--;
+            List<String> childChunks = splitTextIntoChunksWithSemantics(pageText, chunkSize);
+            estimatedChunkCount += childChunks.size();
+            estimatedTokens += usageQuotaService.estimateEmbeddingTokens(childChunks);
         }
 
-        int end = lines.size() - 1;
-        int remainingBottomChecks = PDF_BOUNDARY_SCAN_LINES;
-        while (end >= start && remainingBottomChecks > 0) {
-            String line = lines.get(end);
-            if (line == null || line.isBlank()) {
-                end--;
-                continue;
-            }
-
-            String key = normalizePdfBoundaryLine(line);
-            if (key == null || bottomLineCounts.getOrDefault(key, 0) < repeatedThreshold) {
-                break;
-            }
-
-            logger.debug("过滤 PDF 页脚文本: {}", line);
-            end--;
-            remainingBottomChecks--;
-        }
-
-        List<String> cleanedLines = new ArrayList<>();
-        for (int index = start; index <= end; index++) {
-            cleanedLines.add(lines.get(index));
-        }
-        return cleanedLines;
+        return new EmbeddingEstimate(estimatedTokens, estimatedChunkCount);
     }
 
-    private String normalizePdfBoundaryLine(String line) {
-        if (line == null) {
-            return null;
+    private List<LiteParsePage> parsePdfWithLiteParse(InputStream fileStream) throws IOException {
+        if (!PDF_PARSER_LITEPARSE.equalsIgnoreCase(pdfParsingEngine)) {
+            throw new IOException("不支持的 PDF 解析引擎: " + pdfParsingEngine);
         }
 
-        String normalized = Normalizer.normalize(line, Normalizer.Form.NFKC)
+        Path inputPath = Files.createTempFile("paismart-liteparse-", ".pdf");
+        Path outputPath = Files.createTempFile("paismart-liteparse-", ".json");
+        Path stdoutPath = Files.createTempFile("paismart-liteparse-", ".out");
+        Path stderrPath = Files.createTempFile("paismart-liteparse-", ".err");
+
+        try {
+            Files.copy(fileStream, inputPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+            List<String> command = buildLiteParseCommand(inputPath, outputPath);
+            logger.info("调用 LiteParse 解析 PDF: command={}", maskLiteParseCommand(command));
+
+            Process process;
+            try {
+                ProcessBuilder processBuilder = new ProcessBuilder(command)
+                        .redirectOutput(stdoutPath.toFile())
+                        .redirectError(stderrPath.toFile());
+                applyLiteParseEnvironment(processBuilder);
+                process = processBuilder.start();
+            } catch (IOException e) {
+                throw new IOException("启动 LiteParse 失败，请确认已安装 lit 命令或配置 file.parsing.liteparse.command: " + liteParseCommand, e);
+            }
+
+            boolean finished;
+            try {
+                finished = process.waitFor(liteParseTimeoutSeconds, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("等待 LiteParse 解析被中断", e);
+            }
+
+            if (!finished) {
+                process.destroyForcibly();
+                throw new IOException("LiteParse 解析超时: " + liteParseTimeoutSeconds + " 秒");
+            }
+
+            int exitCode = process.exitValue();
+            if (exitCode != 0) {
+                String stderr = readProcessLog(stderrPath);
+                String stdout = readProcessLog(stdoutPath);
+                throw new IOException("LiteParse 解析失败，exitCode=" + exitCode
+                        + ", stderr=" + stderr + ", stdout=" + stdout);
+            }
+
+            return readLiteParsePages(outputPath);
+        } finally {
+            deleteQuietly(inputPath);
+            deleteQuietly(outputPath);
+            deleteQuietly(stdoutPath);
+            deleteQuietly(stderrPath);
+        }
+    }
+
+    private List<String> buildLiteParseCommand(Path inputPath, Path outputPath) {
+        List<String> command = new ArrayList<>();
+        command.add(liteParseCommand);
+        command.add("parse");
+        command.add(inputPath.toString());
+        command.add("--format");
+        command.add("json");
+        command.add("--output");
+        command.add(outputPath.toString());
+        command.add("--max-pages");
+        command.add(String.valueOf(liteParseMaxPages));
+        command.add("--dpi");
+        command.add(String.valueOf(liteParseDpi));
+
+        if (!liteParseOcrEnabled) {
+            command.add("--no-ocr");
+        } else {
+            command.add("--ocr-language");
+            command.add(liteParseOcrLanguage);
+            if (hasText(liteParseOcrServerUrl)) {
+                command.add("--ocr-server-url");
+                command.add(liteParseOcrServerUrl.trim());
+            }
+        }
+
+        if (liteParseNumWorkers > 0) {
+            command.add("--num-workers");
+            command.add(String.valueOf(liteParseNumWorkers));
+        }
+
+        command.add("--quiet");
+        return command;
+    }
+
+    private void applyLiteParseEnvironment(ProcessBuilder processBuilder) {
+        if (hasText(liteParseTessdataPath)) {
+            processBuilder.environment().put("TESSDATA_PREFIX", liteParseTessdataPath.trim());
+        }
+    }
+
+    private List<LiteParsePage> readLiteParsePages(Path outputPath) throws IOException {
+        JsonNode root = objectMapper.readTree(outputPath.toFile());
+        JsonNode pagesNode = root.path("pages");
+        if (!pagesNode.isArray()) {
+            throw new IOException("LiteParse 输出缺少 pages 数组");
+        }
+
+        List<LiteParsePage> pages = new ArrayList<>();
+        for (JsonNode pageNode : pagesNode) {
+            int pageNumber = pageNode.path("page").asInt(0);
+            if (pageNumber <= 0) {
+                pageNumber = pages.size() + 1;
+            }
+
+            String pageText = pageNode.path("text").asText("");
+            pages.add(new LiteParsePage(pageNumber, normalizeLiteParseText(pageText)));
+        }
+
+        return pages;
+    }
+
+    private String normalizeLiteParseText(String text) {
+        return text == null ? "" : text
                 .replace('\u00A0', ' ')
-                .replaceAll("\\s+", " ")
-                .replaceAll("\\d+", "#")
-                .trim()
-                .toLowerCase(Locale.ROOT);
+                .replaceAll("[ \\t\\x0B\\f\\r]+", " ")
+                .replaceAll("\\n{3,}", "\n\n")
+                .trim();
+    }
 
-        if (normalized.length() < PDF_BOILERPLATE_MIN_LENGTH || normalized.length() > PDF_BOILERPLATE_MAX_LENGTH) {
-            return null;
+    private String readProcessLog(Path path) {
+        try {
+            String content = Files.readString(path, StandardCharsets.UTF_8).trim();
+            int maxLength = 2000;
+            if (content.length() <= maxLength) {
+                return content;
+            }
+            return content.substring(0, maxLength) + "...";
+        } catch (IOException e) {
+            return "";
         }
+    }
 
-        return normalized;
+    private void deleteQuietly(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException e) {
+            logger.debug("删除临时文件失败: {}", path, e);
+        }
     }
 
     private boolean isPdfDocument(BufferedInputStream stream) throws IOException {
@@ -487,6 +498,23 @@ public class ParseService {
         byte[] header = stream.readNBytes(5);
         stream.reset();
         return header.length == 5 && "%PDF-".equals(new String(header, StandardCharsets.US_ASCII));
+    }
+
+    private List<String> maskLiteParseCommand(List<String> command) {
+        List<String> masked = new ArrayList<>(command.size());
+        for (int i = 0; i < command.size(); i++) {
+            String arg = command.get(i);
+            if (i > 0 && "--password".equals(command.get(i - 1))) {
+                masked.add("******");
+            } else {
+                masked.add(arg);
+            }
+        }
+        return masked;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 
     private String buildAnchorText(String chunk) {
@@ -731,6 +759,9 @@ public class ParseService {
         }
 
         return normalized.substring(Math.max(0, normalized.length() - maxLength));
+    }
+
+    private record LiteParsePage(int pageNumber, String text) {
     }
 
     /**

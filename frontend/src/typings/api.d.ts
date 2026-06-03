@@ -349,6 +349,7 @@ declare namespace Api {
     }
 
     interface UploadTask {
+      id?: number;
       file: File;
       chunk: Blob | null;
       fileMd5: string;

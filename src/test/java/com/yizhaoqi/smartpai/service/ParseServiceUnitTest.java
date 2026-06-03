@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.lang.reflect.Method;
+import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -187,6 +188,39 @@ class ParseServiceUnitTest {
     void testSplitTextIntoChunksWithSemantics_EmptyTextReturnsNoChunks() throws Exception {
         assertTrue(splitTextIntoChunksWithSemantics("", 16).isEmpty());
         assertTrue(splitTextIntoChunksWithSemantics("   \n\n  ", 16).isEmpty());
+    }
+
+    @Test
+    void testBuildLiteParseCommand_UsesJsonOutputAndOcrOptions() throws Exception {
+        ReflectionTestUtils.setField(parseService, "liteParseCommand", "lit");
+        ReflectionTestUtils.setField(parseService, "liteParseOcrEnabled", true);
+        ReflectionTestUtils.setField(parseService, "liteParseOcrLanguage", "chi_sim+eng");
+        ReflectionTestUtils.setField(parseService, "liteParseOcrServerUrl", "http://localhost:8080/ocr");
+        ReflectionTestUtils.setField(parseService, "liteParseTessdataPath", "");
+        ReflectionTestUtils.setField(parseService, "liteParseMaxPages", 200);
+        ReflectionTestUtils.setField(parseService, "liteParseDpi", 180);
+        ReflectionTestUtils.setField(parseService, "liteParseNumWorkers", 2);
+
+        Method method = ParseService.class.getDeclaredMethod("buildLiteParseCommand", Path.class, Path.class);
+        method.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        List<String> command = (List<String>) method.invoke(parseService, Path.of("/tmp/input.pdf"), Path.of("/tmp/output.json"));
+
+        assertEquals("lit", command.get(0));
+        assertTrue(command.contains("parse"));
+        assertTrue(command.contains("--format"));
+        assertTrue(command.contains("json"));
+        assertTrue(command.contains("--output"));
+        assertTrue(command.contains("/tmp/output.json"));
+        assertTrue(command.contains("--ocr-language"));
+        assertTrue(command.contains("chi_sim+eng"));
+        assertTrue(command.contains("--ocr-server-url"));
+        assertTrue(command.contains("http://localhost:8080/ocr"));
+        assertTrue(command.contains("--num-workers"));
+        assertTrue(command.contains("2"));
+        assertFalse(command.contains("--no-ocr"));
+        assertFalse(command.contains("--tessdata-path"));
     }
 
     @SuppressWarnings("unchecked")

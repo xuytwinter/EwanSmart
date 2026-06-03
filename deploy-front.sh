@@ -7,22 +7,35 @@ ROOT_DIR="$SCRIPT_DIR"
 FRONTEND_DIR="${FRONTEND_DIR:-$ROOT_DIR/frontend}"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 
-if [ -f "$ENV_FILE" ]; then
-  # Load deployment settings from the local deploy env file.
-  set -a
-  # shellcheck disable=SC1090
-  . "$ENV_FILE"
-  set +a
-fi
+read_env_value() {
+  local key="$1"
+  local default_value="${2:-}"
 
-SERVER_HOST="${DEPLOY_SERVER_HOST:-${SERVER_HOST:-}}"
-SERVER_USER="${DEPLOY_SERVER_USER:-${SERVER_USER:-root}}"
-SERVER_KEY="${DEPLOY_SERVER_KEY:-${SERVER_KEY:-}}"
-TARGET_DIR="${DEPLOY_TARGET_DIR:-${TARGET_DIR:-/home/www/PaiSmart-Front}}"
-BUILD_CMD="${DEPLOY_BUILD_CMD:-${BUILD_CMD:-pnpm build}}"
-SKIP_BUILD="${DEPLOY_SKIP_BUILD:-${SKIP_BUILD:-0}}"
-HEALTHCHECK_URL="${DEPLOY_HEALTHCHECK_URL:-${HEALTHCHECK_URL:-https://smart.paicoding.com}}"
-HEALTHCHECK_TIMEOUT="${DEPLOY_HEALTHCHECK_TIMEOUT:-${HEALTHCHECK_TIMEOUT:-15}}"
+  if [ -n "${!key:-}" ]; then
+    printf '%s' "${!key}"
+    return
+  fi
+
+  if [ -f "$ENV_FILE" ]; then
+    local value
+    value="$(awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$ENV_FILE")"
+    if [ -n "$value" ]; then
+      printf '%s' "$value"
+      return
+    fi
+  fi
+
+  printf '%s' "$default_value"
+}
+
+SERVER_HOST="${DEPLOY_SERVER_HOST:-${SERVER_HOST:-$(read_env_value DEPLOY_SERVER_HOST)}}"
+SERVER_USER="${DEPLOY_SERVER_USER:-${SERVER_USER:-$(read_env_value DEPLOY_SERVER_USER root)}}"
+SERVER_KEY="${DEPLOY_SERVER_KEY:-${SERVER_KEY:-$(read_env_value DEPLOY_SERVER_KEY)}}"
+TARGET_DIR="${DEPLOY_TARGET_DIR:-${TARGET_DIR:-$(read_env_value DEPLOY_TARGET_DIR /home/www/PaiSmart-Front)}}"
+BUILD_CMD="${DEPLOY_BUILD_CMD:-${BUILD_CMD:-$(read_env_value DEPLOY_BUILD_CMD 'pnpm build')}}"
+SKIP_BUILD="${DEPLOY_SKIP_BUILD:-${SKIP_BUILD:-$(read_env_value DEPLOY_SKIP_BUILD 0)}}"
+HEALTHCHECK_URL="${DEPLOY_HEALTHCHECK_URL:-${HEALTHCHECK_URL:-$(read_env_value DEPLOY_HEALTHCHECK_URL https://smart.paicoding.com)}}"
+HEALTHCHECK_TIMEOUT="${DEPLOY_HEALTHCHECK_TIMEOUT:-${HEALTHCHECK_TIMEOUT:-$(read_env_value DEPLOY_HEALTHCHECK_TIMEOUT 15)}}"
 
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 ARTIFACT_NAME="dist-${TIMESTAMP}.zip"

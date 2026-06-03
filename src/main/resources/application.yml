@@ -137,6 +137,19 @@ file:
     min-chunk-size: 100
     buffer-size: 8192
     max-memory-threshold: 0.8
+    pdf:
+      # PDF 解析默认使用 LiteParse，保留页码信息后进入原有切块/向量化链路
+      engine: ${FILE_PARSING_PDF_ENGINE:liteparse}
+    liteparse:
+      command: ${FILE_PARSING_LITEPARSE_COMMAND:lit}
+      ocr-enabled: ${FILE_PARSING_LITEPARSE_OCR_ENABLED:true}
+      ocr-language: ${FILE_PARSING_LITEPARSE_OCR_LANGUAGE:chi_sim+eng}
+      ocr-server-url: ${FILE_PARSING_LITEPARSE_OCR_SERVER_URL:}
+      tessdata-path: ${FILE_PARSING_LITEPARSE_TESSDATA_PATH:}
+      max-pages: ${FILE_PARSING_LITEPARSE_MAX_PAGES:1000}
+      dpi: ${FILE_PARSING_LITEPARSE_DPI:150}
+      num-workers: ${FILE_PARSING_LITEPARSE_NUM_WORKERS:0}
+      timeout-seconds: ${FILE_PARSING_LITEPARSE_TIMEOUT_SECONDS:300}
 
 knowledge:
   bootstrap:

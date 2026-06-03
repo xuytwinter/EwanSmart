@@ -34,9 +34,15 @@ public interface FileUploadRepository extends JpaRepository<FileUpload, Long> {
 
     long countByFileMd5AndUserId(String fileMd5, String userId);
     
-    void deleteByFileMd5(String fileMd5);
-    
-    void deleteByFileMd5AndUserId(String fileMd5, String userId);
+    @Transactional
+    @Modifying
+    @Query("delete from FileUpload f where f.fileMd5 = :fileMd5")
+    int deleteByFileMd5(@Param("fileMd5") String fileMd5);
+
+    @Transactional
+    @Modifying
+    @Query("delete from FileUpload f where f.fileMd5 = :fileMd5 and f.userId = :userId")
+    int deleteByFileMd5AndUserId(@Param("fileMd5") String fileMd5, @Param("userId") String userId);
     
     /**
      * 查询用户自己的文件和公开文件

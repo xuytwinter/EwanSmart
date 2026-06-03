@@ -5,6 +5,7 @@ import com.yizhaoqi.smartpai.model.FileProcessingTask;
 import com.yizhaoqi.smartpai.model.FileUpload;
 import com.yizhaoqi.smartpai.model.User;
 import com.yizhaoqi.smartpai.repository.DocumentVectorRepository;
+import com.yizhaoqi.smartpai.repository.ChunkInfoRepository;
 import com.yizhaoqi.smartpai.repository.FileUploadRepository;
 import com.yizhaoqi.smartpai.repository.UserRepository;
 import io.minio.GetObjectArgs;
@@ -27,8 +28,10 @@ import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -59,6 +62,9 @@ public class DocumentService {
 
     @Autowired
     private DocumentVectorRepository documentVectorRepository;
+
+    @Autowired
+    private ChunkInfoRepository chunkInfoRepository;
 
     @Autowired
     private MinioClient minioClient;
@@ -154,6 +160,15 @@ public class DocumentService {
                 logger.info("成功删除文档向量记录: {}", fileMd5);
             } catch (Exception e) {
                 logger.error("删除文档向量记录时出错: {}", fileMd5, e);
+                // 继续删除其他数据
+            }
+
+            // 删除分片元数据，避免同 MD5 文件再次上传时误判分片已经存在
+            try {
+                int deletedChunkRows = chunkInfoRepository.deleteByFileMd5(fileMd5);
+                logger.info("成功删除文档分片元数据: fileMd5={}, deletedRows={}", fileMd5, deletedChunkRows);
+            } catch (Exception e) {
+                logger.error("删除文档分片元数据时出错: {}", fileMd5, e);
                 // 继续删除其他数据
             }
             
@@ -371,6 +386,7 @@ public class DocumentService {
                 logger.debug("使用有效组织标签查询文件");
             }
 
+            files = deduplicateFileUploads(files);
             logger.info("成功获取用户可访问文件列表: userId={}, fileCount={}", userId, files.size());
             return files;
         } catch (Exception e) {
@@ -391,6 +407,7 @@ public class DocumentService {
         try {
             backfillLegacyVectorizationStatuses();
             List<FileUpload> files = fileUploadRepository.findByUserId(userId);
+            files = deduplicateFileUploads(files);
             logger.info("成功获取用户上传的文件列表: userId={}, fileCount={}", userId, files.size());
             return files;
         } catch (Exception e) {
@@ -410,6 +427,81 @@ public class DocumentService {
         }
     }
 
+    private List<FileUpload> deduplicateFileUploads(List<FileUpload> files) {
+        if (files == null || files.size() < 2) {
+            return files;
+        }
+
+        Map<String, FileUpload> deduplicated = new LinkedHashMap<>();
+        int duplicateCount = 0;
+        for (FileUpload file : files) {
+            if (file == null) {
+                continue;
+            }
+
+            String key = file.getFileMd5() + ":" + file.getUserId();
+            FileUpload existing = deduplicated.get(key);
+            if (existing == null) {
+                deduplicated.put(key, file);
+                continue;
+            }
+
+            duplicateCount++;
+            deduplicated.put(key, choosePreferredFileUpload(existing, file));
+        }
+
+        if (duplicateCount > 0) {
+            logger.warn("检测到重复文件记录，列表返回前已合并: duplicateCount={}, uniqueCount={}",
+                    duplicateCount, deduplicated.size());
+        }
+
+        return new ArrayList<>(deduplicated.values());
+    }
+
+    private FileUpload choosePreferredFileUpload(FileUpload current, FileUpload candidate) {
+        if (current == null) {
+            return candidate;
+        }
+        if (candidate == null) {
+            return current;
+        }
+
+        boolean currentCompleted = current.getStatus() == FileUpload.STATUS_COMPLETED;
+        boolean candidateCompleted = candidate.getStatus() == FileUpload.STATUS_COMPLETED;
+        if (currentCompleted != candidateCompleted) {
+            return candidateCompleted ? candidate : current;
+        }
+
+        int mergedAtCompare = compareNullableDateTime(candidate.getMergedAt(), current.getMergedAt());
+        if (mergedAtCompare > 0) {
+            return candidate;
+        }
+
+        int createdAtCompare = compareNullableDateTime(candidate.getCreatedAt(), current.getCreatedAt());
+        if (createdAtCompare > 0) {
+            return candidate;
+        }
+
+        if (candidate.getId() != null && current.getId() != null && candidate.getId() > current.getId()) {
+            return candidate;
+        }
+
+        return current;
+    }
+
+    private int compareNullableDateTime(java.time.LocalDateTime left, java.time.LocalDateTime right) {
+        if (left == null && right == null) {
+            return 0;
+        }
+        if (left == null) {
+            return -1;
+        }
+        if (right == null) {
+            return 1;
+        }
+        return left.compareTo(right);
+    }
+
     private void backfillLegacyVectorizationStatuses() {
         backfillLegacyVectorizationStatuses(fileUploadRepository.findAllByVectorizationStatusIsNull());
     }
@@ -426,15 +518,11 @@ public class DocumentService {
             }
 
             boolean changed = false;
-            if (file.getStatus() == FileUpload.STATUS_UPLOADING) {
-                file.setVectorizationStatus(FileUpload.VECTORIZATION_STATUS_PENDING);
-                file.setVectorizationErrorMessage(null);
-                changed = true;
-            } else if (file.getStatus() == FileUpload.STATUS_MERGING) {
-                file.setVectorizationStatus(FileUpload.VECTORIZATION_STATUS_PROCESSING);
-                file.setVectorizationErrorMessage(null);
-                changed = true;
-            } else if (file.getActualEmbeddingTokens() != null || file.getActualChunkCount() != null) {
+            if (file.getStatus() != FileUpload.STATUS_COMPLETED) {
+                continue;
+            }
+
+            if (file.getActualEmbeddingTokens() != null || file.getActualChunkCount() != null) {
                 file.setVectorizationStatus(FileUpload.VECTORIZATION_STATUS_COMPLETED);
                 file.setVectorizationErrorMessage(null);
                 changed = true;

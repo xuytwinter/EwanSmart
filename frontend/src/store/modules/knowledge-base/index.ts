@@ -157,7 +157,7 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
       progress: 0,
       status: UploadStatus.Pending,
       orgTag: form.orgTag,
-      vectorizationStatus: 'PENDING',
+      vectorizationStatus: null,
       vectorizationErrorMessage: null
     };
 

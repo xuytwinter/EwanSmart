@@ -13,7 +13,10 @@ import java.time.LocalDateTime;
  */
 @Data
 @Entity
-@Table(name = "file_upload")
+@Table(
+        name = "file_upload",
+        uniqueConstraints = @UniqueConstraint(name = "uk_file_upload_md5_user", columnNames = {"file_md5", "user_id"})
+)
 public class FileUpload {
     public static final int STATUS_UPLOADING = 0;
     public static final int STATUS_COMPLETED = 1;

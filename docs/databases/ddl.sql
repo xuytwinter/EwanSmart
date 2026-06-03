@@ -39,7 +39,7 @@ CREATE TABLE file_upload (
                              created_at   TIMESTAMP        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                              merged_at    TIMESTAMP        NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '合并时间',
                              PRIMARY KEY (id),
-                             UNIQUE KEY uk_md5_user (file_md5, user_id),
+                             UNIQUE KEY uk_file_upload_md5_user (file_md5, user_id),
                              INDEX idx_user (user_id),
                              INDEX idx_org_tag (org_tag)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文件上传记录';
