@@ -1,27 +1,27 @@
 {
-  "name": "pi-smart",
+  "name": "ewansmart",
   "type": "module",
   "version": "1.3.13",
-  "description": "PaiSmart",
+  "description": "EwanSmart - full-stack RAG knowledge platform",
   "author": {
-    "name": "PaiSmart",
-    "url": "https://github.com/itwanger/PaiSmart.git"
+    "name": "EwanSmart",
+    "url": "https://github.com/xuytwinter/EwanSmart.git"
   },
   "license": "MIT",
-  "homepage": "https://github.com/itwanger/PaiSmart.git",
+  "homepage": "https://github.com/xuytwinter/EwanSmart",
   "repository": {
-    "url": "https://github.com/itwanger/PaiSmart.git"
+    "url": "https://github.com/xuytwinter/EwanSmart.git"
   },
   "bugs": {
-    "url": "https://github.com/itwanger/PaiSmart/issues"
+    "url": "https://github.com/xuytwinter/EwanSmart/issues"
   },
   "keywords": [
     "ai",
     "rag",
     "llm",
     "chat",
-    "itwanger",
-    "pai-smart"
+    "xuytwinter",
+    "ewansmart"
   ],
   "engines": {
     "node": ">=18.20.0",
@@ -53,6 +53,7 @@
     "@sa/utils": "workspace:*",
     "@traptitech/markdown-it-katex": "^3.6.0",
     "@vueuse/core": "13.1.0",
+    "axios": "1.9.0",
     "clipboard": "2.0.11",
     "dayjs": "1.11.13",
     "defu": "6.1.4",
@@ -63,6 +64,7 @@
     "markdown-it": "^14.1.0",
     "markdown-it-link-attributes": "^4.0.1",
     "naive-ui": "2.41.0",
+    "nanoid": "5.1.5",
     "nprogress": "0.2.0",
     "pdfjs-dist": "^5.5.207",
     "pinia": "3.0.2",
@@ -79,6 +81,8 @@
   "devDependencies": {
     "@elegant-router/vue": "0.3.8",
     "@iconify/json": "2.2.337",
+    "@iconify/utils": "^3.1.7",
+    "@playwright/test": "^1.63.0",
     "@sa/scripts": "workspace:*",
     "@sa/uno-preset": "workspace:*",
     "@soybeanjs/eslint-config": "1.6.0",
@@ -88,9 +92,11 @@
     "@types/nprogress": "0.2.3",
     "@types/spark-md5": "^3.0.5",
     "@types/ws": "^8.18.1",
+    "@unocss/core": "66.1.1",
     "@unocss/eslint-config": "66.1.1",
     "@unocss/preset-icons": "66.1.1",
     "@unocss/preset-uno": "66.1.1",
+    "@unocss/preset-wind3": "66.1.1",
     "@unocss/transformer-directives": "66.1.1",
     "@unocss/transformer-variant-group": "66.1.1",
     "@unocss/vite": "66.1.1",
@@ -119,5 +125,5 @@
     "commit-msg": "pnpm sa git-commit-verify",
     "pre-commit": "cd frontend && pnpm typecheck && pnpm lint && git diff --exit-code"
   },
-  "website": "https://github.com/itwanger/PaiSmart.git"
+  "website": "https://github.com/xuytwinter/EwanSmart"
 }

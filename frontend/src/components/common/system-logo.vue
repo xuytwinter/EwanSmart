@@ -1,9 +1,18 @@
 <script lang="ts" setup>
+import logoUrl from '@/assets/imgs/ewansmart-logo.png';
+
 defineOptions({ name: 'SystemLogo' });
 </script>
 
 <template>
-  <icon-local-logo />
+  <img :src="logoUrl" class="system-logo" alt="" aria-hidden="true" />
 </template>
 
-<style scoped></style>
+<style scoped>
+.system-logo {
+  display: block;
+  width: 1em;
+  height: 1em;
+  object-fit: contain;
+}
+</style>

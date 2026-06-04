@@ -211,7 +211,11 @@ const fallbackRetrievalLabel = computed(() => {
 });
 const resolvedHighlightAnchor = computed(() => props.anchorText || '');
 const resolvedHighlightSearchText = computed(() => {
-  return [props.matchedChunkText, props.searchText, props.anchorText]
+  if (resolvedHighlightAnchor.value) {
+    return '';
+  }
+
+  return [props.searchText, props.matchedChunkText]
     .map(text => text?.trim())
     .filter((text, index, values): text is string => Boolean(text) && values.indexOf(text) === index)
     .join('\n');

@@ -215,7 +215,7 @@ class ParseServiceUnitTest {
         assertTrue(command.contains("--format"));
         assertTrue(command.contains("json"));
         assertTrue(command.contains("--output"));
-        assertTrue(command.contains("/tmp/output.json"));
+        assertTrue(command.contains(Path.of("/tmp/output.json").toString()));
         assertTrue(command.contains("--ocr-language"));
         assertTrue(command.contains("chi_sim+eng"));
         assertFalse(command.contains("--ocr-server-url"));
@@ -253,11 +253,11 @@ class ParseServiceUnitTest {
         String text = """
                 哥们 明年
 
-                  我 靠 派聪明 拿 到 的 日 常实习
+                  我 靠 项目助手 拿 到 的 日 常实习
 
                   学 习 这人 么 快噢直接 用
 
-                  我 把 派 聪明放 第 一 个了，  感 觉 面试 官 都 围绕这
+                  我 把 项 目助手放 第 一 个了，  感 觉 面试 官 都 围绕这
                   问
                   个
 
@@ -267,9 +267,9 @@ class ParseServiceUnitTest {
         String normalized = normalizeLiteParseText(text);
 
         assertTrue(normalized.contains("哥们明年"));
-        assertTrue(normalized.contains("我靠派聪明拿到的日常实习"));
+        assertTrue(normalized.contains("我靠项目助手拿到的日常实习"));
         assertTrue(normalized.contains("学习这人么快噢直接用"));
-        assertTrue(normalized.contains("我把派聪明放第一个了，感觉面试官都围绕这"));
+        assertTrue(normalized.contains("我把项目助手放第一个了，感觉面试官都围绕这"));
         assertFalse(normalized.contains("No. 2 / 37"));
     }
 
@@ -280,7 +280,7 @@ class ParseServiceUnitTest {
 
                 ⼤家好，我是⼆哥呀。
 
-                派聪明是 2025年 9 ⽉份上线的，截⽌到⽬前，已经取得了⾮常瞩⽬的成绩，我这⾥晒⼀下哈。
+                项目助手是 2025年 9 ⽉份上线的，截⽌到⽬前，已经取得了⾮常瞩⽬的成绩，我这⾥晒⼀下哈。
 
 
                 二哥，目前靠着星球面渣逆袭+rag项目+球友分
@@ -310,7 +310,7 @@ class ParseServiceUnitTest {
 
         String normalized = normalizeLiteParseText(text);
 
-        assertTrue(normalized.contains("派聪明是2025年9⽉份上线的"));
+        assertTrue(normalized.contains("项目助手是2025年9⽉份上线的"));
         assertTrue(normalized.contains("二哥，目前靠着星球面渣逆袭+rag项目+球友分"));
         assertTrue(normalized.contains("享优质面经侥幸oc了深圳招银网络和合肥科大讯飞"));
         assertTrue(normalized.contains("那必须有"));
@@ -323,11 +323,11 @@ class ParseServiceUnitTest {
         String text = """
                 哥们 明年
 
-                  我 靠 派聪明 拿 到 的 日 常实习
+                  我 靠 项目助手 拿 到 的 日 常实习
 
                   学 习 这人 么 快噢直接 用
 
-                  我 把 派 聪明放 第 一 个了，  感 觉 面试 官 都 围绕这
+                  我 把 项 目助手放 第 一 个了，  感 觉 面试 官 都 围绕这
                   问
                   个
 

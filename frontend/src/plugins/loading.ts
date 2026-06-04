@@ -3,7 +3,7 @@ import { getRgb } from '@sa/color';
 import { DARK_CLASS } from '@/constants/app';
 import { localStg } from '@/utils/storage';
 import { toggleHtmlClass } from '@/utils/common';
-import systemLogo from '@/assets/svg-icon/logo.svg?raw';
+import systemLogoUrl from '@/assets/imgs/ewansmart-logo.png';
 import { $t } from '@/locales';
 
 export function setupLoading() {
@@ -24,7 +24,7 @@ export function setupLoading() {
     'right-0 bottom-0 animate-delay-1500'
   ];
 
-  const logoWithClass = systemLogo.replace('<svg', `<svg class="size-128px text-primary"`);
+  const logo = `<img src="${systemLogoUrl}" class="size-128px object-contain" alt="" />`;
 
   const dot = loadingClasses
     .map(item => {
@@ -34,7 +34,7 @@ export function setupLoading() {
 
   const loading = `
 <div class="fixed-center flex-col bg-layout" style="${primaryColor}">
-  ${logoWithClass}
+  ${logo}
   <div class="w-56px h-56px my-36px">
     <div class="relative h-full animate-spin">
       ${dot}

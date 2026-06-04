@@ -317,7 +317,7 @@ async function handleSourceFileClick(fileInfo: {
         fileName: persistedDetail.fileName || fileName,
         fileMd5: persistedDetail.fileMd5,
         pageNumber: persistedDetail.pageNumber,
-        anchorText: persistedDetail.anchorText || clickedAnchorText || '',
+        anchorText: clickedAnchorText || persistedDetail.anchorText || '',
         retrievalMode: persistedDetail.retrievalMode,
         retrievalLabel: persistedDetail.retrievalLabel,
         retrievalQuery: persistedDetail.retrievalQuery || fallbackRetrievalQuery,
@@ -336,7 +336,7 @@ async function handleSourceFileClick(fileInfo: {
       fileName: detail?.fileName || fileName,
       fileMd5: targetMd5,
       pageNumber: detail?.pageNumber,
-      anchorText: detail?.anchorText || clickedAnchorText || '',
+      anchorText: clickedAnchorText || detail?.anchorText || '',
       retrievalMode: detail?.retrievalMode,
       retrievalLabel: detail?.retrievalLabel,
       retrievalQuery: detail?.retrievalQuery || fallbackRetrievalQuery,
@@ -370,7 +370,7 @@ async function handleSourceFileClick(fileInfo: {
         <SystemLogo class="text-6 text-white" />
       </NAvatar>
       <div class="flex-col gap-1">
-        <NText class="text-4 font-bold">派聪明</NText>
+        <NText class="text-4 font-bold">EwanSmart</NText>
         <NText class="text-3 color-gray-500">{{ formatDate(msg.timestamp) }}</NText>
       </div>
     </div>

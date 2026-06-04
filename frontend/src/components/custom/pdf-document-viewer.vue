@@ -71,10 +71,11 @@
           <span>{{ renderError }}</span>
         </div>
         <div v-else class="page-scroll-shell">
-          <div v-if="!singlePagePreviewActive && !embeddedHeader" class="page-meta-row">
+          <div v-if="!embeddedHeader" class="page-meta-row">
             <span>第 {{ displayCurrentPage }} 页</span>
-            <span v-if="currentPage === targetPageNumber">引用定位页</span>
-            <span v-else-if="highlightCount > 0">已匹配到相关文本</span>
+            <span v-if="highlightCount > 0">已匹配到相关文本</span>
+            <span v-else-if="highlightStatus === 'page-only'">已定位到引用页，未框选图片内文字</span>
+            <span v-else-if="currentPage === targetPageNumber">引用定位页</span>
             <span v-else>浏览当前页</span>
           </div>
 
@@ -183,6 +184,7 @@ const totalPages = ref(0);
 const currentPage = ref(1);
 const zoom = ref(1);
 const highlightCount = ref(0);
+const highlightStatus = ref<'idle' | 'matched' | 'page-only'>('idle');
 const highlightRects = ref<HighlightRect[]>([]);
 const pageSummaries = ref<PageSummary[]>([]);
 
@@ -192,10 +194,13 @@ const canvasRef = ref<HTMLCanvasElement | null>(null);
 const textLayerRef = ref<HTMLDivElement | null>(null);
 
 const targetPageNumber = computed(() => clampPage(props.pageNumber || 1, totalPages.value || 1));
-const matchCandidates = computed(() => buildMatchCandidates(props.searchText || props.anchorText || ''));
+const matchCandidates = computed(() => buildMatchCandidates(props.anchorText || props.searchText || ''));
 const singlePagePreviewActive = computed(() => Boolean(props.singlePageMode && props.sourcePageNumber));
 const viewerKicker = computed(() => {
   if (singlePagePreviewActive.value) {
+    if (highlightStatus.value === 'page-only') {
+      return '当前已打开引用页；图片或扫描内容需要结合左侧线索核对。';
+    }
     return '当前是定位页快照，支持缩放；整本文档请点“新窗口”查看。';
   }
   return '支持翻页、缩放和新窗口查看原文件。';
@@ -564,6 +569,7 @@ async function loadDocument(url: string) {
   totalPages.value = 0;
   currentPage.value = 1;
   highlightCount.value = 0;
+  highlightStatus.value = 'idle';
   highlightRects.value = [];
   pageSummaries.value = [];
   lastObservedStageWidth = 0;
@@ -780,11 +786,15 @@ function applyHighlight() {
 
   const textDivs = textLayerTask.textDivs;
   highlightRects.value = [];
+  highlightStatus.value = 'idle';
 
   const candidates = matchCandidates.value;
-  if (!candidates.length) return 0;
+  if (!candidates.length) {
+    highlightStatus.value = getPageOnlyStatus();
+    return 0;
+  }
 
-  const directSource = props.searchText || props.anchorText || '';
+  const directSource = props.anchorText || props.searchText || '';
   const directMatch = resolveDirectClueHighlight(
     textLayer,
     textLayerTask.textDivs,
@@ -793,6 +803,7 @@ function applyHighlight() {
   );
   if (directMatch) {
     highlightRects.value = [directMatch.rect];
+    highlightStatus.value = 'matched';
     directMatch.firstElement?.scrollIntoView({
       block: 'center',
       behavior: 'smooth'
@@ -803,6 +814,7 @@ function applyHighlight() {
   const paragraphMatch = resolveParagraphHighlight(textLayer, textLayerTask.textDivs, textLayerTask.textContentItemsStr, candidates);
   if (paragraphMatch) {
     highlightRects.value = [paragraphMatch.rect];
+    highlightStatus.value = 'matched';
     paragraphMatch.firstElement?.scrollIntoView({
       block: 'center',
       behavior: 'smooth'
@@ -831,7 +843,10 @@ function applyHighlight() {
   });
 
   const matchRange = resolveMatchRange(mergedText, candidates);
-  if (!matchRange) return 0;
+  if (!matchRange) {
+    highlightStatus.value = getPageOnlyStatus();
+    return 0;
+  }
 
   const [matchStart, matchEnd] = matchRange;
   let firstMatch: HTMLElement | undefined;
@@ -849,6 +864,7 @@ function applyHighlight() {
   });
 
   highlightRects.value = buildHighlightRects(textLayer, matchedFragments);
+  highlightStatus.value = highlightRects.value.length ? 'matched' : getPageOnlyStatus();
 
   if (firstMatch) {
     firstMatch.scrollIntoView({
@@ -858,6 +874,14 @@ function applyHighlight() {
   }
 
   return highlightRects.value.length;
+}
+
+function getPageOnlyStatus(): 'idle' | 'page-only' {
+  if (currentPage.value === targetPageNumber.value) {
+    return 'page-only';
+  }
+
+  return 'idle';
 }
 
 function resolveDirectClueHighlight(
@@ -949,7 +973,7 @@ function resolveMatchRange(target: string, anchors: string[]): [number, number] 
     }
   }
 
-  return resolveFuzzyMatchRange(target, anchors);
+  return null;
 }
 
 function resolveParagraphHighlight(
@@ -1034,7 +1058,7 @@ function resolveParagraphHighlight(
         container.clientHeight
       );
 
-      const primaryMinimum = primaryAnchor.compact.length >= 40 ? 0.3 : primaryAnchor.compact.length >= 20 ? 0.38 : 0.5;
+      const primaryMinimum = getPrimaryMatchMinimum(primaryAnchor.compact.length);
       if (primaryScore >= primaryMinimum) {
         if (!bestPrimaryMatch || score > bestPrimaryMatch.score) {
           bestPrimaryMatch = {
@@ -1063,6 +1087,18 @@ function resolveParagraphHighlight(
   }
 
   return bestPrimaryMatch || bestFallbackMatch;
+}
+
+function getPrimaryMatchMinimum(anchorLength: number) {
+  if (anchorLength >= 40) {
+    return 0.58;
+  }
+
+  if (anchorLength >= 20) {
+    return 0.62;
+  }
+
+  return 0.68;
 }
 
 function buildTextLines(container: HTMLElement, textDivs: HTMLElement[], textItems: string[]) {
@@ -1156,7 +1192,8 @@ function scoreAgainstAnchor(text: string, compactText: string, anchor: { normali
   if (compactText.includes(compactAnchor)) {
     score = 1;
   } else if (compactAnchor.includes(compactText)) {
-    score = Math.max(0.68, compactText.length / compactAnchor.length);
+    const coverage = compactText.length / compactAnchor.length;
+    score = compactText.length >= 18 ? Math.max(0.48, Math.min(0.82, coverage)) : coverage;
   } else {
     score = calculateDiceCoefficient(compactText, compactAnchor);
   }
@@ -1164,7 +1201,7 @@ function scoreAgainstAnchor(text: string, compactText: string, anchor: { normali
   if (compactAnchor.length >= 18) {
     const prefix = compactAnchor.slice(0, Math.min(14, compactAnchor.length));
     if (!compactText.includes(prefix)) {
-      score *= 0.7;
+      score *= 0.42;
     } else {
       score = Math.max(score, 0.62);
     }
@@ -1189,116 +1226,6 @@ function clampRectToContainer(rect: HighlightRect, maxWidth: number, maxHeight: 
     width: Math.max(1, right - left),
     height: Math.max(1, bottom - top)
   };
-}
-
-function resolveFuzzyMatchRange(target: string, anchors: string[]): [number, number] | null {
-  const ranges = buildPhraseRanges(target);
-  if (!ranges.length) return null;
-
-  interface FuzzyMatchCandidate {
-    start: number;
-    end: number;
-    score: number;
-    weightedScore: number;
-  }
-
-  const sortedAnchors = [...anchors]
-    .filter(anchor => anchor && anchor.length >= 6)
-    .sort((left, right) => right.length - left.length);
-
-  let bestMatch: FuzzyMatchCandidate | null = null;
-
-  for (const anchor of sortedAnchors) {
-    let bestRangeForAnchor: FuzzyMatchCandidate | null = null;
-
-    for (const range of ranges) {
-      const score = calculateDiceCoefficient(anchor, range.text);
-      // 降低阈值，提高匹配的容错性
-      if (score < 0.12) continue;
-
-      const weightedScore = score * Math.min(anchor.length, range.text.length);
-      if (
-        !bestRangeForAnchor ||
-        weightedScore > bestRangeForAnchor.weightedScore ||
-        (weightedScore === bestRangeForAnchor.weightedScore && score > bestRangeForAnchor.score)
-      ) {
-        bestRangeForAnchor = {
-          start: range.start,
-          end: range.end,
-          score,
-          weightedScore
-        };
-      }
-    }
-
-    if (!bestRangeForAnchor) continue;
-
-    // 对于较长的文本，降低匹配分数要求
-    if (
-      (anchor.length >= 18 && bestRangeForAnchor.score >= 0.15) ||
-      (anchor.length >= 12 && bestRangeForAnchor.score >= 0.2) ||
-      (anchor.length >= 8 && bestRangeForAnchor.score >= 0.25)
-    ) {
-      return [bestRangeForAnchor.start, bestRangeForAnchor.end];
-    }
-
-    if (
-      !bestMatch ||
-      bestRangeForAnchor.weightedScore > bestMatch.weightedScore ||
-      (bestRangeForAnchor.weightedScore === bestMatch.weightedScore && bestRangeForAnchor.score > bestMatch.score)
-    ) {
-      bestMatch = bestRangeForAnchor;
-    }
-  }
-
-  // 返回最佳匹配，即使分数不高（只要有匹配就返回）
-  return bestMatch && bestMatch.score >= 0.15
-    ? [bestMatch.start, bestMatch.end]
-    : null;
-}
-
-function buildPhraseRanges(target: string) {
-  const ranges: Array<{ start: number; end: number; text: string }> = [];
-
-  // 先提取URL，保留完整URL作为一个range
-  const urlPattern = /(https?:\/\/[^\s，,。；;：:!？!?、\n\r]+)/g;
-  for (const match of target.matchAll(urlPattern)) {
-    const url = match[0]?.trim();
-    const start = match.index ?? -1;
-    if (!url || start < 0) continue;
-
-    const normalized = normalizeForMatch(url);
-    if (normalized.length < 8) continue;
-
-    ranges.push({
-      start,
-      end: start + url.length,
-      text: normalized
-    });
-  }
-
-  // 使用URL占位符替换，避免被分割
-  const urlPlaceholders = target.replace(urlPattern, '__URL__');
-
-  // 然后按标点分割其他文本
-  const phrasePattern = /[^，,；;。！？!?]+[，,；;。！？!?]?/g;
-
-  for (const match of urlPlaceholders.matchAll(phrasePattern)) {
-    const text = match[0]?.trim();
-    const start = match.index ?? -1;
-    if (!text || start < 0 || text.includes('__URL__')) continue;
-
-    const normalized = normalizeForMatch(text);
-    if (normalized.length < 6) continue;
-
-    ranges.push({
-      start,
-      end: start + match[0].length,
-      text: normalized
-    });
-  }
-
-  return ranges;
 }
 
 function calculateDiceCoefficient(left: string, right: string) {
@@ -1466,6 +1393,7 @@ async function cleanupPdfState() {
   }
 
   highlightRects.value = [];
+  highlightStatus.value = 'idle';
 }
 </script>
 
@@ -1555,7 +1483,9 @@ async function cleanupPdfState() {
 }
 
 .pdf-page-shell {
-  @apply relative bg-white p-2;
+  @apply relative bg-white;
+  --pdf-page-inset: 8px;
+  padding: var(--pdf-page-inset);
 }
 
 .pdf-viewer-body.is-single-page .page-stage {
@@ -1570,7 +1500,7 @@ async function cleanupPdfState() {
 }
 
 .pdf-viewer-body.is-single-page .pdf-page-shell {
-  @apply p-1;
+  --pdf-page-inset: 4px;
 }
 
 .pdf-canvas {
@@ -1578,7 +1508,8 @@ async function cleanupPdfState() {
 }
 
 .pdf-highlight-overlay {
-  @apply pointer-events-none absolute inset-6 z-[5] overflow-hidden rounded-2xl;
+  @apply pointer-events-none absolute z-[5] overflow-hidden rounded-2xl;
+  inset: var(--pdf-page-inset);
 }
 
 .pdf-highlight-rect {
@@ -1594,7 +1525,8 @@ async function cleanupPdfState() {
 }
 
 .pdf-text-layer {
-  @apply absolute inset-6 z-10 overflow-hidden;
+  @apply absolute z-10 overflow-hidden;
+  inset: var(--pdf-page-inset);
 }
 
 .pdf-text-layer :deep(span),
