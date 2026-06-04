@@ -122,12 +122,27 @@ file:
       command: ${FILE_PARSING_LITEPARSE_COMMAND:lit}
       ocr-enabled: ${FILE_PARSING_LITEPARSE_OCR_ENABLED:true}
       ocr-language: ${FILE_PARSING_LITEPARSE_OCR_LANGUAGE:chi_sim+eng}
-      ocr-server-url: ${FILE_PARSING_LITEPARSE_OCR_SERVER_URL:}
       tessdata-path: ${FILE_PARSING_LITEPARSE_TESSDATA_PATH:}
       max-pages: ${FILE_PARSING_LITEPARSE_MAX_PAGES:1000}
       dpi: ${FILE_PARSING_LITEPARSE_DPI:150}
       num-workers: ${FILE_PARSING_LITEPARSE_NUM_WORKERS:0}
       timeout-seconds: ${FILE_PARSING_LITEPARSE_TIMEOUT_SECONDS:300}
+
+aliyun:
+  ocr:
+    enabled: ${ALIYUN_OCR_ENABLED:false}
+    endpoint: ${ALIYUN_OCR_ENDPOINT:ocr-api.cn-hangzhou.aliyuncs.com}
+    access-key-id: ${ALIYUN_OCR_ACCESS_KEY_ID:${ALIBABA_CLOUD_ACCESS_KEY_ID:}}
+    access-key-secret: ${ALIYUN_OCR_ACCESS_KEY_SECRET:${ALIBABA_CLOUD_ACCESS_KEY_SECRET:}}
+    type: ${ALIYUN_OCR_TYPE:Advanced}
+    output-coordinate: ${ALIYUN_OCR_OUTPUT_COORDINATE:points}
+    output-oricoord: ${ALIYUN_OCR_OUTPUT_ORICOORD:true}
+    output-row: ${ALIYUN_OCR_OUTPUT_ROW:false}
+    output-paragraph: ${ALIYUN_OCR_OUTPUT_PARAGRAPH:false}
+    output-table: ${ALIYUN_OCR_OUTPUT_TABLE:false}
+    connect-timeout-millis: ${ALIYUN_OCR_CONNECT_TIMEOUT_MILLIS:10000}
+    read-timeout-millis: ${ALIYUN_OCR_READ_TIMEOUT_MILLIS:60000}
+    callback-token: ${ALIYUN_OCR_CALLBACK_TOKEN:}
 
 elasticsearch:
   # 若容器连接的是 HTTPS ES，可直接把 scheme 改成 https

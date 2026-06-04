@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.xml.sax.SAXException;
 
 import java.io.*;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -33,6 +34,7 @@ public class ParseService {
 
     private static final Logger logger = LoggerFactory.getLogger(ParseService.class);
     private static final String PDF_PARSER_LITEPARSE = "liteparse";
+    private static final Pattern LITEPARSE_PAGE_FOOTER_PATTERN = Pattern.compile("(?i)^No\\.\\s*\\d+\\s*/\\s*\\d+%?$");
 
     @Autowired
     private DocumentVectorRepository documentVectorRepository;
@@ -72,8 +74,17 @@ public class ParseService {
     @Value("${file.parsing.liteparse.ocr-language:chi_sim+eng}")
     private String liteParseOcrLanguage;
 
-    @Value("${file.parsing.liteparse.ocr-server-url:}")
-    private String liteParseOcrServerUrl;
+    @Value("${aliyun.ocr.enabled:false}")
+    private boolean aliyunOcrEnabled;
+
+    @Value("${aliyun.ocr.callback-token:}")
+    private String aliyunOcrCallbackToken;
+
+    @Value("${server.port:8081}")
+    private int serverPort;
+
+    @Value("${server.servlet.context-path:}")
+    private String serverContextPath;
 
     @Value("${file.parsing.liteparse.tessdata-path:}")
     private String liteParseTessdataPath;
@@ -422,9 +433,10 @@ public class ParseService {
         } else {
             command.add("--ocr-language");
             command.add(liteParseOcrLanguage);
-            if (hasText(liteParseOcrServerUrl)) {
+            String ocrServerUrl = effectiveLiteParseOcrServerUrl();
+            if (hasText(ocrServerUrl)) {
                 command.add("--ocr-server-url");
-                command.add(liteParseOcrServerUrl.trim());
+                command.add(ocrServerUrl);
             }
         }
 
@@ -435,6 +447,33 @@ public class ParseService {
 
         command.add("--quiet");
         return command;
+    }
+
+    private String effectiveLiteParseOcrServerUrl() {
+        if (!aliyunOcrEnabled) {
+            return "";
+        }
+
+        String contextPath = normalizeContextPath(serverContextPath);
+        String url = "http://127.0.0.1:" + serverPort + contextPath + "/api/v1/internal/ocr/liteparse";
+        if (hasText(aliyunOcrCallbackToken)) {
+            url += "?token=" + URLEncoder.encode(aliyunOcrCallbackToken.trim(), StandardCharsets.UTF_8);
+        }
+        return url;
+    }
+
+    private String normalizeContextPath(String contextPath) {
+        if (!hasText(contextPath) || "/".equals(contextPath.trim())) {
+            return "";
+        }
+        String normalized = contextPath.trim();
+        if (!normalized.startsWith("/")) {
+            normalized = "/" + normalized;
+        }
+        if (normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized;
     }
 
     private void applyLiteParseEnvironment(ProcessBuilder processBuilder) {
@@ -465,11 +504,56 @@ public class ParseService {
     }
 
     private String normalizeLiteParseText(String text) {
-        return text == null ? "" : text
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+
+        String[] lines = text
                 .replace('\u00A0', ' ')
-                .replaceAll("[ \\t\\x0B\\f\\r]+", " ")
+                .replace("\r\n", "\n")
+                .replace('\r', '\n')
+                .split("\n", -1);
+
+        List<String> cleanedLines = new ArrayList<>(lines.length);
+        boolean previousBlank = true;
+        for (String line : lines) {
+            String cleanedLine = normalizeLiteParseLine(line);
+            if (cleanedLine.isBlank() || shouldSkipLiteParseLine(cleanedLine)) {
+                if (!previousBlank) {
+                    cleanedLines.add("");
+                    previousBlank = true;
+                }
+                continue;
+            }
+
+            cleanedLines.add(cleanedLine);
+            previousBlank = false;
+        }
+
+        return String.join("\n", cleanedLines)
                 .replaceAll("\\n{3,}", "\n\n")
                 .trim();
+    }
+
+    private String normalizeLiteParseLine(String line) {
+        if (line == null || line.isBlank()) {
+            return "";
+        }
+
+        String cleaned = line.strip()
+                .replaceAll("[ \\t\\x0B\\f]+", " ");
+
+        cleaned = cleaned.replaceAll("(?<=\\p{IsHan})\\s+(?=\\p{IsHan})", "");
+        cleaned = cleaned.replaceAll("(?<=[A-Za-z0-9])\\s+(?=\\p{IsHan})", "");
+        cleaned = cleaned.replaceAll("(?<=\\p{IsHan})\\s+(?=[A-Za-z0-9])", "");
+        cleaned = cleaned.replaceAll("\\s+([，。！？；：、）】》])", "$1");
+        cleaned = cleaned.replaceAll("([，。！？；：、])\\s+(?=\\p{IsHan})", "$1");
+        cleaned = cleaned.replaceAll("([（【《])\\s+", "$1");
+        return cleaned.trim();
+    }
+
+    private boolean shouldSkipLiteParseLine(String line) {
+        return LITEPARSE_PAGE_FOOTER_PATTERN.matcher(line).matches();
     }
 
     private String readProcessLog(Path path) {
